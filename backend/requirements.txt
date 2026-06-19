@@ -1,0 +1,14 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+SQLAlchemy==2.0.36
+pydantic-settings==2.7.1
+python-multipart==0.0.20
+pymysql==1.1.1
+numpy==1.26.4
+Pillow==10.4.0
+opencv-python-headless==4.10.0.84
+openai==1.59.7
+chromadb==0.5.23
+pytest==8.3.4
+httpx==0.28.1
+
