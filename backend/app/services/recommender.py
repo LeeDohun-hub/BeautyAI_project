@@ -7,19 +7,62 @@ from app.schemas.api import IngredientOut, ProductOut, RecommendationResponse, S
 
 
 TARGET_LABELS = {
-    "acne": "Acne",
-    "pore": "Pore",
-    "wrinkle": "Wrinkle",
-    "redness": "Redness",
-    "pigmentation": "Pigmentation",
-    "oiliness": "Oiliness",
+    "acne": "트러블",
+    "pore": "모공",
+    "wrinkle": "주름",
+    "redness": "홍조",
+    "pigmentation": "색소침착",
+    "oiliness": "유분",
+}
+
+SKIN_TYPE_LABELS = {
+    "dry": "건성",
+    "oily": "지성",
+    "combination": "복합성",
+    "normal": "중성",
+    "sensitive": "민감성",
+}
+
+# 한국어 고민 → DB 성분 타깃 매핑
+CONCERN_TARGET_MAP: dict[str, list[str]] = {
+    "트러블": ["acne"], "모공": ["pore"], "주름": ["wrinkle"], "홍조": ["redness"],
+    "색소침착": ["pigmentation"], "유분": ["oiliness"], "칙칙함": ["pigmentation"],
+    "다크서클": ["wrinkle", "pigmentation"], "탄력저하": ["wrinkle"],
+    "유분·번들거림": ["oiliness"], "면도 후 자극": ["redness"],
+    "파운데이션 밀림": ["oiliness"], "들뜸": ["redness"],
+    "지속력": ["oiliness"], "커버력": ["redness"],
+    "눈가": ["wrinkle"], "입술": ["redness"], "목·데콜테": ["wrinkle", "pigmentation"],
+    # backward compat (영문 코드)
+    "acne": ["acne"], "pore": ["pore"], "wrinkle": ["wrinkle"],
+    "redness": ["redness"], "pigmentation": ["pigmentation"], "oiliness": ["oiliness"],
+}
+
+AGE_PRIORITY_MAP: dict[str, list[str]] = {
+    "10s": ["acne", "oiliness"],
+    "20s": ["acne", "pore"],
+    "30s": ["pigmentation", "redness"],
+    "40s": ["wrinkle", "pigmentation"],
+    "50s": ["wrinkle"],
 }
 
 
 def infer_ingredients(db: Session, scores: SkinScores, survey: SurveyInput) -> list[Ingredient]:
     score_map = scores.model_dump()
-    priorities = {name for name, score in score_map.items() if score >= 45}
-    priorities.update(concern.lower() for concern in survey.concerns)
+    priorities: set[str] = {name for name, score in score_map.items() if score >= 45}
+
+    all_concerns = (
+        list(survey.concerns)
+        + list(survey.makeup_concerns)
+        + list(survey.area_concerns)
+        + list(survey.male_extras)
+    )
+    for concern in all_concerns:
+        for target in CONCERN_TARGET_MAP.get(concern, [concern.lower()]):
+            priorities.add(target)
+
+    for target in AGE_PRIORITY_MAP.get(survey.age_group, []):
+        priorities.add(target)
+
     if survey.sensitivity >= 4:
         priorities.add("redness")
     if survey.skin_type in {"oily", "combination"}:
@@ -61,7 +104,7 @@ def recommend_products(
         concern_match = sum(scores.model_dump().get(target, 0) for target in product_targets) / max(1, len(product_targets)) * 0.35
         scored.append((round(min(100.0, ingredient_match + skin_type_match + concern_match), 1), product))
 
-    top_products = sorted(scored, key=lambda item: item[0], reverse=True)[:5]
+    top_products = sorted(scored, key=lambda item: (item[0], item[1].avg_rating), reverse=True)[:5]
     ingredient_names = [ingredient.name for ingredient in ingredients]
     product_names = [product.name for _, product in top_products]
 
@@ -93,6 +136,10 @@ def recommend_products(
                 score=score,
                 description=product.description,
                 ingredients=[item.ingredient.name for item in product.ingredients],
+                product_url=product.product_url,
+                image_url=product.image_url,
+                avg_rating=product.avg_rating or None,
+                review_count=product.review_count or None,
             )
             for score, product in top_products
         ],
@@ -104,9 +151,13 @@ def build_explanation(scores: SkinScores, survey: SurveyInput, ingredients: list
     score_map = scores.model_dump()
     top_scores = sorted(score_map.items(), key=lambda item: item[1], reverse=True)[:3]
     priorities = ", ".join(f"{TARGET_LABELS[name]} {value:.0f}" for name, value in top_scores)
+    skin_type = SKIN_TYPE_LABELS.get(survey.skin_type, survey.skin_type)
+    age_label = {"10s": "10대", "20s": "20대", "30s": "30대", "40s": "40대", "50s": "50대 이상"}.get(survey.age_group, "")
+    gender_label = "여성" if survey.gender == "female" else "남성"
+    context = f"{age_label} {gender_label}, {skin_type} 피부" if age_label else f"{gender_label}, {skin_type} 피부"
     return (
-        f"Your strongest signals are {priorities}. For {survey.skin_type} skin, "
-        f"I prioritized {', '.join(ingredients[:3])}. The top products are {', '.join(products[:3])}."
+        f"가장 두드러진 피부 신호는 {priorities}입니다. {context}와 선택한 고민을 기준으로 "
+        f"{', '.join(ingredients[:3])} 성분을 우선 추천했습니다. 추천 제품은 {', '.join(products[:3])} 등입니다."
     )
 
 

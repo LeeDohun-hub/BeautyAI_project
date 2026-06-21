@@ -8,8 +8,13 @@ export type SkinScores = {
 };
 
 export type SurveyInput = {
+  gender: string;          // "female" | "male"
+  age_group: string;       // "10s" | "20s" | "30s" | "40s" | "50s"
   skin_type: string;
   concerns: string[];
+  makeup_concerns: string[];
+  area_concerns: string[];
+  male_extras: string[];
   sensitivity: number;
   routine_level: string;
 };
@@ -36,6 +41,10 @@ export type Product = {
   score?: number;
   description: string;
   ingredients: string[];
+  product_url?: string | null;
+  image_url?: string | null;
+  avg_rating?: number | null;
+  review_count?: number | null;
 };
 
 export type RecommendationResponse = {

@@ -82,6 +82,10 @@ class Product(Base):
     skin_types: Mapped[str] = mapped_column(String(255), default="all")
     price: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
+    product_url: Mapped[str] = mapped_column(String(500), default="")
+    image_url: Mapped[str] = mapped_column(String(500), default="")
+    avg_rating: Mapped[float] = mapped_column(Float, default=0.0)
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
 
     brand: Mapped[Brand] = relationship(back_populates="products")
     ingredients: Mapped[list["ProductIngredient"]] = relationship(back_populates="product")

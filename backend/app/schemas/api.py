@@ -4,8 +4,13 @@ from pydantic import BaseModel, Field
 
 
 class SurveyInput(BaseModel):
+    gender: str = Field(default="female")          # "female" | "male"
+    age_group: str = Field(default="20s")          # "10s" | "20s" | "30s" | "40s" | "50s"
     skin_type: str = Field(default="combination")
-    concerns: list[str] = Field(default_factory=list)
+    concerns: list[str] = Field(default_factory=list)          # 피부 고민 (공통)
+    makeup_concerns: list[str] = Field(default_factory=list)   # 메이크업 고민 (여성)
+    area_concerns: list[str] = Field(default_factory=list)     # 부위별 케어 (여성)
+    male_extras: list[str] = Field(default_factory=list)       # 추가 고민 (남성)
     sensitivity: int = Field(default=2, ge=1, le=5)
     routine_level: str = Field(default="basic")
 
@@ -48,6 +53,10 @@ class ProductOut(BaseModel):
     score: float | None = None
     description: str
     ingredients: list[str]
+    product_url: str | None = None
+    image_url: str | None = None
+    avg_rating: float | None = None
+    review_count: int | None = None
 
 
 class RecommendationResponse(BaseModel):

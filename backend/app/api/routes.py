@@ -67,6 +67,8 @@ def products(db: Session = Depends(get_db)) -> list[ProductOut]:
             price=product.price,
             description=product.description,
             ingredients=[item.ingredient.name for item in product.ingredients],
+            product_url=product.product_url,
+            image_url=product.image_url,
         )
         for product in rows
     ]

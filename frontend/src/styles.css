@@ -19,12 +19,21 @@ body {
   align-items: center;
 }
 
+.page-panel {
+  padding: 28px;
+  border: 1px solid #e1e7ef;
+}
+
 .camera-box {
   position: relative;
   overflow: hidden;
   border: 1px solid #d6deea;
   background: #111827;
   aspect-ratio: 4 / 3;
+}
+
+.large-camera {
+  max-height: 62vh;
 }
 
 .camera-video {
@@ -44,12 +53,17 @@ body {
 
 .capture-preview {
   display: grid;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: 72px minmax(0, 1fr) 36px;
   gap: 12px;
   align-items: center;
   padding: 8px;
   border: 1px solid #d6deea;
   background: #f8fafc;
+}
+
+.photo-grid {
+  display: grid;
+  gap: 8px;
 }
 
 .capture-preview img {
@@ -58,8 +72,21 @@ body {
   object-fit: cover;
 }
 
+.product-row {
+  padding: 14px 0;
+  border-bottom: 1px solid #e5eaf2;
+}
+
+.product-row:last-child {
+  border-bottom: 0;
+}
+
 @media (max-width: 720px) {
   .score-row {
     grid-template-columns: 92px 1fr 36px;
+  }
+
+  .page-panel {
+    padding: 18px;
   }
 }

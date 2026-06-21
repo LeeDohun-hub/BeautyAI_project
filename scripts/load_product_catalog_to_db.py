@@ -32,6 +32,15 @@ INGREDIENT_RULES = {
     "Peptide": ("Firming support used in wrinkle care products.", "wrinkle", ("peptide", "palmitoyl")),
 }
 
+TAG_INGREDIENT_FALLBACKS = {
+    "acne": ["Salicylic Acid", "Centella Asiatica", "Azelaic Acid"],
+    "pore": ["Niacinamide", "Salicylic Acid", "Glycolic Acid"],
+    "oiliness": ["Niacinamide", "Green Tea", "Zinc"],
+    "redness": ["Centella Asiatica", "Ceramide", "Panthenol"],
+    "pigmentation": ["Vitamin C", "Niacinamide", "Azelaic Acid"],
+    "wrinkle": ["Retinol", "Peptide", "Ceramide"],
+}
+
 SKINCARE_WORDS = (
     "serum",
     "cream",
@@ -89,12 +98,39 @@ def parse_ingredient_blob(value: str) -> str:
     return value
 
 
+def parse_price(value: str | None) -> int:
+    value = normalize_text(value)
+    digits = re.sub(r"[^0-9.]", "", value)
+    if not digits:
+        return 0
+    try:
+        return int(float(digits))
+    except ValueError:
+        return 0
+
+
 def detect_ingredients(name: str, ingredients: str) -> list[str]:
     haystack = f"{name} {ingredients}".lower()
     found = []
     for ingredient_name, (_, _, needles) in INGREDIENT_RULES.items():
         if any(needle in haystack for needle in needles):
             found.append(ingredient_name)
+    return found
+
+
+def parse_tags(value: str | None) -> list[str]:
+    value = normalize_text(value)
+    if not value:
+        return []
+    return [tag.strip() for tag in re.split(r"[|,;/]", value) if tag.strip()]
+
+
+def fallback_ingredients_from_tags(tags: list[str]) -> list[str]:
+    found = []
+    for tag in tags:
+        for ingredient_name in TAG_INGREDIENT_FALLBACKS.get(tag, []):
+            if ingredient_name not in found:
+                found.append(ingredient_name)
     return found
 
 
@@ -173,9 +209,12 @@ def main() -> int:
                     continue
                 brand_name = clean_brand(row.get("brand", ""))
                 ingredients_blob = parse_ingredient_blob(row.get("ingredients", ""))
-                if not is_skincare_candidate(name, ingredients_blob):
+                tags = parse_tags(row.get("tags", ""))
+                if not is_skincare_candidate(name, f"{ingredients_blob} {' '.join(tags)}"):
                     continue
                 ingredient_names = detect_ingredients(name, ingredients_blob)
+                if not ingredient_names:
+                    ingredient_names = fallback_ingredients_from_tags(tags)
                 if not ingredient_names:
                     continue
                 key = (brand_name.lower(), name.lower())
@@ -191,16 +230,21 @@ def main() -> int:
                     brand_cache[brand_name] = brand
 
                 rating = normalize_text(row.get("rating", ""))
+                review_count = normalize_text(row.get("review_count", ""))
                 description = "Imported skincare product"
                 if rating:
                     description += f" with source rating {rating}"
+                if review_count:
+                    description += f" from {review_count} reviews"
                 product = Product(
                     brand=brand,
                     name=name,
-                    category=infer_category(name),
+                    category=normalize_text(row.get("category", "")) or infer_category(name),
                     skin_types=infer_skin_types(ingredient_names),
-                    price=0,
+                    price=parse_price(row.get("price", "")),
                     description=description,
+                    product_url=normalize_text(row.get("product_url", "")),
+                    image_url=normalize_text(row.get("image_url", "")),
                 )
                 db.add(product)
                 db.flush()

@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from PIL import Image
 
 TARGETS = ("acne", "pore", "wrinkle", "redness", "pigmentation", "oiliness")
@@ -53,6 +52,6 @@ class EfficientNetSkinRegressor:
             return None
         tensor = self.transform(image.convert("RGB")).unsqueeze(0)
         with self.torch.no_grad():
-            raw = self.model(tensor).squeeze(0).detach().cpu().numpy()
-        scores = np.clip(raw, 0, 100)
+            raw = self.model(tensor).squeeze(0).detach().cpu().tolist()
+        scores = [max(0.0, min(100.0, float(score))) for score in raw]
         return {target: round(float(score), 1) for target, score in zip(TARGETS, scores)}
