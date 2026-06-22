@@ -16,7 +16,6 @@ DATASETS = [
     "nayanchaure/acne-dataset",
     "nadyinky/sephora-products-and-skincare-reviews",
     "crawlfeeds/dermstore-skincare-products-and-ingredients-dataset",
-    "satrapankti/amazon-beauty-product-recommendation",
 ]
 
 

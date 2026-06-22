@@ -1,218 +1,135 @@
-# Amazon Beauty 데이터셋 분석 보고서
+# BIOHEAL BOH · WAKEMAKE 데이터 분석
 
-> **데이터셋**: Amazon Beauty Product Recommendation (Amazon India)
-> **출처**: Kaggle — satrapankti/amazon-beauty-product-recommendation
-> **규모**: 1,348,246건의 리뷰 · 23,838개 제품 · 883,753명의 사용자
-> **분석 목적**: BIOHEAL BOH · WAKEMAKE의 글로벌 시장 입지 파악 및 뷰티 카테고리 인사이트 도출
-
----
-
-## 1. BIOHEAL BOH · WAKEMAKE 브랜드 조회 결과
-
-| 브랜드 | 검색 결과 | 리뷰 수 | 평균 평점 |
-|--------|----------|---------|----------|
-| BIOHEAL BOH | **미등록** | — | — |
-| WAKEMAKE | **미등록** | — | — |
-
-**Amazon India 데이터셋에서 두 브랜드 모두 검색되지 않습니다.**
-
-비교를 위해 동일 데이터셋에서 K-Beauty 브랜드 전체를 탐색한 결과:
-
-| 브랜드 | 제품명 | 카테고리 | 리뷰 수 | 평균 평점 |
-|--------|--------|----------|---------|----------|
-| Innisfree | Volcanic Blackhead 3 Step Program | Sheet Mask | 196 | 3.34 |
-| COSRX | Acne Pimple Master Patch | Sheet Mask | 177 | 3.79 |
-
-### 시사점
-
-K-Beauty 브랜드의 Amazon India 내 점유율은 극히 미미한 수준입니다. Innisfree·COSRX와 같이 글로벌 인지도가 높은 브랜드조차 200건 미만의 리뷰에 그칩니다. **BIOHEAL BOH와 WAKEMAKE는 아직 Amazon 생태계에 진입하지 않은 상태**로, 이는 두 가지 의미를 갖습니다.
-
-- **과제**: 브랜드 인지도가 사실상 제로에 가까워 론칭 단계부터 마케팅 전략 수립이 필요
-- **기회**: 스킨케어·시트마스크·메이크업 카테고리 전반에서 K-Beauty 공백이 존재하며, 선점 시 강력한 포지셔닝 가능
+> **분석 기준일**: 2026-06-22  
+> **신규 반영 데이터**: Olive Young Global 검색/상품/리뷰 API 수집 결과  
+> **분석 목적**: BIOHEAL BOH · WAKEMAKE의 글로벌 판매/리뷰 현황과 해외 시장 확장 포인트 도출
 
 ---
 
-## 2. 전체 판매량 Top-5 (리뷰 수 기준)
+## 1. Olive Young Global 실측 결과
 
-| 순위 | 제품명 | 카테고리 | 리뷰 수 | 평균 평점 |
-|------|--------|----------|---------|----------|
-| 1 | MyGlamm 2IN1 Nail Paint Poolside Soiree 2X5ml | Nail Polish | 9,942 | 4.19 |
-| 2 | Faces Splash Enamel Floral Dream | Nail Polish | 9,836 | 4.17 |
-| 3 | Revlon Nail Enamel Matt Coat | Nail Polish | 9,344 | 4.19 |
-| 4 | Revlon Nail Enamel Red Fiesta | Nail Polish | 8,851 | 4.18 |
-| 5 | ILLUMOR Crushed Diamond Polish Gilded | Nail Polish | 8,040 | 4.28 |
+Olive Young Global에서 BIOHEAL BOH와 WAKEMAKE 상품 및 리뷰 데이터를 직접 수집했습니다. 기존 sitemap 기반 접근은 일부 상품만 노출되어 WAKEMAKE 1개만 확인되는 한계가 있었으나, 프론트엔드 검색 API를 사용해 브랜드별 상품군을 정상적으로 확보했습니다.
 
-**전체 Top-5가 Nail Polish로 채워진 이유**: Amazon India 뷰티 시장에서 네일 제품은 저렴한 단가와 높은 충동 구매율을 바탕으로 리뷰 생성 속도가 압도적으로 빠릅니다. 단, 이는 Amazon India의 지역적 특성이 반영된 결과로, 일본 시장과의 직접 비교에는 주의가 필요합니다.
+| 브랜드 | 수집 상품 수 | 카탈로그 리뷰 수 | 카탈로그 평균 평점 | 수집 리뷰 샘플 | 샘플 평균 평점 |
+|---|---:|---:|---:|---:|---:|
+| BIOHEAL BOH | 68 | 6,158 | 4.52 | 1,063 | 4.73 |
+| WAKEMAKE | 74 | 8,616 | 4.55 | 1,384 | 4.58 |
+| **합계** | **142** | **14,774** | - | **2,447** | - |
 
----
+### 핵심 해석
 
-## 3. 카테고리별 Top-5 (스킨케어 집중 분석)
+두 브랜드 모두 Olive Young Global 내에서 이미 충분한 상품군과 리뷰 기반을 보유하고 있습니다. 특히 평균 평점이 4.5점대에 형성되어 있어, 해외 소비자 반응은 전반적으로 긍정적입니다.
 
-### Face Serum (얼굴 세럼)
-| 순위 | 제품명 | 리뷰 수 | 평균 평점 |
-|------|--------|---------|----------|
-| 1 | Garnier Turbo Bright Super Serum | 2,883 | 4.26 |
-| 2 | Biotique Dandelion Visibly Ageless Serum | 2,141 | 4.04 |
-| 3 | Minimalist Tranexamic Acid Serum | 1,722 | 3.55 |
-| 4 | Minimalist Niacinamide Serum | 1,668 | 4.04 |
-| 5 | Plum Niacinamide Fermented Serum | 1,609 | 3.64 |
-
-### Cream & Moisturizer (크림·보습)
-상위 제품은 Nivea, Pond's, Himalaya 등 대형 글로벌·인도 로컬 브랜드가 독점. K-Beauty 고기능 크림 (BIOHEAL BOH 계열) 진입 여지 다수.
-
-### Sunscreen (선크림)
-| 순위 | 제품명 | 리뷰 수 | 평균 평점 |
-|------|--------|---------|----------|
-| 1 | Biotique Sandalwood Sunscreen | 4,641 | 4.06 |
-| 2 | POND'S Bright Non-Oily Moisturizer | 4,557 | 4.20 |
-| 3 | Dr. Sheth's Sunscreen Sensitive | 4,099 | 4.25 |
-| 4 | Lotus Herbals Matte Daily Sunblock | 3,922 | 3.96 |
-| 5 | Shield Pollution Protect Mineral Sunscreen | 3,058 | 4.15 |
-
-**선크림 시장(133,427 리뷰)**은 스킨케어 카테고리 내 최대 볼륨을 자랑합니다. BIOHEAL BOH의 에이징케어·고기능 성분 포지셔닝으로 차별화 가능성 높음.
-
-### Sheet Mask (시트마스크)
-| 순위 | 제품명 | 리뷰 수 | 평균 평점 |
-|------|--------|---------|----------|
-| 1 | Lakme Blush Glow Strawberry Sheet | 533 | **4.70** |
-| 2 | Innisfree Volcanic Blackhead 3 Step | 196 | 3.34 |
-| 3 | COSRX Acne Pimple Master Patch | 177 | 3.79 |
-
-시트마스크 카테고리(11,189 리뷰)는 상대적으로 볼륨이 낮지만 **평점 1위 제품이 4.70점**으로 만족도가 매우 높습니다. K-Beauty 시트마스크의 품질 경쟁력을 잘 살리면 빠른 점유율 확보가 가능한 카테고리입니다.
+- **BIOHEAL BOH**: 고기능 스킨케어, 크림/미스트/패치/마스크 중심으로 리뷰와 평점이 안정적입니다.
+- **WAKEMAKE**: 색조 카테고리 전반에 넓게 분포하며, 아이 팔레트와 립/페이스 제품에서 리뷰 볼륨이 큽니다.
+- **전략적 의미**: Olive Young Global에서 이미 검증된 글로벌 리뷰 자산을 확보하고 있어, 신규 시장 진입 시 이 리뷰/평점 자산을 초기 신뢰 형성 근거로 활용할 수 있습니다.
 
 ---
 
-## 4. 성별 Top-5
+## 2. 브랜드별 카테고리 구조
 
-> **성별 판단 기준**: 제품 타입 및 제품명 키워드 기반 추정 (Nail Polish·Lipstick·Mascara → 여성, Trimmers·Shaving → 남성, Sunscreen·Cleanser·Shower Gel → 유니섹스)
+### BIOHEAL BOH
 
-### 성별 리뷰 분포
+| 카테고리 | 상품 수 |
+|---|---:|
+| Skincare | 42 |
+| Face Masks | 14 |
+| Suncare | 5 |
+| Makeup Brush & Tools | 4 |
+| Makeup | 2 |
+| Wellness | 1 |
 
-| 성별 | 리뷰 수 | 비중 |
-|------|---------|------|
-| Unisex (유니섹스) | 823,216 | 61.1% |
-| Female (여성 타겟) | 432,759 | 32.1% |
-| Male (남성 타겟) | 92,271 | 6.8% |
+BIOHEAL BOH는 스킨케어 중심 브랜드로 명확하게 포지셔닝되어 있습니다. 세부 카테고리에서는 Moisturizers 34개, Sheet Masks 9개, Sunscreen 5개가 핵심입니다.
 
-### 여성 타겟 Top-5
-| 순위 | 제품명 | 카테고리 | 리뷰 수 | 평균 평점 |
-|------|--------|----------|---------|----------|
-| 1 | MyGlamm 2IN1 Nail Paint Poolside Soiree | Nail Polish | 9,942 | 4.19 |
-| 2 | Faces Splash Enamel Floral Dream | Nail Polish | 9,836 | 4.17 |
-| 3 | Revlon Nail Enamel Matt Coat | Nail Polish | 9,344 | 4.19 |
-| 4 | Revlon Nail Enamel Red Fiesta | Nail Polish | 8,851 | 4.18 |
-| 5 | ILLUMOR Crushed Diamond Polish Gilded | Nail Polish | 8,040 | 4.28 |
+| 리뷰 수 기준 상위 상품 | 리뷰 수 | 평점 | 세부 카테고리 |
+|---|---:|---:|---|
+| BIOHEAL BOH PANTHECELL Repair Cica Cream Mist 120mL | 748 | 4.7 | Moisturizers |
+| BIOHEAL BOH Probioderm Collagen Remodeling Eye Patch 60P | 473 | 4.7 | Patches |
+| BIOHEAL BOH Probioderm Collagen Essence Sun Cream 1+1 Special Set | 390 | 4.8 | Sunscreen |
+| BIOHEAL BOH PROBIODERM 3D Lifting Cream Mist 100mL | 353 | 4.8 | Moisturizers |
+| BIOHEAL BOH Probioderm 3D Lifting Cream Mask Sheet 5ea Set | 268 | 4.8 | Sheet Masks |
 
-WAKEMAKE가 타겟으로 하는 **컬러 코스메틱** 영역에서 여성 소비자의 구매력이 집중되어 있음을 확인할 수 있습니다. 다만 현재 상위권은 네일 제품이 장악한 상태로, 립·아이·베이스 메이크업 영역은 진입 가능성이 열려 있습니다.
+### WAKEMAKE
 
-### 남성 타겟 Top-5
-| 순위 | 제품명 | 카테고리 | 리뷰 수 | 평균 평점 |
-|------|--------|----------|---------|----------|
-| 1 | Himalaya Herbals Protein Shampoo Gentle | Shampoo | 5,506 | 4.19 |
-| 2 | Biotique Protein Intensive Regrowth Treatment | Shampoo | 4,189 | 4.18 |
-| 3 | Himalaya Herbals Purifying Neem Face Wash 100ml | Face Wash | 3,582 | 4.24 |
-| 4 | Himalaya Herbals Purifying Neem Face Wash 150ml | Face Wash | 2,250 | 4.10 |
-| 5 | Beardo Beard Color Men Natural | Hair Color | 2,214 | 3.99 |
+| 카테고리 | 상품 수 |
+|---|---:|
+| Makeup | 73 |
+| Makeup Brush & Tools | 1 |
 
-### 유니섹스 Top-5
-| 순위 | 제품명 | 카테고리 | 리뷰 수 | 평균 평점 |
-|------|--------|----------|---------|----------|
-| 1 | Nivea Pure Impact Shower 500ml | Shower Gel | 6,469 | 4.15 |
-| 2 | Vivel Body Wash Lavender Almond | Shower Gel | 5,919 | 4.16 |
-| 3 | mCaffeine Salicylic Exfoliates | Shower Gel | 5,036 | 4.04 |
-| 4 | Pears Pure Gentle Body Extract | Shower Gel | 5,035 | 4.27 |
-| 5 | Nivea Dark Spot Reduction 100ml | Face Wash | 4,825 | 4.14 |
+WAKEMAKE는 거의 전 상품이 메이크업 카테고리에 집중되어 있습니다. 세부 카테고리는 Face 25개, Eye 23개, Lip 16개, Nail 9개로 나뉘며, 색조 전반을 커버하는 구조입니다.
 
----
-
-## 5. 추가 분석 인사이트
-
-### 5-1. 브랜드 점유율 Top-10 (전체 리뷰 수 합산)
-
-| 순위 | 브랜드 | 총 리뷰 수 | 제품 수 | 평균 평점 |
-|------|--------|-----------|--------|----------|
-| 1 | Revlon | 39,995 | 9 | 4.17 |
-| 2 | Lakme | 36,894 | 29 | 4.13 |
-| 3 | Mamaearth | 35,706 | 30 | 4.14 |
-| 4 | Biotique | 35,470 | 23 | 4.11 |
-| 5 | Nivea | 33,788 | 20 | 4.22 |
-| 6 | MyGlamm | 31,811 | 7 | 4.11 |
-| 7 | L'Oréal | 31,142 | 25 | 4.04 |
-| 8 | Minimalist | 24,437 | 25 | 4.05 |
-| 9 | Garnier | 23,829 | 23 | 4.12 |
-| 10 | Himalaya | 21,891 | 12 | 4.14 |
-
-**K-Beauty 브랜드는 Top-10 어디에도 없습니다.** 이 공백이 곧 BIOHEAL BOH · WAKEMAKE의 진입 기회입니다.
-
-### 5-2. 평점 분포 — 소비자 만족도 패턴
-
-| 평점 | 리뷰 수 | 비중 |
-|------|---------|------|
-| ★ 1점 | 120,305 | 8.9% |
-| ★ 2점 | 75,480 | 5.6% |
-| ★ 3점 | 114,825 | 8.5% |
-| ★ 4점 | 214,453 | 15.9% |
-| ★ 5점 | 823,183 | **61.1%** |
-
-전체 리뷰의 **61.1%가 5점**으로, 뷰티 카테고리 전반에서 소비자 만족도가 양극화되어 있습니다. 4~5점 합산 시 77%가 긍정 리뷰입니다. 이는 **품질 기반의 신뢰 구축**이 빠른 재구매와 직결되는 시장임을 시사합니다.
-
-### 5-3. 스킨케어 카테고리 시장 규모 비교
-
-| 카테고리 | 리뷰 수 | 평균 평점 | 비고 |
-|----------|---------|----------|------|
-| Sunscreen | 133,427 | 4.12 | 최대 볼륨, 필수재화 |
-| Face Wash & Cleansers | 112,020 | 4.14 | 일상 루틴 상품 |
-| Face Serum | 54,001 | 4.05 | 프리미엄 가격대 가능 |
-| Cream & Moisturizer | 34,109 | 4.05 | BIOHEAL BOH 주력 |
-| Sheet Mask | 11,189 | 4.16 | K-Beauty 강점 카테고리 |
-
-BIOHEAL BOH가 강점을 갖는 **Cream & Moisturizer(34,109 리뷰)**와 **Sheet Mask(11,189 리뷰)** 모두 평균 평점이 높게 형성되어 있어, 품질 중심 포지셔닝이 유효한 카테고리입니다.
-
-### 5-4. 고평점 제품 Top-5 (리뷰 500건 이상 기준)
-
-| 순위 | 제품명 | 카테고리 | 리뷰 수 | 평균 평점 |
-|------|--------|----------|---------|----------|
-| 1 | Lakme Blush Glow Strawberry Sheet | Sheet Mask | 533 | **4.70** |
-| 2 | Wet N Wild Megalast Catsuit Lipstick | Lipstick | 735 | **4.61** |
-| 3 | Dance Eyeshadow Palette Multicolor EP12 02 | Eye Shadow | 565 | **4.60** |
-| 4 | Blue Heaven Twist Mascara Black | Eye Shadow & Mascara | 970 | **4.55** |
-| 5 | Plum BodyLovin Fragrance Body Lotion | Deo & Perfume | 898 | **4.53** |
-
-메이크업 제품(립, 아이섀도, 마스카라)과 시트마스크가 **소비자 만족도 최상위권**을 형성하고 있습니다. WAKEMAKE의 트렌드 컬러 코스메틱 및 BIOHEAL BOH의 시트마스크 라인은 이 고만족도 세그먼트에 직접 경쟁할 수 있는 제품군입니다.
-
-### 5-5. K-Beauty 시장 공백 — 전략적 기회 맵
-
-```
-리뷰 수 (시장 규모)
-  ↑
-133K ┤ Sunscreen ← 대형 인도·글로벌 브랜드 독점 / K-Beauty 침투율 <0.1%
-112K ┤ Face Wash
- 54K ┤ Face Serum ← K-Beauty 기능성 세럼 경쟁력 ★★★
- 34K ┤ Cream & Moisturizer ← BIOHEAL BOH 에이징케어 적합 ★★★★
- 11K ┤ Sheet Mask ← K-Beauty 원조 카테고리, 점유율 확보 시작 가능 ★★★★★
-     └──────────────────────────────────────────────
-                                K-Beauty 점유율 (현재 거의 0)
-```
+| 리뷰 수 기준 상위 상품 | 리뷰 수 | 평점 | 세부 카테고리 |
+|---|---:|---:|---|
+| WAKEMAKE Soft Blurring Eye Palette (14 Options) | 1,683 | 4.7 | Eye |
+| WAKEMAKE Natural Hard Brow Pencil 1+1 Set | 372 | 4.5 | Eye |
+| WAKEMAKE Sheer Layering Dual Blusher | 328 | 4.6 | Face |
+| WAKEMAKE Shaking Blur Cheek (11 Colors) | 314 | 4.5 | Face |
+| WAKEMAKE Defining Cover Concealer SPF30 / PA++ | 243 | 4.6 | Face |
 
 ---
 
-## 6. 종합 결론 및 마케팅 방향성 제언
+## 3. Olive Young Global에서 확인되는 강점
 
-### 현황 요약
-- BIOHEAL BOH · WAKEMAKE는 Amazon Beauty 데이터셋(약 24,000 제품)에 **미등록** 상태
-- K-Beauty 전체 입지: 데이터셋 내 2개 제품(Innisfree, COSRX) 합산 373건 리뷰 — 시장 점유율 **0.03%**
-- 경쟁 브랜드(Revlon, Lakme, Mamaearth 등)는 수만 건의 리뷰를 보유
+### BIOHEAL BOH: 기능성 스킨케어 신뢰 자산
 
-### 기회 포인트
-1. **K-Beauty 공백**: 기능성 스킨케어(세럼, 보습크림, 시트마스크) 카테고리에서 K-Beauty 경쟁자가 없음
-2. **메이크업 만족도 상위권 공백**: 4.5점+ 고평점 메이크업 제품군에서 WAKEMAKE 포지셔닝 가능
-3. **5점 리뷰 61% 시장**: 초기 충성 리뷰어 확보 → 입소문 마케팅 연결 고리가 강한 시장
+BIOHEAL BOH는 리뷰 수가 많은 상품 대부분이 4.7~4.8점대입니다. 특히 Cica, Probioderm, Collagen, Sun Cream, Mask Sheet 관련 제품이 반복적으로 상위권에 나타납니다.
 
-### 리스크 요인
-- 현재 Amazon India 기반 데이터로, 일본 시장과 소비자 특성 차이 존재
-- 기존 상위 브랜드(Himalaya, Biotique 등)는 현지 허브·성분 중심 포지셔닝으로 강력한 로컬 신뢰 형성
-- K-Beauty에 대한 별도 마케팅 없이는 브랜드 인지도 자연 유입 기대 불가
+전략적으로는 다음 포인트가 강합니다.
+
+- **고기능 성분 중심 메시지**: Cica, Collagen, Probioderm, NAD 등 기능성 키워드가 상품명에 명확하게 드러납니다.
+- **리뷰 기반 신뢰도**: 리뷰 수가 많은 제품도 평점이 높아 품질 리스크가 낮게 보입니다.
+- **확장 적합 카테고리**: Moisturizer, Cream Mist, Sun Cream, Sheet Mask, Eye Patch.
+
+### WAKEMAKE: 색조 메이크업 확장성과 트렌드성
+
+WAKEMAKE는 Eye, Face, Lip, Nail에 걸쳐 상품군이 넓습니다. 특히 Soft Blurring Eye Palette는 단일 상품 기준 리뷰 1,683개, 평점 4.7로 강한 대표 상품 역할을 합니다.
+
+전략적으로는 다음 포인트가 강합니다.
+
+- **대표 히어로 상품 존재**: Eye Palette가 브랜드 인지도 견인 상품으로 활용 가능.
+- **색조 카테고리 폭**: 아이, 립, 페이스, 네일을 모두 커버해 캠페인 구성이 쉽습니다.
+- **콜라보/에디션 대응력**: HELLO KITTY, GYARU KITTY 에디션 상품이 확인되어 트렌드형 마케팅에 적합합니다.
 
 ---
 
-*분석 기준일: 2026-06-21 | 데이터 기간: 2010–2014 (Amazon India 리뷰 타임스탬프 기준)*
+## 4. 실행 제안
+
+### BIOHEAL BOH
+
+1. **초기 진입 상품**: Cream Mist, Sun Cream, Sheet Mask, Eye Patch 중심.
+2. **메시지**: 기능성 성분, 피부 장벽/진정, 콜라겐/리프팅, 높은 글로벌 리뷰 평점.
+3. **시장 접근**: 신규 시장에서는 K-Beauty 스킨케어가 아직 희소하므로, “Olive Young Global 검증 상품”이라는 신뢰 근거를 전면에 배치.
+
+### WAKEMAKE
+
+1. **초기 진입 상품**: Soft Blurring Eye Palette, Brow Pencil, Blusher, Cushion/Foundation, Lip Tint.
+2. **메시지**: 한국 트렌드 컬러, 다양한 옵션, 고평점 대표 팔레트, 에디션/콜라보 감도.
+3. **시장 접근**: Eye/Lip/Face/Nail까지 폭넓게 확장된 K-Beauty 색조 브랜드로 차별화.
+
+### 공통
+
+- Olive Young Global 리뷰/평점 데이터를 랜딩 페이지, 제품 상세, 광고 소재에 활용.
+- 상품별 리뷰 수와 평점이 높은 SKU부터 우선 진입.
+- 신규 시장에서는 브랜드 인지도가 낮으므로, 초반에는 브랜드 검색 수요보다 카테고리 검색 수요를 공략.
+
+---
+
+## 5. 데이터 산출물
+
+이번 분석에 사용한 신규 산출물은 다음과 같습니다.
+
+| 파일 | 내용 |
+|---|---|
+| `data/manifests/oy_brand_products.csv` | BIOHEAL BOH · WAKEMAKE 상품 142개, 가격/카테고리/평점/리뷰 수 |
+| `data/manifests/oy_brand_reviews.csv` | 상품별 리뷰 본문 샘플 2,447개 |
+
+수집 방식:
+
+1. Olive Young Global 검색 페이지에서 CSRF 토큰 확보
+2. `/display/search/product-list` API로 브랜드 검색 결과 수집
+3. `/product/detail-data` API로 상품 상세 보강
+4. `/product/review-list` API로 리뷰 본문 수집
+
+---
+
+*작성/갱신: 2026-06-22*

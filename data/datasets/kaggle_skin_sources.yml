@@ -13,6 +13,4 @@ product_review_datasets:
     purpose: product metadata and skincare reviews
   - slug: crawlfeeds/dermstore-skincare-products-and-ingredients-dataset
     purpose: product and ingredient metadata
-  - slug: satrapankti/amazon-beauty-product-recommendation
-    purpose: large beauty review and rating data
 
