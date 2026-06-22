@@ -19,3 +19,7 @@ data/datasets/kaggle/
 data/manifests/*.csv
 data/models/*.pt
 data/models/*.pth
+data/models/*.bak-*
+*.log
+*.db.bak-*
+aihub_datasets.txt

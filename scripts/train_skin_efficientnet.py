@@ -26,7 +26,9 @@ class SkinDataset(Dataset):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         row = self.frame.iloc[index]
         image = Image.open(row.image_path).convert("RGB")
-        target = torch.tensor([row[target] for target in TARGETS], dtype=torch.float32)
+        # Labels are 0-100; normalize to 0-1 so the regression head converges
+        # quickly (large raw targets + capped SmoothL1 gradients learn very slowly).
+        target = torch.tensor([row[target] / 100.0 for target in TARGETS], dtype=torch.float32)
         return self.transform(image), target
 
 
@@ -42,7 +44,7 @@ def main() -> int:
     parser.add_argument("--out", default="data/models/skin_efficientnet_b0.pt")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--max-samples", type=int, default=0)
     args = parser.parse_args()
 
@@ -109,6 +111,7 @@ def main() -> int:
                     "targets": TARGETS,
                     "val_loss": best_val,
                     "epochs": epoch,
+                    "label_scale": 100.0,  # multiply raw model output by this at inference
                 },
                 out,
             )
