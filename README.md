@@ -7,7 +7,7 @@ AI 기반 피부 분석 및 화장품 추천 플랫폼입니다.
 - 프론트엔드: React, TypeScript, Material UI, Vite
 - 백엔드: FastAPI, SQLAlchemy
 - AI: PyTorch 연동을 고려한 서비스 경계, OpenCV 호환 이미지 처리
-- 데이터베이스: MySQL 연동 가능 SQLAlchemy 모델, 로컬 개발 기본값은 SQLite
+- 데이터베이스: SQLAlchemy 모델 + Alembic 마이그레이션, 로컬 기본값 SQLite, 운영은 Supabase/Postgres 연동 가능
 - 벡터 DB: ChromaDB 연동을 고려한 RAG 서비스 경계
 - 캐시/인프라: Redis, Docker, GitHub Actions 플레이스홀더
 
@@ -44,6 +44,41 @@ http://localhost:5173 을 열고 다음 흐름으로 사용합니다.
 
 현재 피부 분석기는 결정론적인 MVP 구현입니다. 업로드된 얼굴 이미지를 받아 필수 여섯 가지 0-100 피부 점수를 반환합니다. `SkinAnalyzer` 서비스는 의도적으로 분리되어 있어 API 계약을 변경하지 않고도 휴리스틱 구현을 EfficientNet/PyTorch 모델로 교체할 수 있습니다.
 
+## 데이터베이스 / 마이그레이션 (Alembic · Supabase)
+
+스키마는 Alembic으로 관리합니다. 모델([`backend/app/models/domain.py`](backend/app/models/domain.py))을 바꾼 뒤에는 마이그레이션을 생성·적용해야 합니다. (`create_all`은 새 테이블만 만들고 기존 테이블에 컬럼을 추가하지 못합니다.)
+
+```bash
+# 모델 변경 후 마이그레이션 자동 생성
+cd backend && .venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe change"
+# 적용
+cd backend && .venv\Scripts\python.exe -m alembic upgrade head
+```
+
+연결 대상은 `.env`의 `DATABASE_URL` 하나로 결정됩니다(Alembic도 동일 값을 사용 — 자격증명은 alembic.ini가 아닌 .env에만 둡니다).
+
+### SQLite → Supabase(Postgres) 이전
+
+1. Supabase 프로젝트 생성 후 `Project Settings > Database`에서 연결 문자열 확인
+2. `.env`의 `DATABASE_URL`을 Postgres 주소로 교체:
+   ```
+   DATABASE_URL=postgresql+psycopg2://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+   ```
+3. Supabase에 스키마 생성:
+   ```bash
+   cd backend && .venv\Scripts\python.exe -m alembic upgrade head
+   ```
+4. 기존 SQLite 데이터를 복사(원본 sqlite는 그대로 두고 읽기만 함):
+   ```bash
+   backend\.venv\Scripts\python.exe scripts\migrate_sqlite_to_postgres.py ^
+       --source sqlite:///./beautyai.db ^
+       --target "postgresql+psycopg2://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres"
+   ```
+   - 타깃 테이블에 데이터가 있으면 기본적으로 중단됩니다. 덮어쓰려면 `--truncate` 추가.
+   - Postgres 타깃은 복사 후 id 시퀀스를 자동 보정합니다.
+
+이미 스키마가 있는 기존 DB를 Alembic 관리로 편입할 때는 `alembic stamp head`로 현재 리비전을 표시합니다(로컬 sqlite는 이미 stamp 처리됨).
+
 ## 피부 모델 학습
 
 Kaggle 데이터셋을 사용하려면 Kaggle API 토큰이 필요합니다. Windows에서는 `kaggle.json`을 `%USERPROFILE%\.kaggle\kaggle.json`에 두거나, `KAGGLE_USERNAME`과 `KAGGLE_KEY`를 설정하세요.
@@ -59,14 +94,4 @@ backend\.venv\Scripts\python.exe scripts\train_skin_efficientnet.py --epochs 5
 ```
 
 학습된 모델은 `data/models/skin_efficientnet_b0.pt`에 저장됩니다. API는 `.env`에서 `SKIN_MODEL_PATH`를 읽습니다. 파일이 존재하고 PyTorch가 설치되어 있으면 `POST /api/analyze-skin`은 EfficientNet 모델을 자동으로 사용합니다. 그렇지 않으면 MVP 분석기로 대체됩니다.
-
-제품/리뷰 데이터셋은 Amazon Beauty 데이터셋 기반 카탈로그 후보로 변환할 수 있습니다.
-
-```bash
-backend\.venv\Scripts\python.exe scripts\download_kaggle_datasets.py --only satrapankti/amazon-beauty-product-recommendation
-backend\.venv\Scripts\python.exe scripts\import_amazon_beauty_catalog.py --root data\datasets\kaggle --out data\manifests\amazon_beauty_catalog.csv
-backend\.venv\Scripts\python.exe scripts\load_product_catalog_to_db.py --catalog data\manifests\amazon_beauty_catalog.csv --limit 5000
-```
-
-Amazon Beauty 카탈로그 변환기는 상품명, 브랜드, 가격, 카테고리, 평점, 리뷰 수, 설명, 리뷰 텍스트를 기반으로 피부 고민 태그를 자동 생성합니다. 성분 정보가 없는 상품도 `acne`, `pore`, `oiliness`, `redness`, `pigmentation`, `wrinkle` 태그를 추천 성분 타깃으로 매핑해 기존 추천 API와 연결됩니다.
 
