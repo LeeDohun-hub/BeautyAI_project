@@ -26,7 +26,6 @@ import {
 import {
   ArrowLeft,
   ArrowRight,
-  ExternalLink,
   Camera,
   History,
   ImagePlus,
@@ -37,7 +36,48 @@ import {
   Trash2,
 } from 'lucide-react';
 import { analyzeSkin, chat, getHistory, recommend } from './api/client';
-import type { AnalyzeSkinResponse, HistoryItem, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
+import type { AnalyzeSkinResponse, HistoryItem, Product, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
+
+// 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
+// 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다 (일본 시장 타겟: 아마존/야후재팬/네이버).
+function buildShopLinks(product: Product) {
+  const query = encodeURIComponent(`${product.brand} ${product.name}`.trim());
+  const amazon =
+    product.product_url && /amazon\./i.test(product.product_url)
+      ? product.product_url
+      : `https://www.amazon.co.jp/s?k=${query}`;
+  return {
+    oliveyoung: `https://global.oliveyoung.com/display/search?query=${query}`,
+    amazon,
+    yahoo: `https://shopping.yahoo.co.jp/search?p=${query}`,
+    naver: `https://search.shopping.naver.com/search/all?query=${query}`,
+  };
+}
+
+// K-뷰티 브랜드 판별용(부분 일치, 소문자). 올리브영은 이 브랜드일 때만 노출한다.
+const KBEAUTY_BRANDS = [
+  'bioheal', 'wakemake', 'cosrx', 'innisfree', 'anua', 'tirtir', 'medicube',
+  'beauty of joseon', 'round lab', 'torriden', 'numbuzin', 'skin1004', 'mixsoon',
+  'laneige', 'sulwhasoo', 'etude', 'missha', 'some by mi', 'isntree', 'purito',
+  'rom&nd', 'romand', 'peripera', 'clio', 'dr.jart', 'dr jart', 'manyo', 'abib',
+  'axis-y', 'heimish', 'klairs', 'd.alba', 'mediheal', 'goodal', 'hince', 'espoir',
+];
+const isKBeauty = (brand: string) => {
+  const b = (brand || '').toLowerCase();
+  return KBEAUTY_BRANDS.some((k) => b.includes(k));
+};
+
+// 각 쇼핑몰 버튼: 브랜드 시그니처 컬러 + 실제 사이트 파비콘으로 매칭.
+// kbeautyOnly가 true인 채널은 K-뷰티 브랜드 상품에만 노출한다.
+const SHOP_PLATFORMS = [
+  { key: 'oliveyoung', label: '올리브영', domain: 'global.oliveyoung.com', bg: '#80BA27', fg: '#FFFFFF', hover: '#6FA31F', kbeautyOnly: true },
+  { key: 'amazon', label: '아마존', domain: 'amazon.co.jp', bg: '#FF9900', fg: '#131A22', hover: '#E68A00', kbeautyOnly: false },
+  { key: 'yahoo', label: '야후재팬', domain: 'yahoo.co.jp', bg: '#FF0033', fg: '#FFFFFF', hover: '#D9002B', kbeautyOnly: false },
+  { key: 'naver', label: '네이버', domain: 'naver.com', bg: '#03C75A', fg: '#FFFFFF', hover: '#02A94C', kbeautyOnly: false },
+] as const;
+
+// 사이트 파비콘 URL (구글 파비콘 서비스 — 실제 브랜드 로고를 안정적으로 제공)
+const faviconUrl = (domain: string) => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
 
 const ageGroups = [
   { value: '10s', label: '10대' },
@@ -47,7 +87,27 @@ const ageGroups = [
   { value: '50s', label: '50대+' },
 ];
 
-const femaleSkinConcerns = [
+// 칩 옵션: children가 있으면 부모 선택 시 세부 항목이 펼쳐집니다.
+type ChipOption = { value: string; label: string; children?: ChipOption[] };
+
+// 성별 무관 공통 피부 건강 고민 (건조/장벽/아토피/알레르기 등)
+const commonSkinConcerns: ChipOption[] = [
+  { value: '건조·수분부족', label: '건조·수분부족' },
+  { value: '기미·주근깨', label: '기미·주근깨' },
+  {
+    value: '피부장벽',
+    label: '피부장벽 약화',
+    children: [
+      { value: '예민함', label: '예민함' },
+      { value: '화끈거림', label: '화끈거림' },
+      { value: '자극', label: '자극' },
+    ],
+  },
+  { value: '아토피', label: '아토피' },
+  { value: '알레르기', label: '알레르기' },
+];
+
+const femaleSkinConcerns: ChipOption[] = [
   { value: '트러블', label: '트러블' },
   { value: '모공', label: '모공' },
   { value: '주름', label: '주름' },
@@ -57,34 +117,118 @@ const femaleSkinConcerns = [
   { value: '칙칙함', label: '칙칙함' },
   { value: '다크서클', label: '다크서클' },
   { value: '탄력저하', label: '탄력저하' },
+  ...commonSkinConcerns,
 ];
 
-const maleSkinConcerns = [
+const maleSkinConcerns: ChipOption[] = [
   { value: '트러블', label: '트러블' },
   { value: '모공', label: '모공' },
   { value: '유분·번들거림', label: '유분·번들거림' },
   { value: '면도 후 자극', label: '면도 후 자극' },
   { value: '주름', label: '주름' },
   { value: '다크서클', label: '다크서클' },
+  ...commonSkinConcerns,
 ];
 
-const makeupConcernOptions = [
+const makeupConcernOptions: ChipOption[] = [
   { value: '파운데이션 밀림', label: '파운데이션 밀림' },
   { value: '들뜸', label: '들뜸' },
   { value: '지속력', label: '지속력 부족' },
-  { value: '커버력', label: '커버력 부족' },
+  { value: '다크닝', label: '다크닝(산화)' },
+  { value: '피부톤', label: '피부톤 안 맞음' },
+  { value: '속건조', label: '속건조' },
+  { value: '광택', label: '광택 표현' },
+  {
+    value: '커버력',
+    label: '커버력 부족',
+    children: [
+      { value: '잡티 커버', label: '잡티 커버' },
+      { value: '홍조 커버', label: '홍조 커버' },
+      { value: '모공 커버', label: '모공 커버' },
+    ],
+  },
 ];
 
-const areaConcernOptions = [
+const areaConcernOptions: ChipOption[] = [
   { value: '눈가', label: '눈가' },
   { value: '입술', label: '입술' },
   { value: '목·데콜테', label: '목·데콜테' },
+  { value: '코', label: '코' },
+  { value: '턱', label: '턱' },
+  { value: '이마', label: '이마' },
+  { value: '볼', label: '볼' },
 ];
 
 const maleExtraOptions = [
   { value: '두피·헤어', label: '두피·헤어' },
   { value: '바디', label: '바디' },
 ];
+
+// 다중선택 칩. 부모를 고르면 children이 들여쓰기되어 펼쳐지고, 부모를 끄면 자식도 함께 해제됩니다.
+function NestedChipSelect({
+  options,
+  value,
+  onChange,
+}: {
+  options: ChipOption[];
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const groupSx = { display: 'flex', flexWrap: 'wrap', gap: 1 } as const;
+  const itemSx = { border: '1px solid #d6deea !important', borderRadius: '8px !important' } as const;
+
+  const toggle = (v: string, opt?: ChipOption) => {
+    const has = value.includes(v);
+    let next = has ? value.filter((x) => x !== v) : [...value, v];
+    if (has && opt?.children?.length) {
+      const kids = opt.children.map((c) => c.value);
+      next = next.filter((x) => !kids.includes(x));
+    }
+    onChange(next);
+  };
+
+  return (
+    <Box>
+      <Box sx={groupSx}>
+        {options.map((opt) => (
+          <ToggleButton
+            key={opt.value}
+            value={opt.value}
+            selected={value.includes(opt.value)}
+            onClick={() => toggle(opt.value, opt)}
+            size="small"
+            sx={itemSx}
+          >
+            {opt.label}
+          </ToggleButton>
+        ))}
+      </Box>
+      {options
+        .filter((o) => o.children?.length && value.includes(o.value))
+        .map((parent) => (
+          <Box key={parent.value} sx={{ mt: 1, ml: 1.5, pl: 1.5, borderLeft: '2px solid #e3e9f2' }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+              {parent.label} · 세부 선택
+            </Typography>
+            <Box sx={groupSx}>
+              {parent.children!.map((child) => (
+                <ToggleButton
+                  key={child.value}
+                  value={child.value}
+                  selected={value.includes(child.value)}
+                  onClick={() => toggle(child.value)}
+                  size="small"
+                  sx={itemSx}
+                >
+                  {child.label}
+                </ToggleButton>
+              ))}
+            </Box>
+          </Box>
+        ))}
+    </Box>
+  );
+}
 
 const steps = ['설문', '얼굴 입력', '피부 분석', '추천', '상담'];
 
@@ -441,16 +585,11 @@ export default function App() {
           {/* 피부 고민 */}
           <Box>
             <Typography {...sectionLabelSx}>피부 고민</Typography>
-            <ToggleButtonGroup
+            <NestedChipSelect
+              options={skinConcernList}
               value={survey.concerns}
-              onChange={(_, v) => setSurvey({ ...survey, concerns: v })}
-              size="small"
-              sx={chipGroupSx}
-            >
-              {skinConcernList.map((c) => (
-                <ToggleButton key={c.value} value={c.value} sx={chipSx}>{c.label}</ToggleButton>
-              ))}
-            </ToggleButtonGroup>
+              onChange={(v) => setSurvey({ ...survey, concerns: v })}
+            />
           </Box>
 
           {/* 여성: 메이크업 베이스 고민 */}
@@ -460,16 +599,11 @@ export default function App() {
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                 베이스 메이크업 시 불편한 점을 선택해 주세요
               </Typography>
-              <ToggleButtonGroup
+              <NestedChipSelect
+                options={makeupConcernOptions}
                 value={survey.makeup_concerns}
-                onChange={(_, v) => setSurvey({ ...survey, makeup_concerns: v })}
-                size="small"
-                sx={chipGroupSx}
-              >
-                {makeupConcernOptions.map((c) => (
-                  <ToggleButton key={c.value} value={c.value} sx={chipSx}>{c.label}</ToggleButton>
-                ))}
-              </ToggleButtonGroup>
+                onChange={(v) => setSurvey({ ...survey, makeup_concerns: v })}
+              />
             </Box>
           )}
 
@@ -480,16 +614,11 @@ export default function App() {
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                 집중적으로 케어하고 싶은 부위를 선택해 주세요
               </Typography>
-              <ToggleButtonGroup
+              <NestedChipSelect
+                options={areaConcernOptions}
                 value={survey.area_concerns}
-                onChange={(_, v) => setSurvey({ ...survey, area_concerns: v })}
-                size="small"
-                sx={chipGroupSx}
-              >
-                {areaConcernOptions.map((c) => (
-                  <ToggleButton key={c.value} value={c.value} sx={chipSx}>{c.label}</ToggleButton>
-                ))}
-              </ToggleButtonGroup>
+                onChange={(v) => setSurvey({ ...survey, area_concerns: v })}
+              />
             </Box>
           )}
 
@@ -699,7 +828,9 @@ export default function App() {
                   </Stack>
                 </Box>
                 <Divider />
-                {recommendation.products.map((product, index) => (
+                {recommendation.products.map((product, index) => {
+                  const links = buildShopLinks(product);
+                  return (
                   <Box key={product.id} className="product-row">
                     <Typography variant="caption" color="text.secondary">추천 {index + 1}</Typography>
                     <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1}>
@@ -719,22 +850,53 @@ export default function App() {
                       )}
                     </Stack>
                     <Typography variant="body2" sx={{ mt: 0.5 }}>{product.description}</Typography>
-                    {product.product_url && (
-                      <Button
-                        component="a"
-                        href={product.product_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        size="small"
-                        variant="outlined"
-                        startIcon={<ExternalLink size={14} />}
-                        sx={{ mt: 1 }}
-                      >
-                        Amazon에서 보기
-                      </Button>
-                    )}
+                    <Stack direction="row" gap={1} flexWrap="wrap" sx={{ mt: 1 }}>
+                      {SHOP_PLATFORMS.filter((platform) => !platform.kbeautyOnly || isKBeauty(product.brand)).map((platform) => (
+                        <Button
+                          key={platform.key}
+                          component="a"
+                          href={links[platform.key]}
+                          target="_blank"
+                          rel="noreferrer"
+                          size="small"
+                          variant="contained"
+                          disableElevation
+                          startIcon={
+                            <Box
+                              sx={{
+                                width: 18,
+                                height: 18,
+                                borderRadius: '4px',
+                                bgcolor: '#fff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              <Box
+                                component="img"
+                                src={faviconUrl(platform.domain)}
+                                alt=""
+                                width={14}
+                                height={14}
+                                sx={{ display: 'block' }}
+                              />
+                            </Box>
+                          }
+                          sx={{
+                            bgcolor: platform.bg,
+                            color: platform.fg,
+                            fontWeight: 700,
+                            '&:hover': { bgcolor: platform.hover },
+                          }}
+                        >
+                          {platform.label} 열기
+                        </Button>
+                      ))}
+                    </Stack>
                   </Box>
-                ))}
+                  );
+                })}
               </Stack>
             ) : (
               <Alert severity="info" sx={{ mt: 2 }}>분석 후 추천 상품이 표시됩니다.</Alert>

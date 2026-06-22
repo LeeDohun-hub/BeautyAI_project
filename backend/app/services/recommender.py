@@ -29,9 +29,19 @@ CONCERN_TARGET_MAP: dict[str, list[str]] = {
     "색소침착": ["pigmentation"], "유분": ["oiliness"], "칙칙함": ["pigmentation"],
     "다크서클": ["wrinkle", "pigmentation"], "탄력저하": ["wrinkle"],
     "유분·번들거림": ["oiliness"], "면도 후 자극": ["redness"],
+    # 피부 건강 고민 (성별 공통)
+    "건조·수분부족": ["redness"], "기미·주근깨": ["pigmentation"],
+    "피부장벽": ["redness"], "예민함": ["redness"], "화끈거림": ["redness"],
+    "자극": ["redness"], "아토피": ["redness"], "알레르기": ["redness"],
+    # 메이크업 베이스 고민
     "파운데이션 밀림": ["oiliness"], "들뜸": ["redness"],
     "지속력": ["oiliness"], "커버력": ["redness"],
+    "다크닝": ["oiliness"], "피부톤": ["pigmentation"], "속건조": ["redness"],
+    "광택": ["oiliness"], "잡티 커버": ["pigmentation"],
+    "홍조 커버": ["redness"], "모공 커버": ["pore"],
+    # 부위별 케어
     "눈가": ["wrinkle"], "입술": ["redness"], "목·데콜테": ["wrinkle", "pigmentation"],
+    "코": ["pore", "oiliness"], "턱": ["acne"], "이마": ["acne", "oiliness"], "볼": ["redness"],
     # backward compat (영문 코드)
     "acne": ["acne"], "pore": ["pore"], "wrinkle": ["wrinkle"],
     "redness": ["redness"], "pigmentation": ["pigmentation"], "oiliness": ["oiliness"],
