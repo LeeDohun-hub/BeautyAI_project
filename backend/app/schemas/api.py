@@ -34,6 +34,7 @@ class RecommendationRequest(BaseModel):
     analysis_id: int | None = None
     scores: SkinScores | None = None
     survey: SurveyInput
+    platform: str = Field(default="all")
     user_id: int | None = None
 
 
@@ -54,6 +55,8 @@ class ProductOut(BaseModel):
     description: str
     ingredients: list[str]
     product_url: str | None = None
+    platform_links: dict[str, str] = Field(default_factory=dict)
+    matched_platforms: list[str] = Field(default_factory=list)
     image_url: str | None = None
     avg_rating: float | None = None
     review_count: int | None = None

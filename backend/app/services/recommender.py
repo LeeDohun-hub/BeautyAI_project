@@ -1,4 +1,5 @@
 import json
+from urllib.parse import quote_plus
 
 from sqlalchemy.orm import Session, selectinload
 
@@ -55,6 +56,121 @@ AGE_PRIORITY_MAP: dict[str, list[str]] = {
     "50s": ["wrinkle"],
 }
 
+PLATFORM_ALIASES = {
+    "all": "all",
+    "amazon": "amazon_jp",
+    "amazon_en": "amazon_us",
+    "amazon_us": "amazon_us",
+    "amazon_jp": "amazon_jp",
+    "yahoo": "yahoo_japan",
+    "yahoo_japan": "yahoo_japan",
+    "naver": "naver",
+    "matsukiyo": "matsukiyo",
+    "oliveyoung": "oliveyoung",
+}
+
+KBEAUTY_BRANDS = {
+    "bioheal", "wakemake", "cosrx", "innisfree", "anua", "tirtir", "medicube",
+    "beauty of joseon", "round lab", "torriden", "numbuzin", "skin1004", "mixsoon",
+    "laneige", "sulwhasoo", "etude", "missha", "some by mi", "isntree", "purito",
+    "rom&nd", "romand", "peripera", "clio", "dr.jart", "dr jart", "manyo", "abib",
+    "axis-y", "heimish", "klairs", "d.alba", "mediheal", "goodal", "hince", "espoir",
+    "ma:nyo", "beplain", "celimax", "skinfood", "the face shop",
+}
+
+JBEAUTY_BRANDS = {
+    "shiseido", "senka", "hada labo", "hadalabo", "rohto", "melano cc", "biore",
+    "kose", "kanebo", "d program", "naturie", "minon", "muji", "anessa", "curél",
+    "curel", "dhc", "fancl", "transino", "sofina", "ipsa", "elixir", "canmake",
+}
+
+
+def normalize_platform(platform: str | None) -> str:
+    return PLATFORM_ALIASES.get((platform or "all").strip().lower(), "all")
+
+
+def _brand_text(product: Product) -> str:
+    return (product.brand.name if product.brand else "").lower()
+
+
+def _has_brand(product: Product, brands: set[str]) -> bool:
+    brand = _brand_text(product)
+    return any(name in brand for name in brands)
+
+
+def is_kbeauty(product: Product) -> bool:
+    return _has_brand(product, KBEAUTY_BRANDS)
+
+
+def is_jbeauty(product: Product) -> bool:
+    return _has_brand(product, JBEAUTY_BRANDS)
+
+
+def build_platform_links(product: Product) -> dict[str, str]:
+    query = quote_plus(f"{product.brand.name} {product.name}".strip())
+    product_url = product.product_url or ""
+    links = {
+        "amazon_us": f"https://www.amazon.com/s?k={query}",
+        "amazon_jp": f"https://www.amazon.co.jp/s?k={query}",
+        "yahoo_japan": f"https://shopping.yahoo.co.jp/search?p={query}",
+        "naver": f"https://search.shopping.naver.com/search/all?query={query}",
+        "matsukiyo": f"https://www.matsukiyococokara-online.com/search?text={query}",
+        "oliveyoung": f"https://global.oliveyoung.com/display/search?query={query}",
+    }
+    if "amazon.com" in product_url:
+        links["amazon_us"] = product_url
+    elif "amazon.co.jp" in product_url:
+        links["amazon_jp"] = product_url
+    elif "oliveyoung." in product_url:
+        links["oliveyoung"] = product_url
+    elif "shopping.yahoo." in product_url or "yahoo.co.jp" in product_url:
+        links["yahoo_japan"] = product_url
+    elif "naver." in product_url:
+        links["naver"] = product_url
+    elif "matsukiyococokara" in product_url:
+        links["matsukiyo"] = product_url
+    return links
+
+
+def matched_platforms(product: Product) -> list[str]:
+    product_url = (product.product_url or "").lower()
+    matches = {"amazon_us", "naver", "oliveyoung"}
+    regional_beauty = is_kbeauty(product) or is_jbeauty(product)
+
+    if "amazon.com" in product_url:
+        matches.add("amazon_us")
+    if "amazon.co.jp" in product_url or regional_beauty:
+        matches.add("amazon_jp")
+    if "oliveyoung." in product_url or is_kbeauty(product):
+        matches.add("oliveyoung")
+    if "matsukiyococokara" in product_url or regional_beauty:
+        matches.add("matsukiyo")
+    if "shopping.yahoo." in product_url or "yahoo.co.jp" in product_url or regional_beauty:
+        matches.add("yahoo_japan")
+    if "naver." in product_url:
+        matches.add("naver")
+    return sorted(matches)
+
+
+def platform_fit_score(product: Product, platform: str) -> float:
+    product_url = (product.product_url or "").lower()
+    matches = matched_platforms(product)
+    if platform == "all":
+        return min(10.0, len(matches) * 1.8 + (3.0 if product.product_url else 0.0))
+    if platform not in matches:
+        return -1000.0
+    direct_markers = {
+        "amazon_us": "amazon.com",
+        "amazon_jp": "amazon.co.jp",
+        "yahoo_japan": "yahoo.co.jp",
+        "naver": "naver.",
+        "matsukiyo": "matsukiyococokara",
+        "oliveyoung": "oliveyoung.",
+    }
+    direct_bonus = 8.0 if direct_markers.get(platform, "") in product_url else 0.0
+    curated_bonus = 4.0 if platform in {"oliveyoung", "matsukiyo"} and (is_kbeauty(product) or is_jbeauty(product)) else 0.0
+    return direct_bonus + curated_bonus
+
 
 def infer_ingredients(db: Session, scores: SkinScores, survey: SurveyInput) -> list[Ingredient]:
     score_map = scores.model_dump()
@@ -94,7 +210,9 @@ def recommend_products(
     survey: SurveyInput,
     analysis_id: int | None,
     user_id: int | None,
+    platform: str = "all",
 ) -> RecommendationResponse:
+    platform = normalize_platform(platform)
     ingredients = infer_ingredients(db, scores, survey)
     ingredient_targets = {target for ingredient in ingredients for target in ingredient.targets.split(",")}
 
@@ -102,8 +220,11 @@ def recommend_products(
         selectinload(Product.brand),
         selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
     ).all()
-    scored: list[tuple[float, Product]] = []
+    scored: list[tuple[float, float, Product]] = []
     for product in products:
+        platform_score = platform_fit_score(product, platform)
+        if platform_score < 0:
+            continue
         product_targets = {
             target
             for product_ingredient in product.ingredients
@@ -112,11 +233,20 @@ def recommend_products(
         ingredient_match = len(ingredient_targets.intersection(product_targets)) * 18
         skin_type_match = 12 if survey.skin_type in product.skin_types or "all" in product.skin_types else 0
         concern_match = sum(scores.model_dump().get(target, 0) for target in product_targets) / max(1, len(product_targets)) * 0.35
-        scored.append((round(min(100.0, ingredient_match + skin_type_match + concern_match), 1), product))
+        total = round(min(100.0, ingredient_match + skin_type_match + concern_match + platform_score), 1)
+        scored.append((total, platform_score, product))
 
-    top_products = sorted(scored, key=lambda item: (item[0], item[1].avg_rating), reverse=True)[:5]
+    # When a specific platform is requested, prefer products that actually live on
+    # that platform (higher platform_fit_score) before falling back to rating, so
+    # e.g. platform=matsukiyo surfaces real Matsukiyo products over merely curated
+    # regional ones that happen to tie at the score cap.
+    top_products = sorted(
+        scored,
+        key=lambda item: (item[0], item[1], item[2].avg_rating or 0.0),
+        reverse=True,
+    )[:5]
     ingredient_names = [ingredient.name for ingredient in ingredients]
-    product_names = [product.name for _, product in top_products]
+    product_names = [product.name for _, _, product in top_products]
 
     if user_id or analysis_id:
         db.add(Survey(user_id=user_id, skin_type=survey.skin_type, concerns=",".join(survey.concerns), sensitivity=survey.sensitivity, routine_level=survey.routine_level))
@@ -147,11 +277,13 @@ def recommend_products(
                 description=product.description,
                 ingredients=[item.ingredient.name for item in product.ingredients],
                 product_url=product.product_url,
+                platform_links=build_platform_links(product),
+                matched_platforms=matched_platforms(product),
                 image_url=product.image_url,
                 avg_rating=product.avg_rating or None,
                 review_count=product.review_count or None,
             )
-            for score, product in top_products
+            for score, _platform_score, product in top_products
         ],
         explanation=build_explanation(scores, survey, ingredient_names, product_names),
     )

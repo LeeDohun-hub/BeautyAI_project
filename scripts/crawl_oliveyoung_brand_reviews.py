@@ -19,11 +19,15 @@ import argparse
 import csv
 import math
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import requests
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_URL = "https://global.oliveyoung.com"
 SEARCH_PAGE = f"{BASE_URL}/display/search"

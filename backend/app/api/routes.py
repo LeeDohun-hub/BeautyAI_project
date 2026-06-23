@@ -16,7 +16,7 @@ from app.schemas.api import (
     RecommendationResponse,
 )
 from app.services.chatbot import answer_skin_question
-from app.services.recommender import get_scores_from_analysis, recommend_products
+from app.services.recommender import build_platform_links, get_scores_from_analysis, matched_platforms, recommend_products
 from app.services.skin_analyzer import SkinAnalyzer, summarize_scores
 
 router = APIRouter(prefix="/api")
@@ -44,7 +44,7 @@ def recommend(payload: RecommendationRequest, db: Session = Depends(get_db)) -> 
         scores = payload.scores or get_scores_from_analysis(db, payload.analysis_id or 0)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return recommend_products(db, scores, payload.survey, payload.analysis_id, payload.user_id)
+    return recommend_products(db, scores, payload.survey, payload.analysis_id, payload.user_id, payload.platform)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -68,6 +68,8 @@ def products(db: Session = Depends(get_db)) -> list[ProductOut]:
             description=product.description,
             ingredients=[item.ingredient.name for item in product.ingredients],
             product_url=product.product_url,
+            platform_links=build_platform_links(product),
+            matched_platforms=matched_platforms(product),
             image_url=product.image_url,
         )
         for product in rows

@@ -36,21 +36,28 @@ import {
   Trash2,
 } from 'lucide-react';
 import { analyzeSkin, chat, getHistory, recommend } from './api/client';
-import type { AnalyzeSkinResponse, HistoryItem, Product, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
+import type { AnalyzeSkinResponse, HistoryItem, Product, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
-// 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다 (일본 시장 타겟: 아마존/야후재팬/네이버).
+// 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
 function buildShopLinks(product: Product) {
   const query = encodeURIComponent(`${product.brand} ${product.name}`.trim());
-  const amazon =
-    product.product_url && /amazon\./i.test(product.product_url)
+  const amazonUs =
+    product.product_url && /amazon\.com/i.test(product.product_url)
+      ? product.product_url
+      : `https://www.amazon.com/s?k=${query}`;
+  const amazonJp =
+    product.product_url && /amazon\.co\.jp/i.test(product.product_url)
       ? product.product_url
       : `https://www.amazon.co.jp/s?k=${query}`;
   return {
     oliveyoung: `https://global.oliveyoung.com/display/search?query=${query}`,
-    amazon,
-    yahoo: `https://shopping.yahoo.co.jp/search?p=${query}`,
+    amazon_us: amazonUs,
+    amazon_jp: amazonJp,
+    yahoo_japan: `https://shopping.yahoo.co.jp/search?p=${query}`,
     naver: `https://search.shopping.naver.com/search/all?query=${query}`,
+    matsukiyo: `https://www.matsukiyococokara-online.com/search?text=${query}`,
+    ...product.platform_links,
   };
 }
 
@@ -70,11 +77,23 @@ const isKBeauty = (brand: string) => {
 // 각 쇼핑몰 버튼: 브랜드 시그니처 컬러 + 실제 사이트 파비콘으로 매칭.
 // kbeautyOnly가 true인 채널은 K-뷰티 브랜드 상품에만 노출한다.
 const SHOP_PLATFORMS = [
-  { key: 'oliveyoung', label: '올리브영', domain: 'global.oliveyoung.com', bg: '#80BA27', fg: '#FFFFFF', hover: '#6FA31F', kbeautyOnly: true },
-  { key: 'amazon', label: '아마존', domain: 'amazon.co.jp', bg: '#FF9900', fg: '#131A22', hover: '#E68A00', kbeautyOnly: false },
-  { key: 'yahoo', label: '야후재팬', domain: 'yahoo.co.jp', bg: '#FF0033', fg: '#FFFFFF', hover: '#D9002B', kbeautyOnly: false },
+  { key: 'amazon_us', label: 'Amazon(EN)', domain: 'amazon.com', bg: '#FF9900', fg: '#131A22', hover: '#E68A00', kbeautyOnly: false },
+  { key: 'amazon_jp', label: 'Amazon(JP)', domain: 'amazon.co.jp', bg: '#FFB020', fg: '#131A22', hover: '#E69D1C', kbeautyOnly: false },
+  { key: 'yahoo_japan', label: '야후재팬', domain: 'yahoo.co.jp', bg: '#FF0033', fg: '#FFFFFF', hover: '#D9002B', kbeautyOnly: false },
   { key: 'naver', label: '네이버', domain: 'naver.com', bg: '#03C75A', fg: '#FFFFFF', hover: '#02A94C', kbeautyOnly: false },
+  { key: 'matsukiyo', label: '마츠키요', domain: 'matsukiyococokara-online.com', bg: '#174EA6', fg: '#FFFFFF', hover: '#123F86', kbeautyOnly: false },
+  { key: 'oliveyoung', label: '올리브영', domain: 'global.oliveyoung.com', bg: '#80BA27', fg: '#FFFFFF', hover: '#6FA31F', kbeautyOnly: false },
 ] as const;
+
+const PLATFORM_FILTERS: { value: RecommendationPlatform; label: string }[] = [
+  { value: 'all', label: '모든 플랫폼' },
+  { value: 'amazon_us', label: 'Amazon(EN)' },
+  { value: 'amazon_jp', label: 'Amazon(JP)' },
+  { value: 'yahoo_japan', label: '야후재팬' },
+  { value: 'naver', label: '네이버' },
+  { value: 'matsukiyo', label: '마츠키요' },
+  { value: 'oliveyoung', label: '올리브영' },
+];
 
 // 사이트 파비콘 URL (구글 파비콘 서비스 — 실제 브랜드 로고를 안정적으로 제공)
 const faviconUrl = (domain: string) => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
@@ -299,6 +318,7 @@ export default function App() {
   const [cameraReady, setCameraReady] = useState(false);
   const [analysis, setAnalysis] = useState<AnalyzeSkinResponse | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<RecommendationPlatform>('all');
   const [message, setMessage] = useState('제 피부 상태에 맞는 루틴을 어떻게 구성하면 좋을까요?');
   const [answer, setAnswer] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -471,9 +491,24 @@ export default function App() {
         summary: `${results.length}장의 얼굴 사진을 분석해 평균 피부 점수를 계산했습니다.`,
       };
       setAnalysis(result);
-      setRecommendation(await recommend(survey, result.analysis_id, result.scores));
+      setRecommendation(await recommend(survey, result.analysis_id, result.scores, selectedPlatform));
     } catch {
       setError('분석에 실패했습니다. 백엔드가 실행 중인지, 얼굴 사진이 정상적으로 선택되었는지 확인해 주세요.');
+    } finally {
+      setLoading('');
+    }
+  }
+
+  async function handlePlatformChange(platform: RecommendationPlatform) {
+    setSelectedPlatform(platform);
+    if (!analysis) return;
+
+    setLoading('recommend');
+    setError('');
+    try {
+      setRecommendation(await recommend(survey, analysis.analysis_id, analysis.scores, platform));
+    } catch {
+      setError('플랫폼별 추천을 다시 계산하지 못했습니다. 백엔드 연결을 확인해 주세요.');
     } finally {
       setLoading('');
     }
@@ -794,6 +829,13 @@ export default function App() {
         )}
         {!loading && analysis ? (
           <Stack spacing={1.5} sx={{ mt: 3 }}>
+            <Box className="score-row">
+              <Box />
+              <Box />
+              <Typography variant="caption" color="text.secondary" textAlign="right" fontWeight={700}>
+                심각도
+              </Typography>
+            </Box>
             {(Object.entries(analysis.scores) as [keyof SkinScores, number][]).map(([key, value]) => (
               <Box className="score-row" key={key}>
                 <Typography variant="body2">{scoreLabels[key]}</Typography>
@@ -815,7 +857,23 @@ export default function App() {
       <Grid container spacing={2}>
         <Grid item xs={12} lg={8}>
           <Paper className="page-panel" elevation={0}>
-            <Typography variant="h5" fontWeight={800}>맞춤 추천</Typography>
+            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} gap={1.5}>
+              <Typography variant="h5" fontWeight={800}>맞춤 추천</Typography>
+              <FormControl size="small" sx={{ minWidth: 180 }}>
+                <InputLabel>구매 플랫폼</InputLabel>
+                <Select
+                  label="구매 플랫폼"
+                  value={selectedPlatform}
+                  onChange={(event) => handlePlatformChange(event.target.value as RecommendationPlatform)}
+                  disabled={loading === 'recommend' || loading === 'analyzing'}
+                >
+                  {PLATFORM_FILTERS.map((platform) => (
+                    <MenuItem key={platform.value} value={platform.value}>{platform.label}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+            {loading === 'recommend' && <LinearProgress sx={{ mt: 2 }} />}
             {recommendation ? (
               <Stack spacing={2} sx={{ mt: 2 }}>
                 <Alert severity="success">{recommendation.explanation}</Alert>
@@ -828,8 +886,16 @@ export default function App() {
                   </Stack>
                 </Box>
                 <Divider />
+                {!recommendation.products.length && (
+                  <Alert severity="info">선택한 플랫폼에 맞는 추천 후보가 아직 부족합니다. 모든 플랫폼으로 넓혀 보거나 상품 카탈로그를 보강해 주세요.</Alert>
+                )}
                 {recommendation.products.map((product, index) => {
                   const links = buildShopLinks(product);
+                  const matched = product.matched_platforms ?? [];
+                  const visiblePlatforms = SHOP_PLATFORMS
+                    .filter((platform) => selectedPlatform === 'all' || platform.key === selectedPlatform)
+                    .filter((platform) => matched.length === 0 || matched.includes(platform.key))
+                    .filter((platform) => !platform.kbeautyOnly || isKBeauty(product.brand));
                   return (
                   <Box key={product.id} className="product-row">
                     <Typography variant="caption" color="text.secondary">추천 {index + 1}</Typography>
@@ -851,7 +917,7 @@ export default function App() {
                     </Stack>
                     <Typography variant="body2" sx={{ mt: 0.5 }}>{product.description}</Typography>
                     <Stack direction="row" gap={1} flexWrap="wrap" sx={{ mt: 1 }}>
-                      {SHOP_PLATFORMS.filter((platform) => !platform.kbeautyOnly || isKBeauty(product.brand)).map((platform) => (
+                      {visiblePlatforms.map((platform) => (
                         <Button
                           key={platform.key}
                           component="a"

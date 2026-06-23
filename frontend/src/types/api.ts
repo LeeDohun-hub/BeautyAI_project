@@ -42,10 +42,21 @@ export type Product = {
   description: string;
   ingredients: string[];
   product_url?: string | null;
+  platform_links?: Record<string, string>;
+  matched_platforms?: string[];
   image_url?: string | null;
   avg_rating?: number | null;
   review_count?: number | null;
 };
+
+export type RecommendationPlatform =
+  | 'all'
+  | 'amazon_us'
+  | 'amazon_jp'
+  | 'yahoo_japan'
+  | 'naver'
+  | 'matsukiyo'
+  | 'oliveyoung';
 
 export type RecommendationResponse = {
   history_id: number;
