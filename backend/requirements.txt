@@ -6,10 +6,11 @@ psycopg2-binary==2.9.10
 pydantic-settings==2.7.1
 python-multipart==0.0.20
 pymysql==1.1.1
+cryptography==44.0.0
 beautifulsoup4==4.12.3
-numpy==2.2.6
+numpy==1.26.4
 Pillow==10.4.0
-opencv-python-headless==4.10.0.84
+mediapipe==0.10.18
 openai==1.59.7
 chromadb==0.5.23
 pytest==8.3.4

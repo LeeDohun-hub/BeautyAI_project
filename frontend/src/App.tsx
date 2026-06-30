@@ -3,9 +3,11 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   Container,
   Divider,
+  FormControlLabel,
   FormControl,
   Grid,
   InputLabel,
@@ -13,7 +15,6 @@ import {
   MenuItem,
   Paper,
   Select,
-  Slider,
   Stack,
   Step,
   StepLabel,
@@ -35,8 +36,8 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { analyzeSkin, chat, getHistory, recommend } from './api/client';
-import type { AnalyzeSkinResponse, HistoryItem, Product, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
+import { analyzeFaceShape, analyzePersonalColor, analyzeSkin, chat, getHistory, getMoodThumbnails, matchPersonalColorItems, recommend } from './api/client';
+import type { AnalysisMode, AnalyzeSkinResponse, BodyConditionScore, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
 // 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
@@ -54,7 +55,6 @@ function buildShopLinks(product: Product) {
     oliveyoung: `https://global.oliveyoung.com/display/search?query=${query}`,
     amazon_us: amazonUs,
     amazon_jp: amazonJp,
-    yahoo_japan: `https://shopping.yahoo.co.jp/search?p=${query}`,
     naver: `https://search.shopping.naver.com/search/all?query=${query}`,
     matsukiyo: `https://www.matsukiyococokara-online.com/search?text=${query}`,
     ...product.platform_links,
@@ -79,7 +79,6 @@ const isKBeauty = (brand: string) => {
 const SHOP_PLATFORMS = [
   { key: 'amazon_us', label: 'Amazon(EN)', domain: 'amazon.com', bg: '#FF9900', fg: '#131A22', hover: '#E68A00', kbeautyOnly: false },
   { key: 'amazon_jp', label: 'Amazon(JP)', domain: 'amazon.co.jp', bg: '#FFB020', fg: '#131A22', hover: '#E69D1C', kbeautyOnly: false },
-  { key: 'yahoo_japan', label: '야후재팬', domain: 'yahoo.co.jp', bg: '#FF0033', fg: '#FFFFFF', hover: '#D9002B', kbeautyOnly: false },
   { key: 'naver', label: '네이버', domain: 'naver.com', bg: '#03C75A', fg: '#FFFFFF', hover: '#02A94C', kbeautyOnly: false },
   { key: 'matsukiyo', label: '마츠키요', domain: 'matsukiyococokara-online.com', bg: '#174EA6', fg: '#FFFFFF', hover: '#123F86', kbeautyOnly: false },
   { key: 'oliveyoung', label: '올리브영', domain: 'global.oliveyoung.com', bg: '#80BA27', fg: '#FFFFFF', hover: '#6FA31F', kbeautyOnly: false },
@@ -89,11 +88,53 @@ const PLATFORM_FILTERS: { value: RecommendationPlatform; label: string }[] = [
   { value: 'all', label: '모든 플랫폼' },
   { value: 'amazon_us', label: 'Amazon(EN)' },
   { value: 'amazon_jp', label: 'Amazon(JP)' },
-  { value: 'yahoo_japan', label: '야후재팬' },
   { value: 'naver', label: '네이버' },
   { value: 'matsukiyo', label: '마츠키요' },
   { value: 'oliveyoung', label: '올리브영' },
 ];
+
+// 라쿠텐(퍼스널컬러/무드 아이템 추천 전용). 라쿠텐 상품은 실제 상품 URL을 직링크로 제공한다.
+const RAKUTEN_PLATFORM = {
+  key: 'rakuten', label: '라쿠텐', domain: 'rakuten.co.jp', bg: '#BF0000', fg: '#FFFFFF', hover: '#A00000',
+} as const;
+
+const ITEM_PLATFORM_META: Record<ItemPlatform, { key: ItemPlatform; label: string; domain: string; bg: string; fg: string; hover: string }> = {
+  all: { key: 'all', label: 'All', domain: 'google.com', bg: '#111827', fg: '#FFFFFF', hover: '#020617' },
+  rakuten: RAKUTEN_PLATFORM,
+  amazon_us: { key: 'amazon_us', label: 'Amazon.com', domain: 'amazon.com', bg: '#232F3E', fg: '#FFFFFF', hover: '#111827' },
+  amazon_jp: { key: 'amazon_jp', label: 'Amazon JP', domain: 'amazon.co.jp', bg: '#232F3E', fg: '#FFFFFF', hover: '#111827' },
+  naver: { key: 'naver', label: 'Naver', domain: 'naver.com', bg: '#03C75A', fg: '#FFFFFF', hover: '#029E48' },
+  matsukiyo: { key: 'matsukiyo', label: 'Matsukiyo 검색', domain: 'matsukiyococokara-online.com', bg: '#F4C400', fg: '#111827', hover: '#DEB200' },
+  oliveyoung: { key: 'oliveyoung', label: 'Olive Young', domain: 'global.oliveyoung.com', bg: '#6FBA2C', fg: '#FFFFFF', hover: '#5CA322' },
+};
+
+type ItemRegion = 'jp' | 'kr';
+
+const ITEM_REGION_FILTERS: { value: ItemRegion; label: string }[] = [
+  { value: 'jp', label: '일본(JP)' },
+  { value: 'kr', label: '한국(KR)' },
+];
+
+const JP_ITEM_PLATFORM_FILTERS: { value: ItemPlatform; label: string }[] = [
+  { value: 'all', label: '모든 플랫폼' },
+  { value: 'amazon_jp', label: 'Amazon(JP)' },
+  { value: 'rakuten', label: '라쿠텐' },
+  { value: 'matsukiyo', label: '마츠키요 검색' },
+  { value: 'oliveyoung', label: '올리브영' },
+];
+
+const KR_ITEM_PLATFORM_FILTERS: { value: ItemPlatform; label: string }[] = [
+  { value: 'all', label: '모든 플랫폼' },
+  { value: 'amazon_us', label: 'Amazon.com' },
+  { value: 'oliveyoung', label: '올리브영' },
+];
+
+// 라쿠텐 검색 결과 상품의 플랫폼 링크: 라쿠텐은 실제 상품 URL, 나머지는 브랜드+상품명 검색 URL.
+function buildRakutenShopLinks(product: RakutenProduct): Record<string, string> {
+  return product.platform_links && Object.keys(product.platform_links).length
+    ? product.platform_links
+    : { rakuten: product.product_url };
+}
 
 // 사이트 파비콘 URL (구글 파비콘 서비스 — 실제 브랜드 로고를 안정적으로 제공)
 const faviconUrl = (domain: string) => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
@@ -249,7 +290,7 @@ function NestedChipSelect({
   );
 }
 
-const steps = ['설문', '얼굴 입력', '피부 분석', '추천', '상담'];
+const steps = ['설문', '피부 입력', '피부 분석', '추천', '상담'];
 
 const scoreLabels: Record<keyof SkinScores, string> = {
   acne: '트러블',
@@ -274,7 +315,32 @@ const routineLevelLabels = [
   { value: 'advanced', label: '집중 관리 루틴' },
 ];
 
+const raceIdentityOptions = [
+  '동아시아 (한국·중국·일본·대만)',
+  '동남아시아 (베트남·태국·필리핀·인도네시아)',
+  '남아시아 (인도·파키스탄·방글라데시·네팔)',
+  '중동/북아프리카',
+  '흑인/아프리카계',
+  '백인/유럽계',
+  '라틴계',
+  '혼혈/다인종',
+  '기타',
+  '응답하지 않음',
+];
+
+type AppModule = 'home' | 'skin-care' | 'personal-color';
+
 const scoreKeys = Object.keys(scoreLabels) as (keyof SkinScores)[];
+
+function ageToAgeGroup(age: string): string {
+  const numericAge = Number.parseInt(age, 10);
+  if (Number.isNaN(numericAge)) return '20s';
+  if (numericAge < 20) return '10s';
+  if (numericAge < 30) return '20s';
+  if (numericAge < 40) return '30s';
+  if (numericAge < 50) return '40s';
+  return '50s';
+}
 
 function averageSkinScores(results: AnalyzeSkinResponse[]): SkinScores {
   const totals = scoreKeys.reduce(
@@ -284,7 +350,7 @@ function averageSkinScores(results: AnalyzeSkinResponse[]): SkinScores {
 
   results.forEach((result) => {
     scoreKeys.forEach((key) => {
-      totals[key] += result.scores[key];
+      totals[key] += result.scores?.[key] ?? 0;
     });
   });
 
@@ -294,15 +360,181 @@ function averageSkinScores(results: AnalyzeSkinResponse[]): SkinScores {
   );
 }
 
+function averageBodyConditions(results: AnalyzeSkinResponse[]): BodyConditionScore[] {
+  const totals = new Map<string, BodyConditionScore>();
+  results.flatMap((result) => result.body_conditions ?? []).forEach((item) => {
+    const current = totals.get(item.condition);
+    totals.set(item.condition, {
+      ...item,
+      probability: (current?.probability ?? 0) + item.probability,
+    });
+  });
+  return Array.from(totals.values())
+    .map((item) => ({ ...item, probability: Math.round((item.probability / results.length) * 10) / 10 }))
+    .sort((a, b) => b.probability - a.probability)
+    .slice(0, 3);
+}
+
+type StyleMood = {
+  id: string;
+  label: string;
+  vibe: string;
+  thumbClass: string;
+  keywords: string[];
+};
+
+const STYLE_MOODS: StyleMood[] = [
+  {
+    id: 'cherry-chocolate',
+    label: '진한 체리 초콜릿',
+    vibe: '딥한 체리와 초콜릿 브라운으로 시크하고 무게감 있는 무드',
+    thumbClass: 'cherry-chocolate',
+    keywords: ['チェリー リップ', 'ボルドー リップ', 'ブラウン アイシャドウ', 'チョコレート メイク'],
+  },
+  {
+    id: 'tomato-red',
+    label: '생기 토마토 레드',
+    vibe: '주황빛이 도는 토마토 레드로 생기 있고 발랄한 무드',
+    thumbClass: 'tomato-red',
+    keywords: ['トマトレッド リップ', 'オレンジレッド リップ', 'レッド チーク', 'オレンジ アイシャドウ'],
+  },
+  {
+    id: 'rose-wine',
+    label: '우아한 로즈 와인',
+    vibe: '깊은 와인과 버건디로 우아하고 무드 있는 분위기',
+    thumbClass: 'rose-wine',
+    keywords: ['ワインレッド リップ', 'ボルドー リップ', 'ローズ チーク', 'バーガンディ アイシャドウ'],
+  },
+  {
+    id: 'plum-creme',
+    label: '매혹적인 자두 크림슈',
+    vibe: '자두빛 플럼과 모브 톤으로 우아하고 매혹적인 무드',
+    thumbClass: 'plum-creme',
+    keywords: ['プラム リップ', 'すもも リップ', 'モーブ チーク', 'プラム アイシャドウ'],
+  },
+  {
+    id: 'berry-sorbet',
+    label: '상큼 베리 소르베',
+    vibe: '상큼한 베리와 핑크 톤으로 화사하고 발랄한 무드',
+    thumbClass: 'berry-sorbet',
+    keywords: ['ベリー リップ', 'ピンク リップ', 'ベリー チーク', 'ピンク アイシャドウ'],
+  },
+  {
+    id: 'peach-latte',
+    label: '사랑스러운 복숭아 라떼',
+    vibe: '부드러운 피치 핑크로 사랑스럽고 화사한 무드',
+    thumbClass: 'peach-latte',
+    keywords: ['ピーチ リップ', 'ピーチピンク リップ', 'ピーチ チーク', 'ピーチ アイシャドウ'],
+  },
+  {
+    id: 'coral',
+    label: '싱그러운 산호 코랄',
+    vibe: '싱그러운 코랄로 생기 넘치는 따뜻한 무드',
+    thumbClass: 'coral',
+    keywords: ['コーラル リップ', 'サンゴ リップ', 'コーラル チーク', 'コーラル アイシャドウ'],
+  },
+  {
+    id: 'caramel-mocha',
+    label: '차분한 카라멜 모카',
+    vibe: '카라멜과 모카 브라운으로 차분한 데일리 무드',
+    thumbClass: 'caramel-mocha',
+    keywords: ['キャラメル リップ', 'ブラウン リップ', 'モカ チーク', 'ブラウン アイシャドウ'],
+  },
+];
+
+// 퍼스널컬러 세부타입(`${tone}-${subtype}`)별 블러셔/쉐딩 큐레이션.
+// 블러셔 '색'은 분석 결과(makeup.blush)를 그대로 쓰고, 여기서는 톤에 맞는 브랜드·쉐딩 색·
+// 스와치 색만 타입별로 분기한다.
+type FaceProductSet = {
+  blushBrands: string[];
+  shadingColors: string[];
+  shadingBrands: string[];
+  blushSwatch: string;
+  shadingSwatch: string;
+};
+
+const FACE_PRODUCT_MAP: Record<string, FaceProductSet> = {
+  'warm-light': { blushBrands: ['디어달리아', '롬앤'], shadingColors: ['소프트 카멜', '라이트 베이지 브라운'], shadingBrands: ['페리페라', '웨이크메이크'], blushSwatch: '#F7A98C', shadingSwatch: '#B98A63' },
+  'warm-deep': { blushBrands: ['투쿨포스쿨', '롬앤'], shadingColors: ['딥 카멜', '초콜릿 브라운'], shadingBrands: ['투쿨포스쿨', '캔메이크'], blushSwatch: '#D77B53', shadingSwatch: '#7A5236' },
+  'warm-soft': { blushBrands: ['힌스', '롬앤'], shadingColors: ['뮤트 베이지', '소프트 모카'], shadingBrands: ['힌스', '웨이크메이크'], blushSwatch: '#E0997A', shadingSwatch: '#9C7A5C' },
+  'cool-light': { blushBrands: ['릴리바이레드', '클리오'], shadingColors: ['애쉬 베이지', '라이트 그레이 브라운'], shadingBrands: ['페리페라', '클리오'], blushSwatch: '#EBA6BE', shadingSwatch: '#A38C7E' },
+  'cool-deep': { blushBrands: ['맥', '클리오'], shadingColors: ['애쉬 브라운', '쿨 다크 브라운'], shadingBrands: ['맥', '클리오'], blushSwatch: '#C76A86', shadingSwatch: '#6E5A52' },
+  'cool-bright': { blushBrands: ['에스쁘아', '클리오'], shadingColors: ['그레이 브라운', '쿨 토프'], shadingBrands: ['에스쁘아', '클리오'], blushSwatch: '#E86C92', shadingSwatch: '#897066' },
+  'cool-soft': { blushBrands: ['페리페라', '힌스'], shadingColors: ['그레이시 토프', '뮤트 애쉬'], shadingBrands: ['페리페라', '힌스'], blushSwatch: '#D89CAE', shadingSwatch: '#9A867E' },
+};
+
+const DEFAULT_FACE_PRODUCT_SET = FACE_PRODUCT_MAP['warm-light'];
+
+function RakutenProductCard({ product, selectedPlatform = 'all' }: { product: RakutenProduct; selectedPlatform?: ItemPlatform }) {
+  const links = buildRakutenShopLinks(product);
+  const matchedPlatforms = product.matched_platforms?.length
+    ? product.matched_platforms
+    : Object.keys(links);
+  const visiblePlatforms = matchedPlatforms
+    .filter((key): key is ItemPlatform => key !== 'all' && key in ITEM_PLATFORM_META && Boolean(links[key]))
+    .filter((key) => selectedPlatform === 'all' || key === selectedPlatform)
+    .map((key) => ITEM_PLATFORM_META[key]);
+  return (
+    <Box className="rakuten-product-card">
+      <Box className="rakuten-product-image">
+        {product.image_url ? (
+          <img src={product.image_url} alt={product.name} />
+        ) : (
+          <Sparkles size={26} />
+        )}
+      </Box>
+      <Chip label={product.keyword} size="small" sx={{ width: 'fit-content' }} />
+      <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
+      <Typography variant="body2" color="text.secondary" noWrap>{product.brand}</Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1 }}>
+        <Typography fontWeight={900}>¥{product.price.toLocaleString()}</Typography>
+        {product.review_average ? (
+          <Typography variant="caption" color="text.secondary">
+            ★ {product.review_average}
+            {product.review_count ? ` (${product.review_count.toLocaleString()})` : ''}
+          </Typography>
+        ) : null}
+      </Stack>
+      <Stack direction="row" gap={0.8} flexWrap="wrap" sx={{ mt: 'auto', pt: 1.2 }}>
+        {visiblePlatforms.map((platform) => (
+          <Button
+            key={platform.key}
+            component="a"
+            href={links[platform.key] ?? product.product_url}
+            target="_blank"
+            rel="noreferrer"
+            size="small"
+            variant="contained"
+            disableElevation
+            startIcon={
+              <Box sx={{ width: 16, height: 16, borderRadius: '4px', bgcolor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Box component="img" src={faviconUrl(platform.domain)} alt="" width={12} height={12} sx={{ display: 'block' }} />
+              </Box>
+            }
+            sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
+          >
+            {platform.label}
+          </Button>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const previewUrlsRef = useRef<string[]>([]);
+  const [appModule, setAppModule] = useState<AppModule>('home');
   const [currentStep, setCurrentStep] = useState(0);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('face');
   const [survey, setSurvey] = useState<SurveyInput>({
     gender: 'female',
+    age: '',
     age_group: '20s',
+    race_identity: '',
+    privacy_consent: false,
     skin_type: 'combination',
     concerns: [],
     makeup_concerns: [],
@@ -313,6 +545,24 @@ export default function App() {
   });
   const [faceFiles, setFaceFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [personalColorFile, setPersonalColorFile] = useState<File | null>(null);
+  const [personalColorPreview, setPersonalColorPreview] = useState('');
+  const [personalColorResult, setPersonalColorResult] = useState<PersonalColorResponse | null>(null);
+  const [faceShape, setFaceShape] = useState<FaceShapeResponse | null>(null);
+  const [personalColorStep, setPersonalColorStep] = useState(0);
+  const [personalColorItems, setPersonalColorItems] = useState<PersonalColorItemMatchResponse | null>(null);
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
+  const [moodItems, setMoodItems] = useState<PersonalColorItemMatchResponse | null>(null);
+  const [moodThumbnails, setMoodThumbnails] = useState<Record<string, string>>({});
+  const [moodThumbsLoading, setMoodThumbsLoading] = useState(false);
+  const [itemRegion, setItemRegion] = useState<ItemRegion>('jp');
+  const [itemPlatform, setItemPlatform] = useState<ItemPlatform>('all');
+  const [personalColorProfile, setPersonalColorProfile] = useState({
+    age: '',
+    gender: 'female',
+    raceIdentity: '',
+    consent: false,
+  });
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [cameraReady, setCameraReady] = useState(false);
@@ -321,6 +571,7 @@ export default function App() {
   const [selectedPlatform, setSelectedPlatform] = useState<RecommendationPlatform>('all');
   const [message, setMessage] = useState('제 피부 상태에 맞는 루틴을 어떻게 구성하면 좋을까요?');
   const [answer, setAnswer] = useState('');
+  const [answerSources, setAnswerSources] = useState<string[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
@@ -359,12 +610,43 @@ export default function App() {
   useEffect(() => {
     return () => {
       previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      if (personalColorPreview) URL.revokeObjectURL(personalColorPreview);
     };
-  }, []);
+  }, [personalColorPreview]);
 
   useEffect(() => {
     previewUrlsRef.current = previewUrls;
   }, [previewUrls]);
+
+  useEffect(() => {
+    if (appModule !== 'personal-color' || personalColorStep !== 4 || !personalColorResult) return;
+    if (selectedMood) return; // 무드를 선택한 경우 무드 기반 추천(moodItems)을 사용한다.
+    if (personalColorItems) return;
+    loadPersonalColorItems();
+  }, [appModule, personalColorStep, personalColorResult, personalColorItems, selectedMood, itemRegion, itemPlatform]);
+
+  useEffect(() => {
+    if (appModule !== 'personal-color' || personalColorStep !== 4 || !selectedMood) return;
+    if (moodItems || loading === 'style-mood-items') return;
+    const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood);
+    if (activeMood) selectStyleMood(activeMood);
+  }, [appModule, personalColorStep, selectedMood, moodItems, loading, itemRegion, itemPlatform]);
+
+  useEffect(() => {
+    if (appModule !== 'personal-color' || personalColorStep !== 3) return;
+    if (Object.keys(moodThumbnails).length || moodThumbsLoading) return;
+    setMoodThumbsLoading(true);
+    getMoodThumbnails()
+      .then((res) => setMoodThumbnails(res.thumbnails))
+      .catch(() => undefined)
+      .finally(() => setMoodThumbsLoading(false));
+  }, [appModule, personalColorStep, moodThumbnails, moodThumbsLoading]);
+
+  useEffect(() => {
+    if (appModule !== 'personal-color' || personalColorStep !== 3) return;
+    if (selectedMood || loading === 'style-mood-items') return;
+    selectStyleMood(STYLE_MOODS[0]);
+  }, [appModule, personalColorStep, selectedMood, loading]);
 
   async function refreshCameraDevices() {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -422,6 +704,118 @@ export default function App() {
     setAnalysis(null);
     setRecommendation(null);
     setAnswer('');
+    setAnswerSources([]);
+  }
+
+  function startSkinCareAnalysis() {
+    setAppModule('skin-care');
+    setCurrentStep(0);
+    setError('');
+  }
+
+  function startPersonalColorAnalysis() {
+    stopCamera();
+    setAppModule('personal-color');
+    setPersonalColorStep(0);
+    setError('');
+  }
+
+  function goHome() {
+    stopCamera();
+    setAppModule('home');
+    setCurrentStep(0);
+    setError('');
+  }
+
+  function handlePersonalColorUpload(files: FileList | null) {
+    const file = Array.from(files ?? []).find((item) => item.type.startsWith('image/'));
+    if (!file) {
+      setError('퍼스널컬러 분석에 사용할 얼굴 사진을 선택해 주세요.');
+      return;
+    }
+    if (personalColorPreview) URL.revokeObjectURL(personalColorPreview);
+    setPersonalColorFile(file);
+    setPersonalColorPreview(URL.createObjectURL(file));
+    setPersonalColorResult(null);
+    setPersonalColorItems(null);
+    setSelectedMood(null);
+    setMoodItems(null);
+    setError('');
+  }
+
+  async function handlePersonalColorAnalyze() {
+    if (!personalColorFile) {
+      setError('퍼스널컬러 분석에 사용할 얼굴 사진을 먼저 선택해 주세요.');
+      return;
+    }
+    setLoading('personal-color');
+    setError('');
+    setPersonalColorItems(null);
+    setSelectedMood(null);
+    setMoodItems(null);
+    setFaceShape(null);
+
+    // 같은 사진으로 얼굴형 분석을 병렬 실행한다(실패해도 퍼스널컬러 결과는 유지).
+    analyzeFaceShape(personalColorFile)
+      .then((result) => setFaceShape(result))
+      .catch(() => setFaceShape(null));
+
+    try {
+      setPersonalColorResult(await analyzePersonalColor(personalColorFile));
+    } catch {
+      setError('퍼스널컬러 분석에 실패했습니다. 정면 얼굴 사진과 조명이 충분한 이미지를 다시 선택해 주세요.');
+    } finally {
+      setLoading('');
+    }
+  }
+
+  function personalColorItemKeywords() {
+    if (!personalColorResult) return [];
+    const makeup = personalColorResult.makeup;
+    return [
+      ...makeup.lip.map((item) => `${item} リップ`),
+      ...makeup.blush.map((item) => `${item} チーク`),
+      ...makeup.eye.map((item) => `${item} アイシャドウ`),
+      ...makeup.base.map((item) => `${item} ファンデーション`),
+      `${personalColorResult.label} コスメ`,
+      '日本 コスメ',
+    ].slice(0, 10);
+  }
+
+  async function loadPersonalColorItems(region: ItemRegion = itemRegion, platform: ItemPlatform = itemPlatform) {
+    const keywords = personalColorItemKeywords();
+    if (!keywords.length) return;
+    setLoading('personal-color-items');
+    try {
+      setPersonalColorItems(await matchPersonalColorItems(keywords, region, platform));
+    } catch {
+      setPersonalColorItems({
+        provider: 'recommender',
+        configured: true,
+        products: [],
+        message: '상품 추천 검색에 실패했습니다.',
+      });
+    } finally {
+      setLoading('');
+    }
+  }
+
+  async function selectStyleMood(mood: StyleMood, region: ItemRegion = itemRegion, platform: ItemPlatform = itemPlatform) {
+    setSelectedMood(mood.id);
+    setMoodItems(null);
+    setLoading('style-mood-items');
+    try {
+      setMoodItems(await matchPersonalColorItems(mood.keywords, region, platform));
+    } catch {
+      setMoodItems({
+        provider: 'recommender',
+        configured: true,
+        products: [],
+        message: '상품 추천 검색에 실패했습니다.',
+      });
+    } finally {
+      setLoading('');
+    }
   }
 
   function addFaceFiles(files: File[]) {
@@ -433,12 +827,12 @@ export default function App() {
 
     const availableSlots = 5 - faceFiles.length;
     if (availableSlots <= 0) {
-      setError('상담용 얼굴 사진은 최대 5장까지 선택할 수 있습니다.');
+      setError('피부 케어 분석 사진은 최대 5장까지 선택할 수 있습니다.');
       return;
     }
 
     const filesToAdd = imageFiles.slice(0, availableSlots);
-    setError(imageFiles.length > availableSlots ? '상담용 얼굴 사진은 최대 5장까지 선택할 수 있어 일부 파일만 추가했습니다.' : '');
+    setError(imageFiles.length > availableSlots ? '피부 케어 분석 사진은 최대 5장까지 선택할 수 있어 일부 파일만 추가했습니다.' : '');
     setFaceFiles((current) => [...current, ...filesToAdd]);
     setPreviewUrls((current) => [...current, ...filesToAdd.map((item) => URL.createObjectURL(item))]);
     resetResults();
@@ -473,8 +867,9 @@ export default function App() {
   }
 
   async function handleAnalyze() {
-    if (faceFiles.length < 3 || faceFiles.length > 5) {
-      setError('정확한 상담을 위해 얼굴 피부 사진을 3~5장 선택해 주세요.');
+    const minimumImages = 1;
+    if (faceFiles.length < minimumImages || faceFiles.length > 5) {
+      setError('피부 케어 분석에는 사진을 1~5장 선택해 주세요.');
       setCurrentStep(1);
       return;
     }
@@ -483,17 +878,36 @@ export default function App() {
     setLoading('analyzing');
     setError('');
     try {
-      const results = await Promise.all(faceFiles.map((item) => analyzeSkin(item)));
-      const averagedScores = averageSkinScores(results);
-      const result: AnalyzeSkinResponse = {
-        analysis_id: results[0].analysis_id,
-        scores: averagedScores,
-        summary: `${results.length}장의 얼굴 사진을 분석해 평균 피부 점수를 계산했습니다.`,
-      };
+      const results = await Promise.all(faceFiles.map((item) => analyzeSkin(item, analysisMode)));
+      const faceResults = results.filter((item) => item.analysis_mode === 'face' && item.scores);
+      const bodyResults = results.filter((item) => item.analysis_mode === 'body');
+      const resultMode: Exclude<AnalysisMode, 'auto'> = faceResults.length >= bodyResults.length ? 'face' : 'body';
+      const result: AnalyzeSkinResponse = resultMode === 'face'
+        ? {
+            ...(faceResults[0] ?? results[0]),
+            analysis_mode: 'face',
+            scores: averageSkinScores(faceResults.length ? faceResults : results),
+            summary: `${faceResults.length || results.length}장의 피부 케어 사진을 얼굴 피부로 평균 분석했습니다.`,
+          }
+        : {
+            ...(bodyResults[0] ?? results[0]),
+            analysis_mode: 'body',
+            body_conditions: averageBodyConditions(bodyResults.length ? bodyResults : results),
+            summary: bodyResults.every((item) => item.model_available)
+              ? `${bodyResults.length || results.length}장의 피부 케어 사진을 바디 피부로 평균 분석했습니다.`
+              : (bodyResults[0] ?? results[0]).summary,
+          };
       setAnalysis(result);
-      setRecommendation(await recommend(survey, result.analysis_id, result.scores, selectedPlatform));
+      setRecommendation(await recommend(
+        survey,
+        result.analysis_id ?? undefined,
+        result.scores ?? undefined,
+        selectedPlatform,
+        result.analysis_mode,
+        result.body_conditions,
+      ));
     } catch {
-      setError('분석에 실패했습니다. 백엔드가 실행 중인지, 얼굴 사진이 정상적으로 선택되었는지 확인해 주세요.');
+      setError('분석에 실패했습니다. 백엔드가 실행 중인지, 피부 사진이 정상적으로 선택되었는지 확인해 주세요.');
     } finally {
       setLoading('');
     }
@@ -506,7 +920,14 @@ export default function App() {
     setLoading('recommend');
     setError('');
     try {
-      setRecommendation(await recommend(survey, analysis.analysis_id, analysis.scores, platform));
+      setRecommendation(await recommend(
+        survey,
+        analysis.analysis_id ?? undefined,
+        analysis.scores ?? undefined,
+        platform,
+        analysis.analysis_mode,
+        analysis.body_conditions,
+      ));
     } catch {
       setError('플랫폼별 추천을 다시 계산하지 못했습니다. 백엔드 연결을 확인해 주세요.');
     } finally {
@@ -518,7 +939,9 @@ export default function App() {
     setLoading('chat');
     setError('');
     try {
-      setAnswer(await chat(message, analysis?.scores));
+      const result = await chat(message, analysis?.scores ?? undefined, survey);
+      setAnswer(result.answer);
+      setAnswerSources(result.sources);
     } catch {
       setError('상담 요청에 실패했습니다. 백엔드 연결을 확인해 주세요.');
     } finally {
@@ -535,40 +958,44 @@ export default function App() {
   }
 
   function canGoNext() {
-    if (currentStep === 0) return survey.concerns.length > 0;
-    if (currentStep === 1) return faceFiles.length >= 3 && faceFiles.length <= 5 && loading !== 'analyzing';
+    if (currentStep === 0) {
+      return Boolean(survey.age?.trim()) && Boolean(survey.race_identity?.trim()) && survey.privacy_consent === true;
+    }
+    if (currentStep === 1) {
+      return faceFiles.length >= 1 && faceFiles.length <= 5 && loading !== 'analyzing';
+    }
     if (currentStep === 2) return Boolean(analysis);
     if (currentStep === 3) return Boolean(recommendation);
     return false;
   }
 
   function renderSurveyPage() {
-    const isFemale = survey.gender === 'female';
-    const skinConcernList = isFemale ? femaleSkinConcerns : maleSkinConcerns;
-
-    const chipGroupSx = { flexWrap: 'wrap', gap: 1 } as const;
-    const chipSx = { border: '1px solid #d6deea !important' } as const;
-    const sectionLabelSx = { variant: 'body2', fontWeight: 700, gutterBottom: true } as const;
-
     return (
       <Paper className="page-panel" elevation={0}>
-        <Typography variant="h5" fontWeight={800}>피부 설문</Typography>
+        <Typography variant="h5" fontWeight={800}>기본 정보 입력</Typography>
         <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          성별과 연령대를 먼저 선택하면 맞춤 고민 항목이 펼쳐집니다.
+          분석을 시작하기 전에 기본 정보와 개인정보 활용 동의를 확인합니다.
         </Typography>
 
         <Stack spacing={3.5} sx={{ mt: 2.5 }}>
+          <TextField
+            label="나이를 알려주세요"
+            placeholder="여기를 눌러서 입력"
+            value={survey.age ?? ''}
+            onChange={(event) => {
+              const age = event.target.value;
+              setSurvey({ ...survey, age, age_group: ageToAgeGroup(age) });
+            }}
+            inputProps={{ inputMode: 'numeric' }}
+            fullWidth
+          />
 
-          {/* 성별 */}
           <Box>
             <Typography variant="body2" fontWeight={700} gutterBottom>성별</Typography>
             <ToggleButtonGroup
               value={survey.gender}
               exclusive
-              onChange={(_, v) => v && setSurvey({
-                ...survey, gender: v,
-                concerns: [], makeup_concerns: [], area_concerns: [], male_extras: [],
-              })}
+              onChange={(_, v) => v && setSurvey({ ...survey, gender: v })}
               fullWidth
             >
               <ToggleButton value="female" sx={{ py: 1.5, fontWeight: 700, fontSize: '0.95rem' }}>
@@ -580,119 +1007,736 @@ export default function App() {
             </ToggleButtonGroup>
           </Box>
 
-          {/* 연령대 */}
-          <Box>
-            <Typography variant="body2" fontWeight={700} gutterBottom>연령대</Typography>
-            <ToggleButtonGroup
-              value={survey.age_group}
-              exclusive
-              onChange={(_, v) => v && setSurvey({ ...survey, age_group: v })}
-              sx={chipGroupSx}
+          <FormControl fullWidth>
+            <InputLabel>본인이 인식하는 인종 정체성을 알려주세요</InputLabel>
+            <Select
+              label="본인이 인식하는 인종 정체성을 알려주세요"
+              value={survey.race_identity ?? ''}
+              onChange={(event) => setSurvey({ ...survey, race_identity: event.target.value })}
+              displayEmpty
             >
-              {ageGroups.map((a) => (
-                <ToggleButton key={a.value} value={a.value} size="small" sx={{ px: 2.5, ...chipSx }}>
-                  {a.label}
-                </ToggleButton>
+              {raceIdentityOptions.map((option) => (
+                <MenuItem key={option} value={option}>{option}</MenuItem>
               ))}
-            </ToggleButtonGroup>
-          </Box>
+            </Select>
+          </FormControl>
 
-          {/* 피부 타입 + 루틴 */}
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth size="small">
-                <InputLabel>피부 타입</InputLabel>
-                <Select label="피부 타입" value={survey.skin_type} onChange={(e) => setSurvey({ ...survey, skin_type: e.target.value })}>
-                  {skinTypeLabels.map((t) => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth size="small">
-                <InputLabel>루틴</InputLabel>
-                <Select label="루틴" value={survey.routine_level} onChange={(e) => setSurvey({ ...survey, routine_level: e.target.value })}>
-                  {routineLevelLabels.map((l) => <MenuItem key={l.value} value={l.value}>{l.label}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-          </Grid>
-
-          {/* 피부 고민 */}
-          <Box>
-            <Typography {...sectionLabelSx}>피부 고민</Typography>
-            <NestedChipSelect
-              options={skinConcernList}
-              value={survey.concerns}
-              onChange={(v) => setSurvey({ ...survey, concerns: v })}
-            />
-          </Box>
-
-          {/* 여성: 메이크업 베이스 고민 */}
-          {isFemale && (
-            <Box>
-              <Typography variant="body2" fontWeight={700} gutterBottom>메이크업 베이스 고민</Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                베이스 메이크업 시 불편한 점을 선택해 주세요
-              </Typography>
-              <NestedChipSelect
-                options={makeupConcernOptions}
-                value={survey.makeup_concerns}
-                onChange={(v) => setSurvey({ ...survey, makeup_concerns: v })}
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={survey.privacy_consent === true}
+                onChange={(event) => setSurvey({ ...survey, privacy_consent: event.target.checked })}
               />
-            </Box>
-          )}
+            }
+            label="개인정보 활용에 동의합니다."
+          />
 
-          {/* 여성: 부위별 케어 */}
-          {isFemale && (
-            <Box>
-              <Typography variant="body2" fontWeight={700} gutterBottom>부위별 케어</Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                집중적으로 케어하고 싶은 부위를 선택해 주세요
-              </Typography>
-              <NestedChipSelect
-                options={areaConcernOptions}
-                value={survey.area_concerns}
-                onChange={(v) => setSurvey({ ...survey, area_concerns: v })}
-              />
-            </Box>
-          )}
-
-          {/* 남성: 추가 케어 영역 */}
-          {!isFemale && (
-            <Box>
-              <Typography variant="body2" fontWeight={700} gutterBottom>추가 케어 관심 영역</Typography>
-              <ToggleButtonGroup
-                value={survey.male_extras}
-                onChange={(_, v) => setSurvey({ ...survey, male_extras: v })}
-                size="small"
-                sx={chipGroupSx}
-              >
-                {maleExtraOptions.map((c) => (
-                  <ToggleButton key={c.value} value={c.value} sx={chipSx}>{c.label}</ToggleButton>
-                ))}
-              </ToggleButtonGroup>
-            </Box>
-          )}
-
-          {/* 민감도 */}
-          <Box>
-            <Typography variant="body2" fontWeight={700}>민감도</Typography>
-            <Slider
-              value={survey.sensitivity}
-              min={1}
-              max={5}
-              marks={[
-                { value: 1, label: '낮음' },
-                { value: 3, label: '보통' },
-                { value: 5, label: '높음' },
-              ]}
-              onChange={(_, v) => setSurvey({ ...survey, sensitivity: v as number })}
-              sx={{ mt: 1 }}
-            />
-          </Box>
-
+          <Alert severity="info">
+            다음 단계에서 얼굴 사진을 촬영하거나 업로드합니다. 피부 고민과 메이크업 고민은 사진 분석 이후 추천 단계에서 다룹니다.
+          </Alert>
         </Stack>
       </Paper>
+    );
+  }
+
+  function renderHomePage() {
+    return (
+      <Box className="app-shell">
+        <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
+          <Paper elevation={0} className="home-hero">
+            <Stack spacing={1}>
+              <Chip label="BeautyAI" color="primary" variant="outlined" sx={{ width: 'fit-content' }} />
+              <Typography variant="h3" fontWeight={900}>
+                원하는 AI 뷰티 분석을 선택해 주세요.
+              </Typography>
+              <Typography color="text.secondary" sx={{ maxWidth: 720, lineHeight: 1.7 }}>
+                BeautyAI는 기능별로 분리된 분석 워크스페이스입니다. 지금은 피부 케어 분석을 사용할 수 있고,
+                퍼스널컬러와 추가 분석 기능은 같은 홈 화면에서 확장됩니다.
+              </Typography>
+            </Stack>
+          </Paper>
+
+          <Grid container spacing={2} sx={{ mt: 2 }}>
+            <Grid item xs={12} md={4}>
+              <Paper elevation={0} className="module-card active-module">
+                <Stack spacing={1.5}>
+                  <Box className="module-icon"><Sparkles size={24} /></Box>
+                  <Typography variant="h5" fontWeight={900}>퍼스널컬러</Typography>
+                  <Typography color="text.secondary">
+                    얼굴 이미지를 바탕으로 톤, 팔레트, 메이크업 컬러를 추천하는 기능입니다.
+                  </Typography>
+                  <Button variant="contained" endIcon={<ArrowRight size={16} />} onClick={startPersonalColorAnalysis}>
+                    시작하기
+                  </Button>
+                </Stack>
+              </Paper>
+            </Grid>
+
+            <Grid item xs={12} md={4}>
+              <Paper elevation={0} className="module-card active-module">
+                <Stack spacing={1.5}>
+                  <Box className="module-icon"><Camera size={24} /></Box>
+                  <Typography variant="h5" fontWeight={900}>피부 케어 분석</Typography>
+                  <Typography color="text.secondary">
+                    얼굴 피부와 바디 피부 사진을 같은 케어 흐름 안에서 분석하고, 성분과 상품을 추천합니다.
+                  </Typography>
+                  <Button variant="contained" endIcon={<ArrowRight size={16} />} onClick={startSkinCareAnalysis}>
+                    시작하기
+                  </Button>
+                </Stack>
+              </Paper>
+            </Grid>
+
+            <Grid item xs={12} md={4}>
+              <Paper elevation={0} className="module-card disabled-module">
+                <Stack spacing={1.5}>
+                  <Box className="module-icon"><ImagePlus size={24} /></Box>
+                  <Typography variant="h5" fontWeight={900}>추후 추가</Typography>
+                  <Typography color="text.secondary">
+                    얼굴형, 스타일 컨설팅, 아이템 매칭, 결과지 출력 기능을 이 영역에 확장합니다.
+                  </Typography>
+                  <Chip label="확장 예정" size="small" sx={{ width: 'fit-content' }} />
+                </Stack>
+              </Paper>
+            </Grid>
+          </Grid>
+        </Container>
+      </Box>
+    );
+  }
+
+  function renderPersonalColorPage() {
+    const makeupGroups = personalColorResult
+      ? [
+          { label: '립', values: personalColorResult.makeup.lip },
+          { label: '블러셔', values: personalColorResult.makeup.blush },
+          { label: '아이', values: personalColorResult.makeup.eye },
+          { label: '베이스', values: personalColorResult.makeup.base },
+        ]
+      : [];
+    const itemPlatformFilter = (
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+        <FormControl size="small" sx={{ minWidth: 140 }}>
+          <InputLabel>지역</InputLabel>
+          <Select
+            label="지역"
+            value={itemRegion}
+            onChange={(event) => {
+              setItemRegion(event.target.value as ItemRegion);
+              setItemPlatform('all');
+              setPersonalColorItems(null);
+              setMoodItems(null);
+            }}
+          >
+            {ITEM_REGION_FILTERS.map((region) => (
+              <MenuItem key={region.value} value={region.value}>{region.label}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 160 }}>
+          <InputLabel>구매 플랫폼</InputLabel>
+          <Select
+            label="구매 플랫폼"
+            value={itemPlatform}
+            onChange={(event) => {
+              setItemPlatform(event.target.value as ItemPlatform);
+              setPersonalColorItems(null);
+              setMoodItems(null);
+            }}
+          >
+            {(itemRegion === 'jp' ? JP_ITEM_PLATFORM_FILTERS : KR_ITEM_PLATFORM_FILTERS).map((platform) => (
+              <MenuItem key={platform.value} value={platform.value}>{platform.label}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Stack>
+    );
+    const personalColorSteps = [
+      '개인정보 입력',
+      'AI 퍼스널컬러 분석',
+      '얼굴형 분석',
+      'AI 스타일 컨설팅',
+      '아이템 매칭',
+      '결과지 출력',
+    ];
+    const canMoveNext =
+      personalColorStep === 0
+        ? personalColorProfile.consent
+        : personalColorStep === 1
+          ? Boolean(personalColorResult)
+          : true;
+
+    const setProfile = (key: keyof typeof personalColorProfile, value: string | boolean) => {
+      setPersonalColorProfile((profile) => ({ ...profile, [key]: value }));
+    };
+
+    const renderPersonalStepContent = () => {
+      if (personalColorStep === 0) {
+        return (
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={5}>
+              <Box className="kiosk-device-panel">
+                <Typography variant="overline">Beauty diagnosis</Typography>
+                <Typography variant="h4" fontWeight={900}>뷰티 진단서 받기</Typography>
+                <Typography color="text.secondary" sx={{ mt: 1 }}>
+                  퍼스널컬러, 메이크업, 헤어컬러, 주얼리, 스타일 컨설팅을 한 흐름으로 확인합니다.
+                </Typography>
+                <Box className="kiosk-face-placeholder">
+                  <Sparkles size={34} />
+                  <Typography fontWeight={900}>AI Makeup</Typography>
+                </Box>
+              </Box>
+            </Grid>
+            <Grid item xs={12} md={7}>
+              <Stack spacing={2}>
+                <Typography variant="h5" fontWeight={900}>개인정보 입력</Typography>
+                <Grid container spacing={1.5}>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="나이"
+                      value={personalColorProfile.age}
+                      onChange={(event) => setProfile('age', event.target.value)}
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <ToggleButtonGroup
+                      color="primary"
+                      exclusive
+                      fullWidth
+                      value={personalColorProfile.gender}
+                      onChange={(_event, value) => {
+                        if (value) setProfile('gender', value);
+                      }}
+                    >
+                      <ToggleButton value="female">여성</ToggleButton>
+                      <ToggleButton value="male">남성</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <FormControl fullWidth>
+                      <InputLabel>인종정체성</InputLabel>
+                      <Select
+                        label="인종정체성"
+                        value={personalColorProfile.raceIdentity}
+                        onChange={(event) => setProfile('raceIdentity', event.target.value)}
+                      >
+                        {[
+                          '동아시아 (한국·중국·일본·대만)',
+                          '동남아시아 (베트남·태국·필리핀·인도네시아)',
+                          '남아시아 (인도·파키스탄·방글라데시·네팔)',
+                          '백인/유럽계',
+                          '흑인/아프리카계',
+                          '라틴/히스패닉',
+                          '중동/북아프리카',
+                          '혼혈/다인종',
+                          '선택 안 함',
+                        ].map((option) => (
+                          <MenuItem key={option} value={option}>{option}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                </Grid>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={personalColorProfile.consent}
+                      onChange={(event) => setProfile('consent', event.target.checked)}
+                    />
+                  }
+                  label="분석을 위한 이미지 및 입력 정보 활용에 동의합니다."
+                />
+                <Alert severity="info">
+                  문서의 키오스크처럼 개인정보 입력 후 AI 퍼스널컬러 분석 단계로 이동합니다.
+                </Alert>
+              </Stack>
+            </Grid>
+          </Grid>
+        );
+      }
+
+      if (personalColorStep === 1) {
+        return (
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={5}>
+              <Stack spacing={2}>
+                <Typography variant="h5" fontWeight={900}>Step 1. AI 퍼스널컬러 분석</Typography>
+                <Typography color="text.secondary">
+                  정면 얼굴 사진을 넣으면 피부 밝기, 웜쿨, 채도 경향을 분석해 타입을 판정합니다.
+                </Typography>
+                <Box className="personal-color-preview kiosk-preview">
+                  {personalColorPreview ? (
+                    <img src={personalColorPreview} alt="퍼스널컬러 분석 미리보기" />
+                  ) : (
+                    <Stack alignItems="center" spacing={1}>
+                      <ImagePlus size={34} />
+                      <Typography>얼굴 사진을 선택해 주세요.</Typography>
+                    </Stack>
+                  )}
+                </Box>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                  <Button fullWidth variant="outlined" component="label" startIcon={<ImagePlus size={18} />}>
+                    사진 선택
+                    <input hidden type="file" accept="image/*" onChange={(event) => handlePersonalColorUpload(event.target.files)} />
+                  </Button>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    disabled={!personalColorFile || loading === 'personal-color'}
+                    onClick={handlePersonalColorAnalyze}
+                    endIcon={<Sparkles size={18} />}
+                  >
+                    {loading === 'personal-color' ? '분석 중...' : '분석 시작'}
+                  </Button>
+                </Stack>
+                {loading === 'personal-color' && <LinearProgress />}
+              </Stack>
+            </Grid>
+            <Grid item xs={12} md={7}>
+              {!personalColorResult ? (
+                <Box className="kiosk-result-empty">
+                  <Typography variant="h5" fontWeight={900}>내 퍼스널 컬러</Typography>
+                  <Typography color="text.secondary" sx={{ mt: 1 }}>
+                    분석 결과가 나오면 문서 예시처럼 타입, 팔레트, 메이크업 컬러가 표시됩니다.
+                  </Typography>
+                </Box>
+              ) : (
+                <Stack spacing={2.5}>
+                  <Box className="kiosk-season-card">
+                    <Typography variant="overline">Personal color result</Typography>
+                    <Typography variant="h3" fontWeight={900}>{personalColorResult.label}</Typography>
+                    <Typography color="text.secondary" sx={{ mt: 1 }}>
+                      신뢰도 {Math.round(personalColorResult.confidence * 100)}% · {personalColorResult.skin_summary}
+                    </Typography>
+                  </Box>
+
+                  <Box>
+                    <Typography variant="h6" fontWeight={900} sx={{ mb: 1 }}>추천 팔레트</Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      {personalColorResult.palette.map((color) => (
+                        <Box className="palette-swatch" key={color} sx={{ backgroundColor: color }}>
+                          <span>{color}</span>
+                        </Box>
+                      ))}
+                    </Stack>
+                  </Box>
+
+                  <Grid container spacing={1.5}>
+                    {makeupGroups.map((group) => (
+                      <Grid item xs={12} sm={6} key={group.label}>
+                        <Box className="makeup-box">
+                          <Typography fontWeight={900}>{group.label}</Typography>
+                          <Typography color="text.secondary">{group.values.join(', ')}</Typography>
+                        </Box>
+                      </Grid>
+                    ))}
+                  </Grid>
+                </Stack>
+              )}
+            </Grid>
+          </Grid>
+        );
+      }
+
+      if (personalColorStep === 2) {
+        const personalColorKey = personalColorResult
+          ? `${personalColorResult.tone}-${personalColorResult.subtype}`
+          : '';
+        const faceProductSet = FACE_PRODUCT_MAP[personalColorKey] ?? DEFAULT_FACE_PRODUCT_SET;
+        const shapeTags = faceShape?.detected ? faceShape.tags.join(' ') : null;
+        const shapeSummary = faceShape?.detected
+          ? faceShape.summary
+          : faceShape
+            ? faceShape.summary
+            : personalColorResult
+              ? '얼굴형을 분석하고 있어요…'
+              : 'AI 퍼스널컬러 분석을 먼저 진행하면 사진을 바탕으로 얼굴형이 표시됩니다.';
+        const ratioRows = faceShape?.detected && faceShape.ratios.length
+          ? faceShape.ratios
+          : [
+              { label: '상/중/하안부 비율', width: 80 },
+              { label: '눈 사이/눈 크기', width: 72 },
+              { label: '얼굴 가로/세로', width: 78 },
+              { label: '턱선/광대 대비', width: 64 },
+            ];
+        const blusherTip = faceShape?.detected
+          ? faceShape.blusher_tip
+          : '웃을 때 볼 중앙보다 살짝 바깥에 생기 있게 올려 부드러운 인상을 살려주세요.';
+        const shadingTip = faceShape?.detected
+          ? faceShape.shading_tip
+          : '턱선 양옆과 광대 외곽에 부드럽게 넣어 얼굴 윤곽을 자연스럽게 정리해 보세요.';
+
+        const toneMatchLabel = personalColorResult
+          ? `${personalColorResult.label} 매치`
+          : '추천';
+        const blushColors = personalColorResult?.makeup.blush ?? [];
+        const blusherRows = (blushColors.length ? blushColors.slice(0, 2) : ['생기 코랄', '맑은 핑크']).map(
+          (color, i) => ({
+            brand: faceProductSet.blushBrands[i] ?? faceProductSet.blushBrands[0],
+            desc: `${color} 톤으로 생기 강조`,
+          }),
+        );
+        const shadingRows = faceProductSet.shadingColors.map((color, i) => ({
+          brand: faceProductSet.shadingBrands[i] ?? faceProductSet.shadingBrands[0],
+          desc: `${color} 음영으로 턱선·광대 외곽 정리`,
+        }));
+
+        return (
+          <Box className="face-shape-screen">
+            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
+              <Stack direction="row" spacing={1} className="kiosk-sub-tabs">
+                {['내 퍼스널 컬러', '내 얼굴형 분석', 'AI 스타일 컨설팅', '아이템 매칭'].map((tab) => (
+                  <Chip key={tab} label={tab} className={tab === '내 얼굴형 분석' ? 'selected' : ''} />
+                ))}
+              </Stack>
+              <Button variant="text" color="inherit">나가기</Button>
+            </Stack>
+
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="caption" color="primary" fontWeight={900}>내 얼굴형 분석</Typography>
+              <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
+                {shapeTags ? `내 얼굴형 유형은 ${shapeTags}` : '내 얼굴형 분석'}
+              </Typography>
+              <Typography color="text.secondary" sx={{ mt: 0.6 }}>
+                {shapeSummary}
+              </Typography>
+            </Box>
+
+            <Grid container spacing={3} sx={{ mt: 1 }}>
+              <Grid item xs={12} md={4}>
+                <Box className="face-diagram">
+                  <Box className="face-outline">
+                    <Box className="hair-line" />
+                    <Box className="brow left" />
+                    <Box className="brow right" />
+                    <Box className="eye left" />
+                    <Box className="eye right" />
+                    <Box className="nose" />
+                    <Box className="mouth" />
+                  </Box>
+                  <Box className="measure-line horizontal top" />
+                  <Box className="measure-line horizontal mid" />
+                  <Box className="measure-line vertical left" />
+                  <Box className="measure-line vertical right" />
+                </Box>
+              </Grid>
+              <Grid item xs={12} md={8}>
+                <Box className="face-ratio-panel">
+                  <Typography fontWeight={900}>얼굴 비율 측정</Typography>
+                  {ratioRows.map((row) => (
+                    <Box className="face-ratio-row" key={row.label}>
+                      <Typography variant="body2">{row.label}</Typography>
+                      <Box className="face-ratio-track">
+                        <Box sx={{ width: `${row.width}%` }} />
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
+              </Grid>
+            </Grid>
+
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="h5" fontWeight={900}>얼굴형에 맞춘 메이크업 제안이에요!</Typography>
+              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                AI가 얼굴형이나 피부톤에 맞는 메이크업 팁과 추천템을 제안해드려요.
+              </Typography>
+
+              <Stack direction="row" spacing={1} sx={{ mt: 2 }} className="makeup-tabs">
+                <Chip label="블러셔" className="selected" />
+                <Chip label="쉐딩" />
+              </Stack>
+
+              <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                <Grid item xs={12} md={6}>
+                  <Box className="face-makeup-section">
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Box className="section-index">1</Box>
+                      <Typography fontWeight={900}>블러셔</Typography>
+                    </Stack>
+                    <Typography color="text.secondary" sx={{ mt: 1 }}>
+                      {blusherTip}
+                    </Typography>
+                    <Stack spacing={1.2} sx={{ mt: 2 }}>
+                      {blusherRows.map((row) => (
+                        <Box className="face-product-row" key={row.brand}>
+                          <Box className="product-swatch" sx={{ backgroundColor: faceProductSet.blushSwatch }} />
+                          <Box>
+                            <Typography fontWeight={900}>{row.brand}</Typography>
+                            <Typography variant="body2" color="text.secondary">{row.desc}</Typography>
+                            <Typography variant="caption" color="error">● {toneMatchLabel}</Typography>
+                          </Box>
+                        </Box>
+                      ))}
+                    </Stack>
+                  </Box>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Box className="face-makeup-section">
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Box className="section-index">2</Box>
+                      <Typography fontWeight={900}>쉐딩</Typography>
+                    </Stack>
+                    <Typography color="text.secondary" sx={{ mt: 1 }}>
+                      {shadingTip}
+                    </Typography>
+                    <Stack spacing={1.2} sx={{ mt: 2 }}>
+                      {shadingRows.map((row) => (
+                        <Box className="face-product-row" key={row.brand}>
+                          <Box className="product-swatch" sx={{ backgroundColor: faceProductSet.shadingSwatch }} />
+                          <Box>
+                            <Typography fontWeight={900}>{row.brand}</Typography>
+                            <Typography variant="body2" color="text.secondary">{row.desc}</Typography>
+                            <Typography variant="caption" color="error">● {toneMatchLabel}</Typography>
+                          </Box>
+                        </Box>
+                      ))}
+                    </Stack>
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            <Button fullWidth variant="contained" className="print-card-button" sx={{ mt: 3 }}>
+              진단카드 출력하기
+            </Button>
+          </Box>
+        );
+      }
+
+      if (personalColorStep === 3) {
+        const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? null;
+        return (
+          <Box className="style-consult-screen">
+            <Typography variant="caption" color="primary" fontWeight={900}>AI 스타일 컨설팅</Typography>
+            <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
+              AI 스타일 컨설턴트가<br />추천하는 메이크업 무드에요!
+            </Typography>
+            <Chip className="style-consult-hint" label="추천 무드가 모델 사진에 바로 적용되어 표시됩니다" sx={{ mt: 2 }} />
+
+            <Grid container spacing={2} sx={{ mt: 0.5 }}>
+              {STYLE_MOODS.map((mood) => (
+                <Grid item xs={6} sm={4} md={3} key={mood.id}>
+                  <Box
+                    className={`style-mood-card${selectedMood === mood.id ? ' selected' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => selectStyleMood(mood)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        selectStyleMood(mood);
+                      }
+                    }}
+                  >
+                    {moodThumbnails[mood.id] ? (
+                      <Box className="style-mood-thumb photo">
+                        <img src={moodThumbnails[mood.id]} alt={`${mood.label} 적용`} />
+                      </Box>
+                    ) : (
+                      <Box className={`style-mood-thumb ${mood.thumbClass}`} />
+                    )}
+                    <Typography className="style-mood-label" fontWeight={900}>{mood.label}</Typography>
+                  </Box>
+                </Grid>
+              ))}
+            </Grid>
+
+            {activeMood && (
+              <Box sx={{ mt: 3 }}>
+                <Alert severity="success" icon={<Sparkles size={18} />}>
+                  AI가 ‘{activeMood.label}’ 무드를 우선 추천했어요. {activeMood.vibe}
+                </Alert>
+
+                <Button
+                  variant="contained"
+                  sx={{ mt: 2 }}
+                  onClick={() => setPersonalColorStep(4)}
+                  disabled={loading === 'style-mood-items'}
+                >
+                  {loading === 'style-mood-items'
+                    ? '추천 제품 불러오는 중…'
+                    : '아이템 매칭에서 추천 제품 보기 →'}
+                </Button>
+              </Box>
+            )}
+          </Box>
+        );
+      }
+
+      if (personalColorStep === 4) {
+        const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? null;
+        const items = activeMood ? moodItems : personalColorItems;
+        const itemsLoading = loading === (activeMood ? 'style-mood-items' : 'personal-color-items');
+        const refreshItems = () => (activeMood ? selectStyleMood(activeMood) : loadPersonalColorItems());
+        const isJapanRegion = itemRegion === 'jp';
+        return (
+          <Box>
+            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
+              <Box>
+                <Typography variant="h5" fontWeight={900}>Step 4. 아이템 매칭</Typography>
+                <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                  {isJapanRegion
+                    ? itemPlatform === 'matsukiyo'
+                      ? '마츠키요 상품 연동은 준비 중입니다. 실제 입점 확인 후 이 탭에만 표시합니다.'
+                      : itemPlatform === 'oliveyoung'
+                        ? '올리브영 글로벌 상품 연동은 준비 중입니다. 일본/한국 양쪽에서 선택할 수 있게 열어두었습니다.'
+                        : activeMood
+                          ? `‘${activeMood.label}’ 무드에 어울리는 일본 라쿠텐 뷰티 상품을 추천합니다.`
+                          : '퍼스널컬러 추천 색상을 일본 라쿠텐 뷰티 상품 검색과 연결합니다.'
+                    : '한국(KR) 상품은 Amazon.com과 올리브영 중심으로 분리해 표시할 예정입니다.'}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                {itemPlatformFilter}
+                <Button
+                  variant="outlined"
+                  onClick={refreshItems}
+                  disabled={(!activeMood && !personalColorResult) || itemsLoading}
+                >
+                  상품 새로고침
+                </Button>
+              </Stack>
+            </Stack>
+
+            {!isJapanRegion && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                한국(KR) 탭은 실제 상품 데이터 provider가 붙기 전까지 상품 카드를 표시하지 않습니다.
+                Amazon.com/올리브영 상품 DB 또는 검색 API가 연결되면 이 영역에만 노출하겠습니다.
+              </Alert>
+            )}
+
+            {!activeMood && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                ‘AI 스타일 컨설팅’에서 메이크업 무드를 선택하면 그 무드에 맞춘 추천 제품을 보여드려요.
+              </Alert>
+            )}
+
+            <Grid container spacing={1.5} sx={{ mt: 2 }}>
+              {makeupGroups.map((group) => (
+                <Grid item xs={12} md={3} key={group.label}>
+                  <Box className="kiosk-match-card compact">
+                    <Typography fontWeight={900}>{group.label} color</Typography>
+                    <Typography color="text.secondary" sx={{ mt: 1 }}>{group.values.join(', ')}</Typography>
+                  </Box>
+                </Grid>
+              ))}
+            </Grid>
+
+            {itemsLoading && <LinearProgress sx={{ mt: 2 }} />}
+
+            {items && !items.configured && (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                라쿠텐 API 키가 백엔드에 설정되지 않았습니다. Docker 재시작 시 .env 값이 전달되는지 확인해 주세요.
+              </Alert>
+            )}
+
+            {items && items.configured && !items.products.length && !itemsLoading && (
+              <Alert severity="info" sx={{ mt: 2 }}>{items.message}</Alert>
+            )}
+
+            <Grid container spacing={2} sx={{ mt: 1 }}>
+              {(items?.products ?? []).slice(0, 8).map((product) => (
+                <Grid item xs={12} sm={6} md={3} key={`${product.id}-${product.keyword}`}>
+                  <RakutenProductCard product={product} selectedPlatform={itemPlatform} />
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
+        );
+      }
+
+      return (
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={7}>
+            <Box className="kiosk-print-sheet">
+              <Typography variant="overline">BeautyAI report</Typography>
+              <Typography variant="h4" fontWeight={900}>{personalColorResult?.label ?? '퍼스널컬러 결과지'}</Typography>
+              <Typography color="text.secondary" sx={{ mt: 1 }}>
+                퍼스널컬러, 스타일 컨설팅, 아이템 매칭 결과를 한 장의 진단서로 출력하는 단계입니다.
+              </Typography>
+              <Divider sx={{ my: 2 }} />
+              <Stack spacing={1}>
+                {(personalColorResult?.advice ?? ['분석 결과가 출력지에 표시됩니다.']).map((item) => (
+                  <Typography key={item}>- {item}</Typography>
+                ))}
+              </Stack>
+            </Box>
+          </Grid>
+          <Grid item xs={12} md={5}>
+            <Box className="kiosk-qr-box">
+              <Box className="fake-qr" />
+              <Typography variant="h6" fontWeight={900}>QR 코드로 결과 확인</Typography>
+              <Typography color="text.secondary">문서 예시처럼 모바일에서 결과지를 다시 열 수 있는 영역입니다.</Typography>
+            </Box>
+          </Grid>
+        </Grid>
+      );
+    };
+
+    return (
+      <Box className="app-shell">
+        <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
+          <Paper elevation={0} className="page-panel kiosk-header">
+            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
+              <Box>
+                <Chip label="twinit style flow" color="primary" variant="outlined" sx={{ width: 'fit-content', mb: 1 }} />
+                <Typography variant="h4" fontWeight={900}>뷰티 진단서 받기</Typography>
+                <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                  문서의 키오스크 화면 순서에 맞춰 개인정보 입력부터 퍼스널컬러, 얼굴형, 스타일, 아이템, 출력까지 이어집니다.
+                </Typography>
+              </Box>
+              <Button variant="outlined" onClick={goHome}>홈으로</Button>
+            </Stack>
+            <Stepper activeStep={personalColorStep} alternativeLabel sx={{ mt: 3 }}>
+              {personalColorSteps.map((step, index) => (
+                <Step key={step} completed={index < personalColorStep}>
+                  <StepLabel
+                    onClick={() => {
+                      if (index <= personalColorStep || (index === personalColorStep + 1 && canMoveNext)) {
+                        setPersonalColorStep(index);
+                      }
+                    }}
+                    sx={{ cursor: index <= personalColorStep + 1 ? 'pointer' : 'default' }}
+                  >
+                    {step}
+                  </StepLabel>
+                </Step>
+              ))}
+            </Stepper>
+          </Paper>
+
+          {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+
+          <Paper elevation={0} className="page-panel kiosk-flow-panel" sx={{ mt: 2 }}>
+            {renderPersonalStepContent()}
+          </Paper>
+
+          <Paper elevation={0} className="page-panel kiosk-nav" sx={{ mt: 2 }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+              <Button
+                variant="outlined"
+                startIcon={<ArrowLeft size={16} />}
+                disabled={personalColorStep === 0}
+                onClick={() => setPersonalColorStep((step) => Math.max(step - 1, 0))}
+              >
+                이전
+              </Button>
+              <Typography variant="body2" color="text.secondary">
+                {personalColorStep + 1} / {personalColorSteps.length}
+              </Typography>
+              <Button
+                variant="contained"
+                endIcon={<ArrowRight size={16} />}
+                disabled={personalColorStep >= personalColorSteps.length - 1 || !canMoveNext}
+                onClick={() => setPersonalColorStep((step) => Math.min(step + 1, personalColorSteps.length - 1))}
+              >
+                다음
+              </Button>
+            </Stack>
+          </Paper>
+        </Container>
+      </Box>
     );
   }
 
@@ -703,15 +1747,32 @@ export default function App() {
           <Paper className="page-panel" elevation={0}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
               <Box>
-                <Typography variant="h5" fontWeight={800}>얼굴 입력</Typography>
+                <Typography variant="h5" fontWeight={800}>
+                  피부 케어 입력
+                </Typography>
                 <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                  상담받고 싶은 얼굴 피부 사진을 3~5장 등록해 주세요.
+                  분석할 부위를 선택하고 사진을 1~5장 등록해 주세요.
                 </Typography>
               </Box>
               <Button size="small" variant="outlined" startIcon={<RefreshCcw size={14} />} onClick={() => startCamera()}>
                 새로고침
               </Button>
             </Stack>
+
+            <ToggleButtonGroup
+              color="primary"
+              exclusive
+              fullWidth
+              size="small"
+              value={analysisMode}
+              onChange={(_event, value) => {
+                if (value) setAnalysisMode(value as AnalysisMode);
+              }}
+              sx={{ mt: 2 }}
+            >
+              <ToggleButton value="face">얼굴 피부 케어</ToggleButton>
+              <ToggleButton value="body">바디 피부 케어</ToggleButton>
+            </ToggleButtonGroup>
 
             <Box className="camera-box large-camera" sx={{ mt: 2 }}>
               <video
@@ -785,13 +1846,13 @@ export default function App() {
                 </Button>
               </Stack>
               <Alert severity={faceFiles.length >= 3 ? 'success' : 'info'}>
-                현재 {faceFiles.length}/5장 선택됨. 분석에는 최소 3장이 필요합니다.
+                현재 {faceFiles.length}/5장 선택됨. 분석에는 최소 1장이 필요합니다.
               </Alert>
               {!!previewUrls.length && (
                 <Box className="photo-grid">
                   {previewUrls.map((url, index) => (
                     <Box className="capture-preview" key={url}>
-                      <img src={url} alt={`선택한 얼굴 사진 ${index + 1}`} />
+                      <img src={url} alt={`선택한 피부 사진 ${index + 1}`} />
                       <Box minWidth={0}>
                         <Typography variant="body2" noWrap>{faceFiles[index]?.name}</Typography>
                         <Typography variant="caption" color="text.secondary">사진 {index + 1}</Typography>
@@ -824,29 +1885,40 @@ export default function App() {
         {loading === 'analyzing' && (
           <Stack spacing={2} sx={{ mt: 3 }}>
             <LinearProgress />
-            <Typography color="text.secondary">등록한 얼굴 사진을 분석하고 추천 후보를 계산하는 중입니다.</Typography>
+            <Typography color="text.secondary">등록한 피부 사진을 분석하고 추천 후보를 계산하는 중입니다.</Typography>
           </Stack>
         )}
         {!loading && analysis ? (
           <Stack spacing={1.5} sx={{ mt: 3 }}>
-            <Box className="score-row">
-              <Box />
-              <Box />
-              <Typography variant="caption" color="text.secondary" textAlign="right" fontWeight={700}>
-                심각도
-              </Typography>
-            </Box>
-            {(Object.entries(analysis.scores) as [keyof SkinScores, number][]).map(([key, value]) => (
-              <Box className="score-row" key={key}>
-                <Typography variant="body2">{scoreLabels[key]}</Typography>
-                <LinearProgress variant="determinate" value={value} sx={{ height: 10, borderRadius: 1 }} />
-                <Typography variant="body2" textAlign="right">{value}</Typography>
+            {analysis.analysis_mode === 'face' && analysis.scores && (
+              <>
+                <Box className="score-row">
+                  <Box />
+                  <Box />
+                  <Typography variant="caption" color="text.secondary" textAlign="right" fontWeight={700}>
+                    심각도
+                  </Typography>
+                </Box>
+                {(Object.entries(analysis.scores) as [keyof SkinScores, number][]).map(([key, value]) => (
+                  <Box className="score-row" key={key}>
+                    <Typography variant="body2">{scoreLabels[key]}</Typography>
+                    <LinearProgress variant="determinate" value={value} sx={{ height: 10, borderRadius: 1 }} />
+                    <Typography variant="body2" textAlign="right">{value}</Typography>
+                  </Box>
+                ))}
+              </>
+            )}
+            {analysis.analysis_mode === 'body' && analysis.body_conditions.map((item) => (
+              <Box className="score-row" key={item.condition}>
+                <Typography variant="body2">{item.label}</Typography>
+                <LinearProgress variant="determinate" value={item.probability} sx={{ height: 10, borderRadius: 1 }} />
+                <Typography variant="body2" textAlign="right">{item.probability}%</Typography>
               </Box>
             ))}
-            <Alert severity="info">{analysis.summary}</Alert>
+            <Alert severity={analysis.model_available ? 'info' : 'warning'}>{analysis.summary}</Alert>
           </Stack>
         ) : !loading ? (
-          <Alert severity="info" sx={{ mt: 3 }}>얼굴 사진 3~5장을 등록한 뒤 분석을 실행해 주세요.</Alert>
+          <Alert severity="info" sx={{ mt: 3 }}>피부 사진을 등록한 뒤 분석을 실행해 주세요.</Alert>
         ) : null}
       </Paper>
     );
@@ -1003,7 +2075,21 @@ export default function App() {
             질문
           </Button>
         </Stack>
-        {answer && <Alert icon={<MessageSquare size={18} />} severity="success" sx={{ mt: 2 }}>{answer}</Alert>}
+        {answer && (
+          <Stack spacing={1} sx={{ mt: 2 }}>
+            <Alert icon={<MessageSquare size={18} />} severity="success">{answer}</Alert>
+            {!!answerSources.length && (
+              <Box>
+                <Typography variant="caption" color="text.secondary">참고 근거</Typography>
+                <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.5 }}>
+                  {answerSources.map((source) => (
+                    <Chip key={source} label={source} size="small" variant="outlined" />
+                  ))}
+                </Stack>
+              </Box>
+            )}
+          </Stack>
+        )}
       </Paper>
     );
   }
@@ -1017,6 +2103,14 @@ export default function App() {
   ];
   const CurrentPage = pages[currentStep];
 
+  if (appModule === 'home') {
+    return renderHomePage();
+  }
+
+  if (appModule === 'personal-color') {
+    return renderPersonalColorPage();
+  }
+
   return (
     <Box className="app-shell">
       <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
@@ -1024,16 +2118,21 @@ export default function App() {
           <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
             <Box>
               <Typography variant="h4">BeautyAI</Typography>
-              <Typography color="text.secondary">AI 피부 분석 및 화장품 추천 워크스페이스</Typography>
+              <Typography color="text.secondary">피부 케어 분석 워크스페이스</Typography>
             </Box>
-            <Button
-              variant="contained"
-              startIcon={currentStep === 1 ? <Sparkles size={18} /> : <ArrowRight size={18} />}
-              disabled={!canGoNext()}
-              onClick={goNext}
-            >
-              {currentStep === 1 ? '분석 시작' : currentStep === 4 ? '완료' : '다음'}
-            </Button>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <Button variant="outlined" onClick={goHome}>
+                홈으로
+              </Button>
+              <Button
+                variant="contained"
+                startIcon={currentStep === 1 ? <Sparkles size={18} /> : <ArrowRight size={18} />}
+                disabled={!canGoNext()}
+                onClick={goNext}
+              >
+                {currentStep === 1 ? '분석 시작' : currentStep === 4 ? '완료' : '다음'}
+              </Button>
+            </Stack>
           </Stack>
           <Stepper activeStep={currentStep} sx={{ mt: 3 }} alternativeLabel>
             {steps.map((step, index) => (

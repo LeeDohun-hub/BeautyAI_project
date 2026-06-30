@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     skin_model_path: str = "./data/models/skin_efficientnet_b0.pt"
+    body_skin_model_path: str = "./data/models/body_skin_mobilenet_v3.pt"
+    problem_skin_knowledge_path: str = "./data/rag/problem_skin_knowledge.jsonl"
+    naver_client_id: str | None = None
+    naver_client_secret: str | None = None
+    rakuten_app_id: str | None = None
+    rakuten_access_key: str | None = None
+    rakuten_referer: str = "http://127.0.0.1:5173/"
 
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore")
 
@@ -26,6 +33,13 @@ class Settings(BaseSettings):
     @property
     def resolved_skin_model_path(self) -> str:
         path = Path(self.skin_model_path)
+        if path.is_absolute():
+            return str(path)
+        return str(self.project_root / path)
+
+    @property
+    def resolved_body_skin_model_path(self) -> str:
+        path = Path(self.body_skin_model_path)
         if path.is_absolute():
             return str(path)
         return str(self.project_root / path)

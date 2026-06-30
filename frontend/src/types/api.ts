@@ -7,9 +7,20 @@ export type SkinScores = {
   oiliness: number;
 };
 
+export type AnalysisMode = 'auto' | 'face' | 'body';
+
+export type BodyConditionScore = {
+  condition: string;
+  label: string;
+  probability: number;
+};
+
 export type SurveyInput = {
   gender: string;          // "female" | "male"
+  age?: string;
   age_group: string;       // "10s" | "20s" | "30s" | "40s" | "50s"
+  race_identity?: string;
+  privacy_consent?: boolean;
   skin_type: string;
   concerns: string[];
   makeup_concerns: string[];
@@ -20,9 +31,55 @@ export type SurveyInput = {
 };
 
 export type AnalyzeSkinResponse = {
-  analysis_id: number;
-  scores: SkinScores;
+  analysis_id?: number | null;
+  analysis_mode: AnalysisMode;
+  scores?: SkinScores | null;
+  body_conditions: BodyConditionScore[];
+  model_available: boolean;
   summary: string;
+};
+
+export type PersonalColorMakeup = {
+  lip: string[];
+  blush: string[];
+  eye: string[];
+  base: string[];
+};
+
+export type PersonalColorResponse = {
+  season: string;
+  tone: string;
+  subtype: string;
+  label: string;
+  confidence: number;
+  skin_summary: string;
+  palette: string[];
+  makeup: PersonalColorMakeup;
+  advice: string[];
+  metrics: Record<string, number>;
+};
+
+export type RakutenProduct = {
+  id: string;
+  brand: string;
+  name: string;
+  price: number;
+  image_url?: string | null;
+  product_url: string;
+  review_average?: number | null;
+  review_count?: number | null;
+  keyword: string;
+  source?: string;
+  score?: number | null;
+  platform_links?: Record<string, string>;
+  matched_platforms?: string[];
+};
+
+export type PersonalColorItemMatchResponse = {
+  provider: string;
+  configured: boolean;
+  products: RakutenProduct[];
+  message: string;
 };
 
 export type Ingredient = {
@@ -53,10 +110,40 @@ export type RecommendationPlatform =
   | 'all'
   | 'amazon_us'
   | 'amazon_jp'
-  | 'yahoo_japan'
   | 'naver'
   | 'matsukiyo'
   | 'oliveyoung';
+
+// 퍼스널컬러/무드 아이템 추천용 플랫폼(라쿠텐 포함).
+export type ItemPlatform = RecommendationPlatform | 'rakuten';
+
+export type MakeupPreviewResponse = {
+  mood: string;
+  applied: boolean;
+  message: string;
+  original_image: string;
+  image: string;
+};
+
+export type MoodThumbnailsResponse = {
+  thumbnails: Record<string, string>;
+};
+
+export type FaceRatio = {
+  label: string;
+  width: number;
+};
+
+export type FaceShapeResponse = {
+  detected: boolean;
+  shape: string;
+  tags: string[];
+  summary: string;
+  ratios: FaceRatio[];
+  blusher_tip: string;
+  shading_tip: string;
+  metrics: Record<string, unknown>;
+};
 
 export type RecommendationResponse = {
   history_id: number;
@@ -65,10 +152,14 @@ export type RecommendationResponse = {
   explanation: string;
 };
 
+export type ChatResponse = {
+  answer: string;
+  sources: string[];
+};
+
 export type HistoryItem = {
   id: number;
   recommended_ingredients: string[];
   recommended_products: string[];
   created_at: string;
 };
-

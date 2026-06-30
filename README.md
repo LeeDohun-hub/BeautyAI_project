@@ -93,5 +93,35 @@ backend\.venv\Scripts\python.exe scripts\train_skin_efficientnet.py --epochs 1 -
 backend\.venv\Scripts\python.exe scripts\train_skin_efficientnet.py --epochs 5
 ```
 
+### 팔·목·몸 피부질환 모델
+
+몸 피부 분석은 얼굴 모델과 분리되어 있으며 SkinDisNet의 원본 임상 이미지
+1,710장을 사용합니다. 데이터 라이선스는 CC BY-NC 4.0이므로 비상업 연구 및
+개발 범위에서 사용해야 합니다.
+
+```bash
+backend\.venv\Scripts\python.exe scripts\download_skindisnet.py
+backend\.venv\Scripts\python.exe scripts\prepare_skindisnet.py
+backend\.venv\Scripts\python.exe scripts\train_body_skin_model.py --epochs 8
+backend\.venv\Scripts\python.exe scripts\evaluate_body_skin_model.py
+```
+
+학습 결과는 `data/models/body_skin_mobilenet_v3.pt`에 저장됩니다. 분류 범주는
+아토피 피부염, 접촉성 피부염, 습진, 옴, 지루성 피부염, 체부백선입니다.
+모델 파일이 없으면 API는 임의 진단값을 만들지 않고 `model_available=false`를
+반환합니다.
+
 학습된 모델은 `data/models/skin_efficientnet_b0.pt`에 저장됩니다. API는 `.env`에서 `SKIN_MODEL_PATH`를 읽습니다. 파일이 존재하고 PyTorch가 설치되어 있으면 `POST /api/analyze-skin`은 EfficientNet 모델을 자동으로 사용합니다. 그렇지 않으면 MVP 분석기로 대체됩니다.
+
+## 문제성 피부 상담 지식
+
+AI Hub의 `02.문제성 피부 메이크업 추천 데이터` 라벨 ZIP을 상담 검색 인덱스로 변환합니다.
+
+```bash
+backend\.venv\Scripts\python.exe scripts\build_problem_skin_knowledge.py
+```
+
+생성된 `data/rag/problem_skin_knowledge.jsonl`은 원본 데이터와 함께 Git에서 제외됩니다. API의 `/api/chat`은 질문, 설문, 피부 분석 점수와 유사한 상담 사례를 찾아 메이크업 방법과 추천·회피 성분을 안내합니다. 인덱스가 없으면 기존 기본 상담 지식으로 자동 대체됩니다.
+
+원본 데이터에는 연구·학습 목적 등의 이용 조건이 포함되어 있으므로 외부 배포나 상용 서비스 적용 전 라이선스를 별도로 확인해야 합니다. 치료·질환 관련 내용은 의료 진단이 아닌 참고 정보로만 제공합니다.
 

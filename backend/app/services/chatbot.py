@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ChatHistory
 from app.schemas.api import ChatResponse
+from app.services.problem_skin_knowledge import build_knowledge_answer, get_problem_skin_knowledge
 
 
 KNOWLEDGE_BASE = [
@@ -24,6 +25,13 @@ TARGET_LABELS = {
 
 
 def answer_skin_question(db: Session, message: str, user_id: int | None = None, context: dict | None = None) -> ChatResponse:
+    knowledge_matches = get_problem_skin_knowledge().search(message, context)
+    if knowledge_matches and knowledge_matches[0].score >= 2:
+        answer, sources = build_knowledge_answer(knowledge_matches)
+        db.add(ChatHistory(user_id=user_id, message=message, answer=answer))
+        db.commit()
+        return ChatResponse(answer=answer, sources=sources)
+
     lower = message.lower()
     matched = [item for item in KNOWLEDGE_BASE if item[0] in lower]
     if not matched:

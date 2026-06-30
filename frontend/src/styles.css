@@ -1,15 +1,170 @@
 body {
   margin: 0;
+  font-family: Inter, Pretendard, "Noto Sans KR", "Segoe UI", sans-serif;
+  background: #08111d;
 }
 
 .app-shell {
   min-height: 100vh;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 248, 251, 0.98)),
-    url('https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?auto=format&fit=crop&w=1600&q=80');
+    radial-gradient(circle at 50% 0%, rgba(30, 61, 83, 0.42), transparent 34%),
+    linear-gradient(180deg, #05080d, #0a121d 54%, #05080d);
   background-size: cover;
   background-position: center top;
   background-attachment: fixed;
+}
+
+.home-hero {
+  position: relative;
+  min-height: 560px;
+  overflow: hidden;
+  padding: clamp(28px, 5vw, 58px);
+  border: 1px solid rgba(118, 206, 255, 0.26);
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.84), rgba(7, 16, 27, 0.94) 38%, rgba(3, 8, 14, 0.98)),
+    radial-gradient(circle at 76% 46%, rgba(79, 190, 255, 0.16), transparent 22%),
+    linear-gradient(180deg, #111923, #05080d);
+  color: #f8fbff;
+  border-radius: 18px;
+  box-shadow:
+    inset 0 0 0 12px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 13px rgba(160, 224, 255, 0.08),
+    0 34px 110px rgba(0, 0, 0, 0.68);
+}
+
+.home-hero::before {
+  content: '';
+  position: absolute;
+  inset: 18px;
+  pointer-events: none;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 7%, #0b0f14 0 16px, rgba(147, 226, 255, 0.52) 17px 18px, transparent 19px),
+    linear-gradient(90deg, transparent 0 6%, rgba(215, 247, 255, 0.92) 6.25%, rgba(102, 211, 255, 0.58) 6.75%, transparent 7.2%),
+    linear-gradient(90deg, transparent 92.8%, rgba(102, 211, 255, 0.58) 93.25%, rgba(215, 247, 255, 0.92) 93.75%, transparent 94.2%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 26%, rgba(255, 255, 255, 0.05) 76%, transparent);
+  box-shadow:
+    inset 0 0 0 1px rgba(148, 225, 255, 0.14),
+    inset 0 0 80px rgba(85, 194, 255, 0.08);
+}
+
+.home-hero::after {
+  content: '';
+  position: absolute;
+  right: clamp(42px, 9vw, 112px);
+  top: 74px;
+  width: min(34vw, 390px);
+  aspect-ratio: 0.78;
+  border: 1px solid rgba(174, 231, 255, 0.36);
+  background:
+    linear-gradient(180deg, rgba(237, 250, 255, 0.08), rgba(4, 12, 20, 0.28) 56%, rgba(3, 8, 14, 0.66)),
+    linear-gradient(90deg, transparent 0 49.7%, rgba(255, 255, 255, 0.36) 49.9%, transparent 50.2%),
+    linear-gradient(180deg, transparent 0 42%, rgba(255, 255, 255, 0.28) 42.2%, transparent 42.5%),
+    url('https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=900&q=86');
+  background-position: center top;
+  background-size: cover;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 0 999px rgba(6, 15, 26, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 0 0 16px rgba(3, 6, 11, 0.84),
+    0 0 0 17px rgba(129, 219, 255, 0.12),
+    0 26px 88px rgba(0, 0, 0, 0.7);
+  opacity: 0.9;
+}
+
+.home-hero > * {
+  position: relative;
+  z-index: 1;
+  max-width: min(620px, 52%);
+  padding: 28px;
+  border: 1px solid rgba(138, 222, 255, 0.16);
+  background: rgba(3, 10, 18, 0.5);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+
+.home-hero .MuiChip-root {
+  border-color: rgba(137, 218, 255, 0.46);
+  color: #b9ecff;
+  background: rgba(12, 31, 47, 0.62);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.home-hero .MuiTypography-h3 {
+  max-width: 560px;
+  color: #f2fbff;
+  line-height: 1.08;
+  letter-spacing: 0;
+  text-shadow:
+    0 0 18px rgba(77, 195, 255, 0.32),
+    0 4px 24px rgba(0, 0, 0, 0.72);
+}
+
+.home-hero .MuiTypography-body1 {
+  color: rgba(200, 224, 238, 0.86);
+  font-size: 1.05rem;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.66);
+}
+
+.module-card {
+  min-height: 280px;
+  height: 100%;
+  padding: 28px;
+  border: 1px solid rgba(129, 180, 214, 0.24);
+  background: linear-gradient(180deg, rgba(9, 19, 31, 0.9), rgba(5, 12, 22, 0.86));
+  backdrop-filter: blur(12px);
+  color: #ecf6ff;
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 48px rgba(0, 0, 0, 0.32);
+}
+
+.module-card .MuiTypography-root {
+  color: inherit;
+}
+
+.module-card .MuiTypography-body1 {
+  color: rgba(207, 222, 235, 0.82);
+}
+
+.active-module {
+  border-color: rgba(79, 188, 255, 0.76);
+  background: linear-gradient(180deg, rgba(13, 44, 70, 0.96), rgba(6, 20, 35, 0.92));
+  box-shadow:
+    0 0 0 1px rgba(68, 186, 255, 0.16),
+    0 18px 54px rgba(0, 103, 177, 0.24);
+}
+
+.disabled-module {
+  background: linear-gradient(180deg, rgba(13, 27, 43, 0.7), rgba(8, 18, 31, 0.72));
+  opacity: 0.88;
+}
+
+.module-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(63, 183, 255, 0.12);
+  color: #7ed8ff;
+  box-shadow: inset 0 0 0 1px rgba(126, 216, 255, 0.18);
+}
+
+.module-card .MuiButton-contained {
+  background: linear-gradient(90deg, #45c8ef, #95f0ff);
+  color: #03101c;
+  font-weight: 900;
+  box-shadow: 0 12px 28px rgba(35, 174, 230, 0.24);
+}
+
+.module-card .MuiChip-root {
+  background: rgba(215, 229, 239, 0.14);
+  color: rgba(232, 244, 252, 0.78);
 }
 
 .score-row {
@@ -21,7 +176,561 @@ body {
 
 .page-panel {
   padding: 28px;
-  border: 1px solid #e1e7ef;
+  border: 1px solid rgba(202, 218, 234, 0.42);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+}
+
+.personal-color-preview {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(118, 206, 255, 0.28);
+  background:
+    linear-gradient(180deg, rgba(6, 18, 32, 0.88), rgba(3, 8, 14, 0.96)),
+    radial-gradient(circle at 50% 20%, rgba(99, 205, 255, 0.18), transparent 28%);
+  color: rgba(232, 246, 255, 0.84);
+  border-radius: 10px;
+}
+
+.personal-color-preview img {
+  width: 100%;
+  height: 100%;
+  max-height: 420px;
+  object-fit: cover;
+  display: block;
+}
+
+.personal-color-result {
+  min-height: 100%;
+}
+
+.palette-swatch {
+  width: 92px;
+  height: 92px;
+  display: flex;
+  align-items: flex-end;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(12, 24, 38, 0.16);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+}
+
+.palette-swatch span {
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #172033;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.makeup-box {
+  min-height: 104px;
+  padding: 16px;
+  border: 1px solid rgba(153, 180, 204, 0.38);
+  background: rgba(246, 249, 252, 0.82);
+  border-radius: 8px;
+}
+
+.kiosk-header,
+.kiosk-flow-panel,
+.kiosk-nav {
+  border-color: rgba(118, 206, 255, 0.24);
+  background:
+    linear-gradient(180deg, rgba(250, 253, 255, 0.96), rgba(239, 246, 251, 0.94));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 20px 70px rgba(0, 0, 0, 0.26);
+  border-radius: 10px;
+}
+
+.kiosk-header .MuiStepLabel-label {
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.kiosk-flow-panel {
+  min-height: 560px;
+  position: relative;
+  overflow: hidden;
+}
+
+.kiosk-flow-panel::before {
+  content: '';
+  position: absolute;
+  inset: 14px;
+  pointer-events: none;
+  border: 1px solid rgba(18, 39, 56, 0.08);
+  border-radius: 8px;
+}
+
+.kiosk-device-panel {
+  min-height: 460px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 26px;
+  border-radius: 10px;
+  color: #f4fbff;
+  background:
+    radial-gradient(circle at 50% 16%, rgba(120, 220, 255, 0.22), transparent 28%),
+    linear-gradient(180deg, #162330, #070d14 68%, #03060a);
+  box-shadow:
+    inset 0 0 0 10px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 11px rgba(157, 226, 255, 0.1);
+}
+
+.kiosk-device-panel .MuiTypography-root {
+  color: inherit;
+}
+
+.kiosk-device-panel .MuiTypography-body1 {
+  color: rgba(218, 235, 246, 0.78);
+}
+
+.kiosk-face-placeholder {
+  min-height: 230px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px solid rgba(164, 232, 255, 0.24);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, transparent 0 49.6%, rgba(255, 255, 255, 0.28) 49.8%, transparent 50.2%),
+    linear-gradient(180deg, transparent 0 47.8%, rgba(255, 255, 255, 0.24) 48%, transparent 48.4%),
+    linear-gradient(180deg, rgba(241, 248, 255, 0.1), rgba(7, 18, 30, 0.62));
+  color: #bcefff;
+}
+
+.kiosk-preview {
+  min-height: 430px;
+  box-shadow:
+    inset 0 0 0 10px rgba(0, 0, 0, 0.16),
+    0 18px 46px rgba(0, 0, 0, 0.18);
+}
+
+.kiosk-result-empty,
+.kiosk-season-card,
+.kiosk-slider-card,
+.kiosk-recommend-card,
+.kiosk-match-card,
+.kiosk-print-sheet,
+.kiosk-qr-box {
+  padding: 22px;
+  border: 1px solid rgba(122, 152, 176, 0.22);
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 8px;
+}
+
+.kiosk-result-empty {
+  min-height: 430px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(95, 194, 255, 0.16), transparent 24%),
+    rgba(255, 255, 255, 0.78);
+}
+
+.kiosk-season-card {
+  color: #f7fbff;
+  background:
+    linear-gradient(135deg, rgba(9, 22, 35, 0.96), rgba(20, 42, 57, 0.94)),
+    radial-gradient(circle at 84% 16%, rgba(114, 210, 255, 0.18), transparent 24%);
+  box-shadow: 0 18px 46px rgba(5, 19, 32, 0.26);
+}
+
+.kiosk-season-card .MuiTypography-root {
+  color: inherit;
+}
+
+.kiosk-season-card .MuiTypography-body1 {
+  color: rgba(220, 238, 248, 0.78);
+}
+
+.kiosk-slider-card,
+.kiosk-recommend-card,
+.kiosk-match-card {
+  min-height: 170px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(243, 248, 252, 0.86));
+}
+
+.kiosk-match-card.compact {
+  min-height: 118px;
+}
+
+.kiosk-print-sheet {
+  min-height: 420px;
+  background:
+    linear-gradient(180deg, #ffffff, #f8fbfd);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.14);
+}
+
+.kiosk-qr-box {
+  min-height: 420px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.fake-qr {
+  width: 148px;
+  height: 148px;
+  border: 10px solid #fff;
+  background:
+    linear-gradient(90deg, #111 10px, transparent 10px 20px, #111 20px 30px, transparent 30px 40px, #111 40px 50px, transparent 50px),
+    linear-gradient(180deg, transparent 10px, #111 10px 20px, transparent 20px 30px, #111 30px 40px, transparent 40px 50px, #111 50px);
+  background-size: 50px 50px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.face-shape-screen {
+  color: #1a2433;
+}
+
+.kiosk-sub-tabs,
+.makeup-tabs {
+  flex-wrap: wrap;
+}
+
+.kiosk-sub-tabs .MuiChip-root,
+.makeup-tabs .MuiChip-root {
+  height: 34px;
+  border-radius: 999px;
+  background: #f2f5f8;
+  color: #7a8796;
+  font-weight: 800;
+}
+
+.kiosk-sub-tabs .MuiChip-root.selected,
+.makeup-tabs .MuiChip-root.selected {
+  background: #18202a;
+  color: #fff;
+}
+
+.face-diagram {
+  position: relative;
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(151, 170, 188, 0.28);
+  background:
+    linear-gradient(90deg, transparent 0 49.8%, rgba(45, 160, 205, 0.18) 50%, transparent 50.2%),
+    linear-gradient(180deg, transparent 0 49.8%, rgba(45, 160, 205, 0.18) 50%, transparent 50.2%),
+    #fbfdff;
+  border-radius: 8px;
+}
+
+.face-outline {
+  position: relative;
+  width: 138px;
+  height: 186px;
+  border: 3px solid #6e8796;
+  border-radius: 48% 48% 46% 46% / 34% 34% 62% 62%;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.hair-line {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: 26px;
+  height: 34px;
+  border-top: 3px solid #617987;
+  border-radius: 50% 50% 0 0;
+}
+
+.brow,
+.eye,
+.nose,
+.mouth {
+  position: absolute;
+  background: #596f7d;
+}
+
+.brow {
+  top: 78px;
+  width: 30px;
+  height: 3px;
+  border-radius: 99px;
+}
+
+.brow.left,
+.eye.left {
+  left: 28px;
+}
+
+.brow.right,
+.eye.right {
+  right: 28px;
+}
+
+.eye {
+  top: 91px;
+  width: 24px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.nose {
+  left: 64px;
+  top: 105px;
+  width: 8px;
+  height: 28px;
+  border-radius: 99px;
+  opacity: 0.72;
+}
+
+.mouth {
+  left: 50px;
+  bottom: 32px;
+  width: 38px;
+  height: 7px;
+  border-radius: 0 0 50% 50%;
+}
+
+.measure-line {
+  position: absolute;
+  background: rgba(57, 161, 202, 0.58);
+}
+
+.measure-line.horizontal {
+  left: 62px;
+  right: 62px;
+  height: 2px;
+}
+
+.measure-line.horizontal.top {
+  top: 76px;
+}
+
+.measure-line.horizontal.mid {
+  top: 144px;
+}
+
+.measure-line.vertical {
+  top: 38px;
+  bottom: 38px;
+  width: 2px;
+}
+
+.measure-line.vertical.left {
+  left: 72px;
+}
+
+.measure-line.vertical.right {
+  right: 72px;
+}
+
+.face-ratio-panel,
+.face-makeup-section {
+  padding: 18px;
+  border: 1px solid rgba(151, 170, 188, 0.28);
+  background: #fff;
+  border-radius: 8px;
+}
+
+.face-ratio-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.face-ratio-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1f5;
+}
+
+.face-ratio-track > div {
+  height: 100%;
+  border-radius: inherit;
+  background: #202832;
+}
+
+.section-index {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: #202832;
+  color: #fff;
+  font-weight: 900;
+  font-size: 0.82rem;
+}
+
+.face-product-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.product-swatch {
+  width: 54px;
+  height: 54px;
+  border: 1px solid #e0e6ec;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
+.product-swatch.blush {
+  background: linear-gradient(135deg, #f8ccd4, #e84a7d);
+}
+
+.product-swatch.shading {
+  background: linear-gradient(135deg, #d4beb0, #8b6c5e);
+}
+
+.print-card-button {
+  min-height: 52px;
+  background: #141a22 !important;
+  font-weight: 900 !important;
+}
+
+.rakuten-product-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(122, 152, 176, 0.22);
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 14px 30px rgba(9, 20, 32, 0.08);
+}
+
+.rakuten-product-image {
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f4f7fa;
+  color: #9aa8b6;
+}
+
+.rakuten-product-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.rakuten-product-title {
+  min-height: 3.1em;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.55;
+}
+
+.style-consult-screen {
+  color: #1a2433;
+}
+
+.style-consult-hint {
+  height: 34px;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #51606f;
+  font-weight: 800;
+}
+
+.style-mood-card {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 2px solid transparent;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 14px 30px rgba(9, 20, 32, 0.08);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.style-mood-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 38px rgba(9, 20, 32, 0.14);
+}
+
+.style-mood-card.selected {
+  border-color: #18202a;
+  box-shadow: 0 18px 40px rgba(24, 32, 42, 0.22);
+}
+
+.style-mood-thumb {
+  aspect-ratio: 3 / 4;
+  border-radius: 10px;
+  background: #f4f7fa;
+  box-shadow: inset 0 -40px 60px rgba(0, 0, 0, 0.18);
+}
+
+.style-mood-thumb.cherry-chocolate {
+  background: radial-gradient(120% 90% at 30% 20%, #9c2b39 0%, #6a1c28 45%, #3a2017 100%);
+}
+
+.style-mood-thumb.tomato-red {
+  background: radial-gradient(120% 90% at 30% 20%, #f0533a 0%, #d83a28 45%, #8f2417 100%);
+}
+
+.style-mood-thumb.rose-wine {
+  background: radial-gradient(120% 90% at 30% 20%, #8e2f4a 0%, #6a1f38 45%, #3f1422 100%);
+}
+
+.style-mood-thumb.plum-creme {
+  background: radial-gradient(120% 90% at 30% 20%, #8a3a72 0%, #6e2a5a 45%, #b78aa6 100%);
+}
+
+.style-mood-thumb.berry-sorbet {
+  background: radial-gradient(120% 90% at 30% 20%, #e85a82 0%, #d8466e 45%, #f6b7cd 100%);
+}
+
+.style-mood-thumb.peach-latte {
+  background: radial-gradient(120% 90% at 30% 20%, #f6a98a 0%, #ef9a86 45%, #d9b59c 100%);
+}
+
+.style-mood-thumb.coral {
+  background: radial-gradient(120% 90% at 30% 20%, #ff7a66 0%, #f55f4d 45%, #f3a48f 100%);
+}
+
+.style-mood-thumb.caramel-mocha {
+  background: radial-gradient(120% 90% at 30% 20%, #b07a4e 0%, #8a5a36 45%, #4f3522 100%);
+}
+
+.style-mood-label {
+  text-align: center;
+  padding: 6px 4px 8px;
+}
+
+.style-mood-thumb.photo {
+  overflow: hidden;
+  box-shadow: none;
+  background: #f4f7fa;
+}
+
+.style-mood-thumb.photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
+  display: block;
+}
+
+.style-mood-card.selected .style-mood-label {
+  color: #18202a;
 }
 
 .camera-box {
@@ -82,6 +791,32 @@ body {
 }
 
 @media (max-width: 720px) {
+  .home-hero {
+    min-height: 620px;
+    padding: 24px;
+  }
+
+  .home-hero::before {
+    background:
+      radial-gradient(circle at 50% 5%, #0b0f14 0 13px, rgba(147, 226, 255, 0.52) 14px 15px, transparent 16px),
+      linear-gradient(90deg, transparent 4%, rgba(212, 244, 255, 0.7) 4.5%, transparent 5.2%),
+      linear-gradient(90deg, transparent 94.8%, rgba(212, 244, 255, 0.58) 95.5%, transparent 96.2%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 42%);
+  }
+
+  .home-hero::after {
+    top: auto;
+    right: 22px;
+    bottom: 20px;
+    width: min(56vw, 230px);
+    opacity: 0.48;
+  }
+
+  .home-hero > * {
+    max-width: none;
+    padding: 22px;
+  }
+
   .score-row {
     grid-template-columns: 92px 1fr 36px;
   }

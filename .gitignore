@@ -23,3 +23,4 @@ data/models/*.bak-*
 *.log
 *.db.bak-*
 aihub_datasets.txt
+data/
