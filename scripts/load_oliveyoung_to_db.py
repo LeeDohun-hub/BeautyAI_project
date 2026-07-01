@@ -38,7 +38,9 @@ SKINCARE_WORDS = (
 
 MAKEUP_WORDS = (
     "bb", "blush", "blusher", "brow", "conceal", "contour", "eyeliner", "eye liner",
-    "foundation", "highlighter", "lip", "mascara", "nail", "palette", "tint",
+    "foundation", "highlighter", "lip", "lipstick", "gloss", "rouge", "cheek",
+    "cushion", "primer", "powder", "shadow", "eyeshadow", "highlighter",
+    "mascara", "nail", "palette", "tint",
 )
 
 
@@ -79,6 +81,30 @@ def is_skincare(row: dict[str, str]) -> bool:
     if any(word in haystack for word in SKINCARE_WORDS):
         return not any(word in haystack for word in MAKEUP_WORDS)
     return False
+
+
+def is_makeup(row: dict[str, str]) -> bool:
+    haystack = " ".join(
+        normalize_text(row.get(field, "")).lower()
+        for field in ("prdtName", "prdtNameEn", "category", "subCategory")
+    )
+    return any(word in haystack for word in MAKEUP_WORDS)
+
+
+def infer_makeup_category(row: dict[str, str]) -> str:
+    haystack = " ".join(
+        normalize_text(row.get(field, "")).lower()
+        for field in ("prdtName", "prdtNameEn", "category", "subCategory")
+    )
+    if any(word in haystack for word in ("lip", "lipstick", "tint", "rouge", "gloss")):
+        return "lip"
+    if any(word in haystack for word in ("blush", "blusher", "cheek")):
+        return "blush"
+    if any(word in haystack for word in ("eye", "eyeshadow", "shadow", "palette", "mascara", "liner", "brow")):
+        return "eye"
+    if any(word in haystack for word in ("foundation", "cushion", "conceal", "primer", "powder", "bb")):
+        return "base"
+    return normalize_text(row.get("subCategory") or row.get("category")) or "makeup"
 
 
 def detect_ingredients(row: dict[str, str]) -> list[str]:
@@ -131,6 +157,7 @@ def main() -> int:
     parser.add_argument("--catalog", default="data/manifests/oy_recommendation_products.csv")
     parser.add_argument("--database-url", default="", help="Optional DB URL override, e.g. sqlite:///./beautyai.db")
     parser.add_argument("--limit", type=int, default=0, help="Max rows to import, 0 means all")
+    parser.add_argument("--mode", choices=["skincare", "makeup", "all"], default="skincare")
     args = parser.parse_args()
 
     bootstrap_backend(args.database_url)
@@ -166,12 +193,23 @@ def main() -> int:
                 scanned += 1
                 name = normalize_text(row.get("prdtName") or row.get("prdtNameEn"))
                 brand_name = normalize_text(row.get("brandName"))
-                if not name or not brand_name or not is_skincare(row):
+                row_is_skincare = is_skincare(row)
+                row_is_makeup = is_makeup(row)
+                if args.mode == "skincare" and not row_is_skincare:
+                    skipped += 1
+                    continue
+                if args.mode == "makeup" and not row_is_makeup:
+                    skipped += 1
+                    continue
+                if args.mode == "all" and not (row_is_skincare or row_is_makeup):
+                    skipped += 1
+                    continue
+                if not name or not brand_name:
                     skipped += 1
                     continue
 
                 ingredient_names = list(dict.fromkeys(detect_ingredients(row)))
-                if not ingredient_names:
+                if row_is_skincare and not ingredient_names:
                     skipped += 1
                     continue
 
@@ -188,7 +226,8 @@ def main() -> int:
                 review_count = parse_int(row.get("reviewCount"))
                 product_url = normalize_text(row.get("productUrl"))
                 image_url = normalize_text(row.get("imageUrl"))
-                description = "Olive Young Global skincare product"
+                category = infer_makeup_category(row) if row_is_makeup and not row_is_skincare else normalize_text(row.get("subCategory") or row.get("category")) or "skincare"
+                description = "Olive Young Global makeup product" if row_is_makeup and not row_is_skincare else "Olive Young Global skincare product"
                 if rating:
                     description += f" with Olive Young rating {rating:.1f}"
                 if review_count:
@@ -201,8 +240,8 @@ def main() -> int:
                         .filter(Brand.name == brand_name, Product.name == name)
                         .one()
                     )
-                    product.category = normalize_text(row.get("subCategory") or row.get("category")) or product.category
-                    product.skin_types = infer_skin_types(ingredient_names)
+                    product.category = category or product.category
+                    product.skin_types = infer_skin_types(ingredient_names) if ingredient_names else "all"
                     product.price = price or product.price
                     product.description = description
                     product.product_url = product_url or product.product_url
@@ -214,8 +253,8 @@ def main() -> int:
                     product = Product(
                         brand=brand,
                         name=name,
-                        category=normalize_text(row.get("subCategory") or row.get("category")) or "skincare",
-                        skin_types=infer_skin_types(ingredient_names),
+                        category=category,
+                        skin_types=infer_skin_types(ingredient_names) if ingredient_names else "all",
                         price=price,
                         description=description,
                         product_url=product_url,

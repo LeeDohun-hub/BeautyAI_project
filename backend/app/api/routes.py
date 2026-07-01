@@ -1,4 +1,5 @@
 import json
+import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func
@@ -27,18 +28,71 @@ from app.schemas.api import (
 from app.services.chatbot import answer_skin_question
 from app.services.body_skin_analyzer import BodySkinAnalyzer
 from app.services.image_router import get_skin_image_router
+from app.services.naver_client import NaverClient
 from app.services.personal_color_analyzer import PersonalColorAnalyzer
+from app.services.platform_resolver import dedup_by_line, resolve_product_platforms
+from app.services.product_image_provider import fill_missing_images
 from app.services.rakuten_client import RakutenClient
 from app.services.recommender import (
     build_platform_links,
     get_scores_from_analysis,
     matched_platforms,
+    personal_color_fit_score_for_text,
     recommend_personal_color_products,
     recommend_products,
 )
 from app.services.skin_analyzer import SkinAnalyzer, summarize_scores
 
 router = APIRouter(prefix="/api")
+
+
+# 아이템 매칭 카테고리 분류(프론트 itemMatchColumnFor와 동일 규칙). 한/영/일 토큰 모두 인식.
+_ITEM_CATEGORY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("blush", re.compile(r"blush|blusher|cheek|チーク|블러셔|치크|볼터치", re.I)),
+    ("eye", re.compile(r"eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ|아이|섀도|쉐도", re.I)),
+    ("base", re.compile(r"base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스", re.I)),
+    ("lip", re.compile(r"lip|lipstick|tint|rouge|gloss|balm|リップ|ルージュ|ティント|립|틴트", re.I)),
+]
+
+
+def _item_match_category(product) -> str | None:
+    # 카테고리 키워드 필드를 우선 신뢰하고, 없으면 상품명까지 포함해 판정한다.
+    primary = (product.keyword or "").lower()
+    for category, pattern in _ITEM_CATEGORY_PATTERNS:
+        if pattern.search(primary):
+            return category
+    text = f"{product.keyword or ''} {product.name or ''}".lower()
+    for category, pattern in _ITEM_CATEGORY_PATTERNS:
+        if pattern.search(text):
+            return category
+    return None
+
+
+def _balance_item_categories(items: list, limit: int = 8, per_category: int = 2) -> list:
+    """점수순 상품을 립/블러셔/아이/베이스 4개 카테고리에 고르게 배분한다.
+
+    '모든 플랫폼'에서 라쿠텐(립/아이)이 상위를 독식해 베이스/블러셔 컬럼이 비는 문제를
+    막는다. 각 카테고리 상위 per_category개를 먼저 확보하고 남은 칸은 점수순으로 채운다.
+    """
+    buckets: dict[str, list] = {"lip": [], "blush": [], "eye": [], "base": []}
+    for item in items:  # items는 점수 내림차순 정렬 상태
+        category = _item_match_category(item)
+        if category:
+            buckets[category].append(item)
+
+    selected: list = []
+    seen: set[int] = set()
+    for category in ("lip", "blush", "eye", "base"):
+        for item in buckets[category][:per_category]:
+            selected.append(item)
+            seen.add(id(item))
+    for item in items:
+        if len(selected) >= limit:
+            break
+        if id(item) not in seen:
+            selected.append(item)
+            seen.add(id(item))
+    return selected[:limit]
 
 
 @router.post("/analyze-skin", response_model=AnalyzeSkinResponse)
@@ -104,8 +158,11 @@ async def analyze_face_shape(image: UploadFile = File(...)) -> FaceShapeResponse
 
 @router.post("/recommend", response_model=RecommendationResponse)
 def recommend(payload: RecommendationRequest, db: Session = Depends(get_db)) -> RecommendationResponse:
+    region = (payload.region or "kr").strip().lower()
+    # 스킨케어 상품은 글로벌 카탈로그라 지역/플랫폼과 무관하게 피부적합도로 고른다("all").
+    # 지역·플랫폼 구분은 아래 입점 리졸버(버튼)와 프론트 필터에서 처리한다.
     if payload.analysis_mode == "body":
-        return recommend_products(
+        response = recommend_products(
             db,
             payload.scores or SkinScores(
                 acne=0, pore=0, wrinkle=0, redness=0, pigmentation=0, oiliness=0
@@ -113,22 +170,30 @@ def recommend(payload: RecommendationRequest, db: Session = Depends(get_db)) -> 
             payload.survey,
             None,
             payload.user_id,
-            payload.platform,
+            "all",
             analysis_mode="body",
             body_conditions=payload.body_conditions,
         )
-    try:
-        scores = payload.scores or get_scores_from_analysis(db, payload.analysis_id or 0)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return recommend_products(
-        db,
-        scores,
-        payload.survey,
-        payload.analysis_id,
-        payload.user_id,
-        payload.platform,
-    )
+    else:
+        try:
+            scores = payload.scores or get_scores_from_analysis(db, payload.analysis_id or 0)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        response = recommend_products(
+            db,
+            scores,
+            payload.survey,
+            payload.analysis_id,
+            payload.user_id,
+            "all",
+        )
+    # 퍼스널컬러 화면과 동일하게: 지역별 입점 리졸버로 플랫폼 버튼을 통일한다.
+    # KR=네이버/Amazon.com/올리브영 국내몰, JP=라쿠텐/Amazon.co.jp/올리브영 글로벌.
+    for product in response.products:
+        resolve_product_platforms(product, region)
+    # 카드 이미지 보강(KR=네이버, JP=라쿠텐 검색 이미지, 이미 있으면 유지).
+    fill_missing_images(response.products, region)
+    return response
 
 
 @router.post("/personal-color/item-match", response_model=PersonalColorItemMatchResponse)
@@ -182,27 +247,99 @@ def personal_color_item_match(
                 review_count=item.review_count,
                 keyword=item.keyword,
                 source="rakuten",
-                score=round(min(99.0, 40.0 + (item.review_average or 0) * 8 + min(item.review_count or 0, 100) * 0.08), 1),
-                platform_links={"rakuten": item.product_url},
+                score=personal_color_fit_score_for_text(
+                    item.brand,
+                    item.name,
+                    item.keyword,
+                    "",
+                    keywords,
+                    platform_score=8.0,
+                    rating_score=min(7.0, (item.review_average or 0) * 1.2 + min(item.review_count or 0, 100) * 0.015),
+                ),
+                # 라쿠텐 실상품 + Amazon JP는 상품명 검색으로 대부분 조회되므로 교차 버튼 제공.
+                # 마츠키요/올리브영은 입점 확인 수단이 없어(특히 일본 상품) 붙이지 않는다.
+                platform_links={
+                    "rakuten": item.product_url,
+                },
                 matched_platforms=["rakuten"],
             )
             for item in rakuten_products
         )
 
-    products = sorted(
+    naver_client = NaverClient()
+    wants_naver = region == "kr" and platform in {"all", "naver"}
+    if wants_naver and naver_client.configured:
+        naver_products = naver_client.search_many(keywords, hits_per_keyword=payload.hits_per_keyword)
+        products.extend(
+            RakutenProductOut(
+                id=f"naver-{item.id}",
+                brand=item.brand,
+                name=item.name,
+                price=item.price,
+                image_url=item.image_url,
+                product_url=item.product_url,
+                review_average=item.review_average,
+                review_count=item.review_count,
+                keyword=item.keyword,
+                source="naver",
+                # 네이버는 리뷰 지표가 없어 색상 매칭(검색 자체가 색상어)으로 신뢰하고,
+                # DB 스킨케어 누출(약 57점)보다 위에 오도록 기본 점수를 부여한다.
+                score=personal_color_fit_score_for_text(
+                    item.brand,
+                    item.name,
+                    item.keyword,
+                    "",
+                    keywords,
+                    platform_score=8.0,
+                    rating_score=4.0 if item.image_url else 0.0,
+                ),
+                # 네이버 실상품 + 아마존/올리브영은 상품명 검색으로 연결(모든 플랫폼에서 노출).
+                # 올리브영 실입점 검증은 데이터 확보 후 별도 예외처리 예정.
+                platform_links={
+                    "naver": item.product_url,
+                },
+                matched_platforms=["naver"],
+            )
+            for item in naver_products
+        )
+
+    # 같은 상품(브랜드+라인명)으로 흩어진 소스별 카드를 하나로 병합한다(product-centric).
+    products = dedup_by_line(products)
+
+    ranked = sorted(
         products,
         key=lambda item: (item.score or 0, item.review_count or 0, item.review_average or 0),
         reverse=True,
-    )[:8]
+    )
+    # 립/블러셔/아이/베이스 4개 컬럼에 고르게 배분한다. 이렇게 하면 '모든 플랫폼'에서도
+    # 베이스/블러셔 컬럼이 비지 않고, 각 컬럼은 카테고리 내 점수순으로 채워진다.
+    products = _balance_item_categories(ranked, limit=8, per_category=2)
 
-    configured = True if products or not wants_rakuten else client.configured
+    # 입점 리졸버: 최종 노출 상품마다 플랫폼 전반(라쿠텐/네이버 매칭 + 마츠키요 인덱스 +
+    # 아마존/올리브영 라인 검색링크)을 채운다. 네트워크 호출은 top N에만 한정한다.
+    for product in products:
+        resolve_product_platforms(product, region)
+
+    # 이미지가 없는 상품은 지역별 실시간 검색(KR=네이버, JP=라쿠텐)으로 대표 이미지를 보강한다.
+    fill_missing_images(products, region)
+
     if products:
+        configured = True
         message = "Matched products loaded."
     elif wants_rakuten and not client.configured:
+        configured = False
         message = "Rakuten API keys are not configured."
+    elif wants_naver and not naver_client.configured:
+        configured = False
+        message = "Naver API keys are not configured."
     elif wants_rakuten and client.last_error:
+        configured = True
         message = f"Rakuten API error: {client.last_error}"
+    elif wants_naver and naver_client.last_error:
+        configured = True
+        message = f"Naver API error: {naver_client.last_error}"
     else:
+        configured = True
         message = "No products matched this region/platform."
 
     return PersonalColorItemMatchResponse(

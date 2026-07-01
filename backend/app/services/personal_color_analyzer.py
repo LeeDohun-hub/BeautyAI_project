@@ -6,7 +6,19 @@ from io import BytesIO
 import numpy as np
 from PIL import Image, ImageOps
 
+from app.ai.personal_color_model import SEASON_TONE, EfficientNetSeasonClassifier
+from app.core.config import get_settings
 from app.schemas.api import PersonalColorMakeup, PersonalColorResponse
+
+# 학습된 계절 분류기(있으면 웜/쿨을 모델로). 최초 사용 시 1회 로드해 재사용.
+_season_classifier: EfficientNetSeasonClassifier | None = None
+
+
+def _get_season_classifier() -> EfficientNetSeasonClassifier:
+    global _season_classifier
+    if _season_classifier is None:
+        _season_classifier = EfficientNetSeasonClassifier(get_settings().resolved_personal_color_model_path)
+    return _season_classifier
 
 
 @dataclass(frozen=True)
@@ -124,10 +136,13 @@ PROFILES: dict[tuple[str, str], PersonalColorProfile] = {
 
 class PersonalColorAnalyzer:
     def analyze(self, image_bytes: bytes) -> PersonalColorResponse:
-        rgb = self._load_rgb(image_bytes)
-        skin_pixels = self._skin_pixels(rgb)
+        original_rgb = self._load_rgb(image_bytes)
+        # 조명 색온도 캐스트 제거: 눈흰자(공막) 기준 색항상성. 같은 사람이 사진마다
+        # 봄웜↔가을웜으로 뒤집히는 주원인(warmth 흔들림)을 줄인다. 눈흰자를 못 찾으면 원본 유지.
+        balanced_rgb, white_balanced = self._white_balance(original_rgb)
+        skin_pixels = self._skin_pixels(balanced_rgb)
         if skin_pixels.size == 0:
-            skin_pixels = self._center_pixels(rgb)
+            skin_pixels = self._center_pixels(balanced_rgb)
 
         mean_rgb = skin_pixels.mean(axis=0)
         brightness = float(np.mean(mean_rgb) / 255)
@@ -135,18 +150,23 @@ class PersonalColorAnalyzer:
         warmth = float(((mean_rgb[0] - mean_rgb[2]) + 0.42 * (mean_rgb[1] - mean_rgb[2])) / 255)
         redness = float((mean_rgb[0] - mean_rgb[1]) / 255)
 
-        tone = "warm" if warmth >= 0.035 else "cool"
-        if brightness >= 0.69:
-            subtype = "light"
-        elif chroma >= 0.18 and brightness >= 0.48:
-            subtype = "bright" if tone == "cool" else "light"
-        elif brightness <= 0.46:
-            subtype = "deep"
+        # 웜/쿨(계절)은 주관적이라 학습 모델이 있으면 모델로 결정, 없으면 warmth 휴리스틱.
+        # subtype(밝기/선명도)은 측정 가능한 축이라 WB 보정 지표로 계산한다.
+        season_pred = self._predict_season(original_rgb)
+        if season_pred is not None:
+            season, model_conf = season_pred
+            tone = SEASON_TONE[season]
+            model_used = True
         else:
-            subtype = "soft"
+            tone = "warm" if warmth >= 0.035 else "cool"
+            model_used = False
+        subtype = self._subtype_from_metrics(brightness, chroma, tone)
 
         profile = PROFILES.get((tone, subtype)) or PROFILES[(tone, "soft")]
-        confidence = min(0.9, max(0.56, 0.62 + abs(warmth) * 1.8 + abs(brightness - 0.58) * 0.22 + chroma * 0.24))
+        if model_used:
+            confidence = min(0.97, max(0.6, model_conf))
+        else:
+            confidence = min(0.9, max(0.56, 0.62 + abs(warmth) * 1.8 + abs(brightness - 0.58) * 0.22 + chroma * 0.24))
         summary = self._summary(profile, brightness, chroma, warmth, redness)
 
         return PersonalColorResponse(
@@ -164,8 +184,77 @@ class PersonalColorAnalyzer:
                 "chroma": round(chroma, 3),
                 "warmth": round(warmth, 3),
                 "redness": round(redness, 3),
+                "white_balanced": 1.0 if white_balanced else 0.0,
             },
         )
+
+    def _white_balance(self, rgb: np.ndarray) -> tuple[np.ndarray, bool]:
+        """공막(눈흰자) 기준 색항상성. 무채색이어야 할 눈흰자의 색을 조명색으로 보고 나눠,
+        조명 색온도만 제거하고 피부 본연의 웜/쿨은 보존한다. 눈흰자 미검출 시 원본 반환."""
+        illuminant = self._estimate_illuminant(rgb)
+        if illuminant is None:
+            return rgb, False
+        gray = float(np.mean(illuminant))
+        scale = gray / np.clip(illuminant, 1e-6, None)
+        scale = np.clip(scale, 0.75, 1.33)  # 과보정 방지
+        balanced = np.clip(rgb * scale.reshape(1, 1, 3), 0, 255).astype(np.float32)
+        return balanced, True
+
+    # mediapipe 눈 대표 랜드마크: (바깥, 안쪽, 위, 아래) — 눈 영역 바운딩 박스용.
+    _EYE_LANDMARKS = ((33, 133, 159, 145), (362, 263, 386, 374))
+
+    def _estimate_illuminant(self, rgb: np.ndarray) -> np.ndarray | None:
+        """mediapipe 눈 랜드마크로 눈흰자(공막)를 찾아 그 평균색으로 조명색을 추정한다.
+        휴대폰 사진이 90°/180° 회전된 경우도 있어 4방향을 시도한다(색 평균은 회전 무관).
+        얼굴/눈흰자 미검출 시 None(→ WB 생략)."""
+        try:
+            import mediapipe as mp
+        except Exception:
+            return None
+        for k in (0, 1, 3, 2):  # as-is, 90°CCW, 90°CW, 180°
+            oriented = np.ascontiguousarray((np.rot90(rgb, k) if k else rgb).astype(np.uint8))
+            illuminant = self._illuminant_from_oriented(oriented, mp)
+            if illuminant is not None:
+                return illuminant
+        return None
+
+    def _illuminant_from_oriented(self, img: np.ndarray, mp) -> np.ndarray | None:
+        h, w = img.shape[:2]
+        try:
+            with mp.solutions.face_mesh.FaceMesh(
+                static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5
+            ) as mesh:
+                result = mesh.process(img)
+        except Exception:
+            return None
+        if not result.multi_face_landmarks:
+            return None
+        lm = result.multi_face_landmarks[0].landmark
+
+        neutral_chunks: list[np.ndarray] = []
+        for idxs in self._EYE_LANDMARKS:
+            xs = [lm[i].x * w for i in idxs]
+            ys = [lm[i].y * h for i in idxs]
+            x1, x2 = int(max(0, min(xs))), int(min(w, max(xs)))
+            y1, y2 = int(max(0, min(ys))), int(min(h, max(ys)))
+            if x2 - x1 < 3 or y2 - y1 < 2:
+                continue
+            patch = img[y1:y2, x1:x2].reshape(-1, 3).astype(np.float32)
+            if patch.size == 0:
+                continue
+            maxc = patch.max(axis=1)
+            minc = patch.min(axis=1)
+            brightness = patch.mean(axis=1)
+            saturation = (maxc - minc) / np.clip(maxc, 1e-6, None)
+            mask = (brightness > 110) & (saturation < 0.28)  # 밝고 저채도 = 눈흰자 후보
+            if mask.any():
+                neutral_chunks.append(patch[mask])
+        if not neutral_chunks:
+            return None
+        neutral = np.concatenate(neutral_chunks)
+        if len(neutral) < 20:
+            return None
+        return neutral.mean(axis=0)
 
     def _load_rgb(self, image_bytes: bytes) -> np.ndarray:
         image = Image.open(BytesIO(image_bytes))

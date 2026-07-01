@@ -610,6 +610,22 @@ body {
   box-shadow: 0 14px 30px rgba(9, 20, 32, 0.08);
 }
 
+.item-match-column {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.item-match-product-stack {
+  min-height: 0;
+}
+
+.item-match-product-stack .rakuten-product-card {
+  height: auto;
+  min-height: 0;
+}
+
 .rakuten-product-image {
   aspect-ratio: 1 / 1;
   display: grid;

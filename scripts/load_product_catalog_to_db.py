@@ -6,6 +6,7 @@ import csv
 import re
 import sys
 from pathlib import Path
+from urllib.parse import quote_plus
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = PROJECT_ROOT / "backend"
@@ -65,6 +66,59 @@ SKINCARE_WORDS = (
     "hydr",
 )
 
+MAKEUP_WORDS = (
+    "lip",
+    "lipstick",
+    "tint",
+    "rouge",
+    "gloss",
+    "blush",
+    "blusher",
+    "cheek",
+    "eye",
+    "eyeshadow",
+    "shadow",
+    "palette",
+    "mascara",
+    "liner",
+    "nail",
+    "polish",
+    "foundation",
+    "cushion",
+    "concealer",
+    "primer",
+    "powder",
+    "makeup",
+    "cosmetic",
+)
+
+COLOR_WORDS = (
+    "warm",
+    "cool",
+    "light",
+    "bright",
+    "soft",
+    "muted",
+    "deep",
+    "coral",
+    "peach",
+    "pink",
+    "rose",
+    "mauve",
+    "berry",
+    "red",
+    "brick",
+    "terracotta",
+    "orange",
+    "beige",
+    "brown",
+    "ivory",
+    "nude",
+    "plum",
+    "wine",
+    "lavender",
+)
+
 
 def normalize_text(value: str | None) -> str:
     if not value:
@@ -73,6 +127,21 @@ def normalize_text(value: str | None) -> str:
     if value.lower() in {"nan", "none", "null"}:
         return ""
     return re.sub(r"\s+", " ", value)
+
+
+def infer_product_url(row: dict[str, str], brand: str, name: str) -> str:
+    product_url = normalize_text(row.get("product_url", ""))
+    asin = normalize_text(row.get("asin", "")).upper()
+    source_platform = normalize_text(row.get("source_platform", "")).lower()
+    source = normalize_text(row.get("source", "")).lower()
+    if product_url:
+        return product_url
+    if asin:
+        return f"https://www.amazon.com/dp/{asin}"
+    if "amazon" in source_platform or "amazon" in source:
+        query = quote_plus(f"{brand} {name}".strip())
+        return f"https://www.amazon.com/s?k={query}"
+    return ""
 
 
 def clean_brand(value: str) -> str:
@@ -109,6 +178,32 @@ def parse_price(value: str | None) -> int:
         return 0
 
 
+def parse_float(value: str | None) -> float:
+    value = normalize_text(value)
+    digits = re.sub(r"[^0-9.]", "", value)
+    if not digits:
+        return 0.0
+    try:
+        return float(digits)
+    except ValueError:
+        return 0.0
+
+
+def parse_int(value: str | None) -> int:
+    value = normalize_text(value).lower().replace(",", "")
+    multiplier = 1
+    if value.endswith("k"):
+        multiplier = 1000
+        value = value[:-1]
+    digits = re.sub(r"[^0-9.]", "", value)
+    if not digits:
+        return 0
+    try:
+        return int(float(digits) * multiplier)
+    except ValueError:
+        return 0
+
+
 def detect_ingredients(name: str, ingredients: str) -> list[str]:
     haystack = f"{name} {ingredients}".lower()
     found = []
@@ -136,6 +231,27 @@ def fallback_ingredients_from_tags(tags: list[str]) -> list[str]:
 
 def infer_category(name: str) -> str:
     lower = name.lower()
+    makeup_categories = [
+        "lipstick",
+        "lip",
+        "tint",
+        "gloss",
+        "blush",
+        "cheek",
+        "eyeshadow",
+        "shadow",
+        "palette",
+        "mascara",
+        "liner",
+        "foundation",
+        "cushion",
+        "concealer",
+        "primer",
+        "powder",
+    ]
+    for category in makeup_categories:
+        if category in lower:
+            return "eye" if category in {"eyeshadow", "shadow", "palette", "mascara", "liner"} else category
     for category in ["serum", "cream", "toner", "cleanser", "sunscreen", "mask", "essence", "ampoule", "lotion", "gel", "balm", "treatment"]:
         if category in lower:
             return category
@@ -159,6 +275,16 @@ def infer_skin_types(ingredients: list[str]) -> str:
 def is_skincare_candidate(name: str, ingredients: str) -> bool:
     haystack = f"{name} {ingredients}".lower()
     return any(word in haystack for word in SKINCARE_WORDS)
+
+
+def is_makeup_candidate(name: str, metadata: str) -> bool:
+    haystack = f"{name} {metadata}".lower()
+    return any(word in haystack for word in MAKEUP_WORDS)
+
+
+def color_tags_from_text(value: str) -> list[str]:
+    lower = value.lower()
+    return [word for word in COLOR_WORDS if word in lower]
 
 
 def ensure_ingredient(db, cache: dict[str, Ingredient], name: str) -> Ingredient:
@@ -210,12 +336,15 @@ def main() -> int:
                 brand_name = clean_brand(row.get("brand", ""))
                 ingredients_blob = parse_ingredient_blob(row.get("ingredients", ""))
                 tags = parse_tags(row.get("tags", ""))
-                if not is_skincare_candidate(name, f"{ingredients_blob} {' '.join(tags)}"):
+                metadata = f"{ingredients_blob} {' '.join(tags)} {row.get('category', '')}"
+                is_skincare = is_skincare_candidate(name, metadata)
+                is_makeup = is_makeup_candidate(name, metadata)
+                if not is_skincare and not is_makeup:
                     continue
                 ingredient_names = detect_ingredients(name, ingredients_blob)
                 if not ingredient_names:
                     ingredient_names = fallback_ingredients_from_tags(tags)
-                if not ingredient_names:
+                if is_skincare and not ingredient_names:
                     continue
                 key = (brand_name.lower(), name.lower())
                 if key in seen:
@@ -231,20 +360,34 @@ def main() -> int:
 
                 rating = normalize_text(row.get("rating", ""))
                 review_count = normalize_text(row.get("review_count", ""))
-                description = "Imported skincare product"
+                source_platform = normalize_text(row.get("source_platform", ""))
+                asin = normalize_text(row.get("asin", ""))
+                category = normalize_text(row.get("category", "")) or infer_category(f"{name} {metadata}")
+                color_tags = color_tags_from_text(f"{name} {metadata}")
+                product_url = infer_product_url(row, brand_name, name)
+                if source_platform == "amazon":
+                    description = "Imported Amazon product"
+                else:
+                    description = "Imported makeup product" if is_makeup and not is_skincare else "Imported skincare product"
+                if asin:
+                    description += f" ASIN {asin}"
                 if rating:
                     description += f" with source rating {rating}"
                 if review_count:
                     description += f" from {review_count} reviews"
+                if tags or color_tags:
+                    description += f". Tags: {', '.join([*tags, *color_tags])}"
                 product = Product(
                     brand=brand,
                     name=name,
-                    category=normalize_text(row.get("category", "")) or infer_category(name),
-                    skin_types=infer_skin_types(ingredient_names),
+                    category=category,
+                    skin_types=infer_skin_types(ingredient_names) if ingredient_names else "all",
                     price=parse_price(row.get("price", "")),
                     description=description,
-                    product_url=normalize_text(row.get("product_url", "")),
+                    product_url=product_url,
                     image_url=normalize_text(row.get("image_url", "")),
+                    avg_rating=parse_float(rating),
+                    review_count=parse_int(review_count),
                 )
                 db.add(product)
                 db.flush()

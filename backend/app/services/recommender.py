@@ -153,10 +153,10 @@ def build_platform_links(product: Product) -> dict[str, str]:
         "matsukiyo": f"https://www.matsukiyococokara-online.com/search?text={query}",
         "oliveyoung": f"https://global.oliveyoung.com/display/search?query={query}",
     }
-    if "amazon.com" in product_url:
-        links["amazon_us"] = product_url
-    elif "amazon.co.jp" in product_url:
+    if "amazon.co.jp" in product_url:
         links["amazon_jp"] = product_url
+    elif "amazon." in product_url:
+        links["amazon_us"] = product_url
     elif "oliveyoung." in product_url:
         links["oliveyoung"] = product_url
     elif "naver." in product_url:
@@ -184,10 +184,10 @@ def matched_platforms(product: Product) -> list[str]:
     )
     matches: set[str] = set() if is_japanese else {"amazon_us", "naver", "oliveyoung"}
 
-    if "amazon.com" in product_url:
-        matches.add("amazon_us")
     if "amazon.co.jp" in product_url:
         matches.add("amazon_jp")
+    elif "amazon." in product_url:
+        matches.add("amazon_us")
     if "oliveyoung." in product_url or is_kbeauty(product):
         matches.add("oliveyoung")
     if "matsukiyococokara" in product_url:
@@ -221,7 +221,7 @@ def platform_fit_score(product: Product, platform: str) -> float:
     if platform not in matches:
         return -1000.0
     direct_markers = {
-        "amazon_us": "amazon.com",
+        "amazon_us": "amazon.",
         "amazon_jp": "amazon.co.jp",
         "naver": "naver.",
         "matsukiyo": "matsukiyococokara",
@@ -234,7 +234,7 @@ def platform_fit_score(product: Product, platform: str) -> float:
 
 REGION_PLATFORMS: dict[str, set[str]] = {
     "jp": {"amazon_jp", "matsukiyo", "oliveyoung"},
-    "kr": {"amazon_us", "oliveyoung"},
+    "kr": {"amazon_us", "naver", "oliveyoung"},
 }
 
 PERSONAL_COLOR_MAKEUP_TERMS = {
@@ -249,6 +249,58 @@ PERSONAL_COLOR_SKINCARE_TERMS = {
     "serum", "toner", "essence", "cream", "moisturizer", "cleanser",
     "treatment", "retinol", "niacinamide", "bha", "aha", "mucin",
     "hyaluronic", "sunscreen", "mask", "ampoule",
+    # 스킨케어 누출 차단(예: "Under Eye Patch"의 eye, 콜라겐 패드 등이 메이크업으로 오분류됨).
+    "patch", "pad", "collagen", "peptide", "pdrn", "hydrogel",
+    "hydrating", "vitalizing", "dark spot", "wrinkle", "lotion", "emulsion",
+}
+
+PERSONAL_COLOR_CATEGORY_TERMS: dict[str, set[str]] = {
+    "lip": {"lip", "lips", "lipstick", "tint", "rouge", "gloss", "balm", "リップ", "ルージュ", "ティント"},
+    "blush": {"blush", "blusher", "cheek", "チーク"},
+    "eye": {"eye", "eyeshadow", "shadow", "palette", "mascara", "liner", "kajal", "アイシャドウ", "アイライナー", "マスカラ"},
+    "base": {"base", "foundation", "cushion", "concealer", "primer", "powder", "shading", "ファンデーション", "コンシーラー", "パウダー"},
+}
+
+PERSONAL_COLOR_COLOR_TERMS = {
+    "warm", "cool", "light", "bright", "soft", "muted", "deep",
+    "spring", "summer", "autumn", "winter",
+    "coral", "peach", "pink", "rose", "mauve", "berry", "red", "brick",
+    "terracotta", "orange", "beige", "brown", "ivory", "nude", "plum",
+    "wine", "lavender", "cherry", "chocolate", "caramel", "mocha",
+    "코랄", "피치", "핑크", "로즈", "브라운", "베이지", "아이보리", "레드",
+    "체리", "초콜릿", "카라멜", "모카", "플럼", "와인", "라벤더",
+    "コーラル", "ピーチ", "ピンク", "ローズ", "ブラウン", "ベージュ",
+    "アイボリー", "レッド", "チェリー", "チョコレート", "カラメル", "モカ",
+    "プラム", "ワイン", "ラベンダー",
+}
+
+TOKEN_ALIASES = {
+    "リップ": "lip",
+    "ルージュ": "lip",
+    "ティント": "tint",
+    "チーク": "blush",
+    "アイシャドウ": "eyeshadow",
+    "アイライナー": "liner",
+    "ファンデーション": "foundation",
+    "コーラル": "coral",
+    "ピーチ": "peach",
+    "ピンク": "pink",
+    "ローズ": "rose",
+    "ブラウン": "brown",
+    "ベージュ": "beige",
+    "アイボリー": "ivory",
+    "レッド": "red",
+    "체리": "cherry",
+    "초콜릿": "chocolate",
+    "카라멜": "caramel",
+    "모카": "mocha",
+    "코랄": "coral",
+    "피치": "peach",
+    "핑크": "pink",
+    "로즈": "rose",
+    "브라운": "brown",
+    "베이지": "beige",
+    "레드": "red",
 }
 
 PERSONAL_COLOR_CATALOG = [
@@ -258,7 +310,7 @@ PERSONAL_COLOR_CATALOG = [
         "category": "lip",
         "price": 1320,
         "keywords": {"lip", "tint", "coral", "pink", "peach", "warm", "リップ"},
-        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
     },
     {
         "brand": "peripera",
@@ -266,7 +318,7 @@ PERSONAL_COLOR_CATALOG = [
         "category": "lip",
         "price": 1210,
         "keywords": {"lip", "tint", "rose", "coral", "pink", "cool", "リップ"},
-        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
     },
     {
         "brand": "CLIO",
@@ -274,7 +326,7 @@ PERSONAL_COLOR_CATALOG = [
         "category": "eye",
         "price": 2890,
         "keywords": {"eye", "eyeshadow", "shadow", "palette", "brown", "beige", "アイシャドウ"},
-        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
     },
     {
         "brand": "WAKEMAKE",
@@ -282,7 +334,7 @@ PERSONAL_COLOR_CATALOG = [
         "category": "eye",
         "price": 2980,
         "keywords": {"eye", "eyeshadow", "shadow", "palette", "brown", "beige", "アイシャドウ"},
-        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
     },
     {
         "brand": "peripera",
@@ -290,7 +342,7 @@ PERSONAL_COLOR_CATALOG = [
         "category": "blush",
         "price": 1100,
         "keywords": {"blush", "blusher", "cheek", "coral", "pink", "peach", "チーク"},
-        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
     },
     {
         "brand": "rom&nd",
@@ -298,7 +350,7 @@ PERSONAL_COLOR_CATALOG = [
         "category": "blush",
         "price": 1200,
         "keywords": {"blush", "blusher", "cheek", "rose", "pink", "muted", "チーク"},
-        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
     },
     {
         "brand": "espoir",
@@ -306,7 +358,7 @@ PERSONAL_COLOR_CATALOG = [
         "category": "base",
         "price": 3300,
         "keywords": {"base", "foundation", "ivory", "beige", "yellow", "ファンデーション"},
-        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
     },
     {
         "brand": "TIRTIR",
@@ -314,7 +366,7 @@ PERSONAL_COLOR_CATALOG = [
         "category": "base",
         "price": 2970,
         "keywords": {"base", "foundation", "cushion", "ivory", "beige", "ファンデーション"},
-        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
     },
     {
         "brand": "CANMAKE",
@@ -376,6 +428,72 @@ def _keyword_fit_score(product: Product, keywords: list[str]) -> float:
     return min(16.0, score)
 
 
+def _tokens_from_text(text: str) -> set[str]:
+    raw_tokens = {
+        token
+        for token in text.lower().replace("/", " ").replace("-", " ").split()
+        if len(token) >= 2
+    }
+    raw_tokens.update(
+        alias
+        for original, alias in TOKEN_ALIASES.items()
+        if original.lower() in text.lower()
+    )
+    return raw_tokens
+
+
+def _keyword_tokens(keywords: list[str]) -> set[str]:
+    tokens: set[str] = set()
+    for keyword in keywords:
+        tokens.update(_tokens_from_text(keyword))
+    return tokens
+
+
+def _category_tokens(tokens: set[str]) -> set[str]:
+    return {
+        category
+        for category, terms in PERSONAL_COLOR_CATEGORY_TERMS.items()
+        if tokens.intersection({term.lower() for term in terms})
+    }
+
+
+def _color_tokens(tokens: set[str]) -> set[str]:
+    normalized_colors = {term.lower() for term in PERSONAL_COLOR_COLOR_TERMS}
+    return tokens.intersection(normalized_colors)
+
+
+def personal_color_fit_score_for_text(
+    brand: str,
+    name: str,
+    category: str,
+    description: str,
+    keywords: list[str],
+    platform_score: float = 0.0,
+    rating_score: float = 0.0,
+) -> float:
+    query_tokens = _keyword_tokens(keywords)
+    product_tokens = _tokens_from_text(" ".join([brand, name, category, description]))
+    if not query_tokens:
+        return round(min(99.0, 40.0 + platform_score + rating_score), 1)
+
+    query_categories = _category_tokens(query_tokens)
+    product_categories = _category_tokens(product_tokens.union(_tokens_from_text(category)))
+    query_colors = _color_tokens(query_tokens)
+    product_colors = _color_tokens(product_tokens)
+
+    overlap = query_tokens.intersection(product_tokens)
+    color_overlap = query_colors.intersection(product_colors)
+    category_overlap = query_categories.intersection(product_categories)
+
+    category_score = 18.0 if category_overlap else 0.0
+    color_score = min(28.0, len(color_overlap) * 7.0)
+    token_score = min(18.0, len(overlap) * 2.4)
+    tone_score = min(10.0, len(overlap.intersection({"warm", "cool", "light", "deep", "soft", "bright", "muted"})) * 3.5)
+
+    total = 30.0 + category_score + color_score + token_score + tone_score + min(8.0, platform_score) + min(7.0, rating_score)
+    return round(min(99.0, total), 1)
+
+
 def _is_personal_color_makeup_product(product: Product) -> bool:
     text = " ".join(
         [
@@ -403,6 +521,7 @@ def _search_link(platform: str, brand: str, name: str) -> str:
     links = {
         "amazon_us": f"https://www.amazon.com/s?k={query}",
         "amazon_jp": f"https://www.amazon.co.jp/s?k={query}",
+        "naver": f"https://search.shopping.naver.com/search/all?query={query}",
         "oliveyoung": f"https://global.oliveyoung.com/display/search?query={query}",
         "matsukiyo": f"https://www.matsukiyococokara-online.com/search?text={query}",
     }
@@ -410,22 +529,13 @@ def _search_link(platform: str, brand: str, name: str) -> str:
 
 
 def _catalog_keyword_score(item: dict, keywords: list[str]) -> float:
-    haystack = " ".join(
-        [
-            str(item["brand"]),
-            str(item["name"]),
-            str(item["category"]),
-            " ".join(item["keywords"]),
-        ]
-    ).lower()
-    score = 0.0
-    for keyword in keywords:
-        normalized = keyword.strip().lower()
-        tokens = [token for token in normalized.replace("/", " ").split() if len(token) >= 2]
-        if normalized and normalized in haystack:
-            score += 8.0
-        score += min(6.0, sum(1.5 for token in tokens if token in haystack))
-    return min(18.0, score)
+    return personal_color_fit_score_for_text(
+        str(item["brand"]),
+        str(item["name"]),
+        str(item["category"]),
+        " ".join(item["keywords"]),
+        keywords,
+    )
 
 
 def _curated_personal_color_products(
@@ -442,10 +552,15 @@ def _curated_personal_color_products(
             platforms = [item_platform for item_platform in platforms if item_platform == platform]
         if not platforms:
             continue
-        keyword_score = _catalog_keyword_score(item, keywords)
         platform_score = 9.0 if platform != "all" else 7.0
         brand_bonus = 2.0 if str(item["brand"]).lower() in KBEAUTY_BRANDS.union(JBEAUTY_BRANDS) else 0.0
-        score = round(min(99.0, 50.0 + keyword_score + platform_score + brand_bonus), 1)
+        score = round(
+            min(
+                99.0,
+                _catalog_keyword_score(item, keywords) + platform_score + brand_bonus,
+            ),
+            1,
+        )
         rows.append((score, {**item, "_id": index}, platforms))
 
     return [
@@ -505,9 +620,16 @@ def recommend_personal_color_products(
             if platform_score < 0:
                 continue
 
-        keyword_score = _keyword_fit_score(product, keywords)
         rating_score = rating_score_for(product)
-        total = round(min(99.0, 36.0 + keyword_score + platform_score + rating_score), 1)
+        total = personal_color_fit_score_for_text(
+            product.brand.name if product.brand else "",
+            product.name or "",
+            product.category or "",
+            product.description or "",
+            keywords,
+            platform_score=platform_score,
+            rating_score=rating_score,
+        )
         scored.append((total, platform_score, product, visible_platforms))
 
     top_products = sorted(

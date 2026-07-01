@@ -16,6 +16,13 @@ DATASETS = [
     "nayanchaure/acne-dataset",
     "nadyinky/sephora-products-and-skincare-reviews",
     "crawlfeeds/dermstore-skincare-products-and-ingredients-dataset",
+    # Makeup/product shade datasets used by personal color item matching.
+    "raiusama/makeup-dataset",
+    "devi5723/e-commerce-cosmetics-dataset",
+    "utkarshx27/makeup-shades",
+    "shivamb/makeup-shades-dataset",
+    "rama87/lip-cream-dataset",
+    "satrapankti/amazon-beauty-product-recommendation",
 ]
 
 

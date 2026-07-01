@@ -50,9 +50,10 @@ export async function recommend(
   survey: SurveyInput,
   analysisId?: number,
   scores?: SkinScores,
-  platform: RecommendationPlatform = 'all',
+  platform: ItemPlatform = 'all',
   analysisMode: AnalysisMode = 'face',
   bodyConditions: BodyConditionScore[] = [],
+  region: 'jp' | 'kr' = 'kr',
 ): Promise<RecommendationResponse> {
   const { data } = await api.post<RecommendationResponse>('/api/recommend', {
     analysis_id: analysisId,
@@ -60,6 +61,7 @@ export async function recommend(
     analysis_mode: analysisMode,
     body_conditions: bodyConditions,
     survey,
+    region,
     platform,
   });
   return data;

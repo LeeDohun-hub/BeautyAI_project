@@ -60,7 +60,13 @@ class RakutenClient:
         seen: set[str] = set()
         products: list[RakutenProduct] = []
         for keyword in keywords:
-            for item in self.search(keyword, hits=hits_per_keyword):
+            items = self.search(keyword, hits=hits_per_keyword)
+            if not items:
+                # 접두 한정어(예: 톤 토큰 'イエベ')로 과도하게 좁혀 0건이면 첫 토큰을 떼고 재시도.
+                parts = keyword.split()
+                if len(parts) >= 3:
+                    items = self.search(" ".join(parts[1:]), hits=hits_per_keyword)
+            for item in items:
                 if item.product_url in seen:
                     continue
                 seen.add(item.product_url)

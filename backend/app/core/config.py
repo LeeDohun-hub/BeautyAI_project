@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     skin_model_path: str = "./data/models/skin_efficientnet_b0.pt"
     body_skin_model_path: str = "./data/models/body_skin_mobilenet_v3.pt"
+    personal_color_model_path: str = "./data/models/personal_color_efficientnet.pt"
     problem_skin_knowledge_path: str = "./data/rag/problem_skin_knowledge.jsonl"
     naver_client_id: str | None = None
     naver_client_secret: str | None = None
@@ -40,6 +41,13 @@ class Settings(BaseSettings):
     @property
     def resolved_body_skin_model_path(self) -> str:
         path = Path(self.body_skin_model_path)
+        if path.is_absolute():
+            return str(path)
+        return str(self.project_root / path)
+
+    @property
+    def resolved_personal_color_model_path(self) -> str:
+        path = Path(self.personal_color_model_path)
         if path.is_absolute():
             return str(path)
         return str(self.project_root / path)

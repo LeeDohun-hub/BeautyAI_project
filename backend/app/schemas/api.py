@@ -130,6 +130,7 @@ class RecommendationRequest(BaseModel):
     analysis_mode: str = Field(default="face")
     body_conditions: list[BodyConditionScore] = Field(default_factory=list)
     survey: SurveyInput
+    region: str = Field(default="kr")
     platform: str = Field(default="all")
     user_id: int | None = None
 

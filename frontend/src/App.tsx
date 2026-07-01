@@ -119,13 +119,13 @@ const JP_ITEM_PLATFORM_FILTERS: { value: ItemPlatform; label: string }[] = [
   { value: 'all', label: '모든 플랫폼' },
   { value: 'amazon_jp', label: 'Amazon(JP)' },
   { value: 'rakuten', label: '라쿠텐' },
-  { value: 'matsukiyo', label: '마츠키요 검색' },
   { value: 'oliveyoung', label: '올리브영' },
 ];
 
 const KR_ITEM_PLATFORM_FILTERS: { value: ItemPlatform; label: string }[] = [
   { value: 'all', label: '모든 플랫폼' },
   { value: 'amazon_us', label: 'Amazon.com' },
+  { value: 'naver', label: '네이버' },
   { value: 'oliveyoung', label: '올리브영' },
 ];
 
@@ -380,7 +380,8 @@ type StyleMood = {
   label: string;
   vibe: string;
   thumbClass: string;
-  keywords: string[];
+  // 마켓 언어별 검색 키워드: jp는 라쿠텐(일본어), kr은 네이버(한국어).
+  keywords: { jp: string[]; kr: string[] };
 };
 
 const STYLE_MOODS: StyleMood[] = [
@@ -389,56 +390,80 @@ const STYLE_MOODS: StyleMood[] = [
     label: '진한 체리 초콜릿',
     vibe: '딥한 체리와 초콜릿 브라운으로 시크하고 무게감 있는 무드',
     thumbClass: 'cherry-chocolate',
-    keywords: ['チェリー リップ', 'ボルドー リップ', 'ブラウン アイシャドウ', 'チョコレート メイク'],
+    keywords: {
+      jp: ['チェリー リップ', 'ボルドー リップ', 'ブラウン アイシャドウ', 'チョコレート メイク'],
+      kr: ['체리 립', '버건디 립', '브라운 아이섀도우', '초콜릿 메이크업'],
+    },
   },
   {
     id: 'tomato-red',
     label: '생기 토마토 레드',
     vibe: '주황빛이 도는 토마토 레드로 생기 있고 발랄한 무드',
     thumbClass: 'tomato-red',
-    keywords: ['トマトレッド リップ', 'オレンジレッド リップ', 'レッド チーク', 'オレンジ アイシャドウ'],
+    keywords: {
+      jp: ['トマトレッド リップ', 'オレンジレッド リップ', 'レッド チーク', 'オレンジ アイシャドウ'],
+      kr: ['토마토 레드 립', '오렌지 레드 립', '레드 블러셔', '오렌지 아이섀도우'],
+    },
   },
   {
     id: 'rose-wine',
     label: '우아한 로즈 와인',
     vibe: '깊은 와인과 버건디로 우아하고 무드 있는 분위기',
     thumbClass: 'rose-wine',
-    keywords: ['ワインレッド リップ', 'ボルドー リップ', 'ローズ チーク', 'バーガンディ アイシャドウ'],
+    keywords: {
+      jp: ['ワインレッド リップ', 'ボルドー リップ', 'ローズ チーク', 'バーガンディ アイシャドウ'],
+      kr: ['와인 레드 립', '버건디 립', '로즈 블러셔', '버건디 아이섀도우'],
+    },
   },
   {
     id: 'plum-creme',
     label: '매혹적인 자두 크림슈',
     vibe: '자두빛 플럼과 모브 톤으로 우아하고 매혹적인 무드',
     thumbClass: 'plum-creme',
-    keywords: ['プラム リップ', 'すもも リップ', 'モーブ チーク', 'プラム アイシャドウ'],
+    keywords: {
+      jp: ['プラム リップ', 'すもも リップ', 'モーブ チーク', 'プラム アイシャドウ'],
+      kr: ['플럼 립', '자두 립', '모브 블러셔', '플럼 아이섀도우'],
+    },
   },
   {
     id: 'berry-sorbet',
     label: '상큼 베리 소르베',
     vibe: '상큼한 베리와 핑크 톤으로 화사하고 발랄한 무드',
     thumbClass: 'berry-sorbet',
-    keywords: ['ベリー リップ', 'ピンク リップ', 'ベリー チーク', 'ピンク アイシャドウ'],
+    keywords: {
+      jp: ['ベリー リップ', 'ピンク リップ', 'ベリー チーク', 'ピンク アイシャドウ'],
+      kr: ['베리 립', '핑크 립', '베리 블러셔', '핑크 아이섀도우'],
+    },
   },
   {
     id: 'peach-latte',
     label: '사랑스러운 복숭아 라떼',
     vibe: '부드러운 피치 핑크로 사랑스럽고 화사한 무드',
     thumbClass: 'peach-latte',
-    keywords: ['ピーチ リップ', 'ピーチピンク リップ', 'ピーチ チーク', 'ピーチ アイシャドウ'],
+    keywords: {
+      jp: ['ピーチ リップ', 'ピーチピンク リップ', 'ピーチ チーク', 'ピーチ アイシャドウ'],
+      kr: ['피치 립', '피치 핑크 립', '피치 블러셔', '피치 아이섀도우'],
+    },
   },
   {
     id: 'coral',
     label: '싱그러운 산호 코랄',
     vibe: '싱그러운 코랄로 생기 넘치는 따뜻한 무드',
     thumbClass: 'coral',
-    keywords: ['コーラル リップ', 'サンゴ リップ', 'コーラル チーク', 'コーラル アイシャドウ'],
+    keywords: {
+      jp: ['コーラル リップ', 'サンゴ リップ', 'コーラル チーク', 'コーラル アイシャドウ'],
+      kr: ['코랄 립', '산호 립', '코랄 블러셔', '코랄 아이섀도우'],
+    },
   },
   {
     id: 'caramel-mocha',
     label: '차분한 카라멜 모카',
     vibe: '카라멜과 모카 브라운으로 차분한 데일리 무드',
     thumbClass: 'caramel-mocha',
-    keywords: ['キャラメル リップ', 'ブラウン リップ', 'モカ チーク', 'ブラウン アイシャドウ'],
+    keywords: {
+      jp: ['キャラメル リップ', 'ブラウン リップ', 'モカ チーク', 'ブラウン アイシャドウ'],
+      kr: ['카라멜 립', '브라운 립', '모카 블러셔', '브라운 아이섀도우'],
+    },
   },
 ];
 
@@ -465,7 +490,23 @@ const FACE_PRODUCT_MAP: Record<string, FaceProductSet> = {
 
 const DEFAULT_FACE_PRODUCT_SET = FACE_PRODUCT_MAP['warm-light'];
 
-function RakutenProductCard({ product, selectedPlatform = 'all' }: { product: RakutenProduct; selectedPlatform?: ItemPlatform }) {
+function formatItemMatchPrice(price: number, region: ItemRegion): string {
+  return new Intl.NumberFormat(region === 'kr' ? 'ko-KR' : 'ja-JP', {
+    style: 'currency',
+    currency: region === 'kr' ? 'KRW' : 'JPY',
+    maximumFractionDigits: 0,
+  }).format(price);
+}
+
+function RakutenProductCard({
+  product,
+  selectedPlatform = 'all',
+  region = 'jp',
+}: {
+  product: RakutenProduct;
+  selectedPlatform?: ItemPlatform;
+  region?: ItemRegion;
+}) {
   const links = buildRakutenShopLinks(product);
   const matchedPlatforms = product.matched_platforms?.length
     ? product.matched_platforms
@@ -487,7 +528,7 @@ function RakutenProductCard({ product, selectedPlatform = 'all' }: { product: Ra
       <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
       <Typography variant="body2" color="text.secondary" noWrap>{product.brand}</Typography>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1 }}>
-        <Typography fontWeight={900}>¥{product.price.toLocaleString()}</Typography>
+        <Typography fontWeight={900}>{formatItemMatchPrice(product.price, region)}</Typography>
         {product.review_average ? (
           <Typography variant="caption" color="text.secondary">
             ★ {product.review_average}
@@ -519,6 +560,91 @@ function RakutenProductCard({ product, selectedPlatform = 'all' }: { product: Ra
       </Stack>
     </Box>
   );
+}
+
+type ItemMatchColumnKey = 'lip' | 'blush' | 'eye' | 'base';
+
+const ITEM_MATCH_COLUMN_KEYS: ItemMatchColumnKey[] = ['lip', 'blush', 'eye', 'base'];
+
+function itemMatchColumnFor(product: RakutenProduct): ItemMatchColumnKey | null {
+  // 상품명/키워드로 카테고리를 판별한다. 상품명(name)은 브랜드명 등 노이즈가 섞여
+  // 오분류를 유발하므로, DB 상품이 넘겨주는 카테고리 키워드(keyword)를 우선 신뢰한다.
+  const primary = (product.keyword || '').toLowerCase();
+  const text = [product.keyword, product.name].join(' ').toLowerCase();
+
+  const isBlush = (t: string) => /(blush|blusher|cheek|チーク|블러셔|치크|볼터치)/i.test(t);
+  const isEye = (t: string) => /(eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ|아이|섀도|쉐도)/i.test(t);
+  const isBase = (t: string) => /(base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스)/i.test(t);
+  const isLip = (t: string) => /(lip|lipstick|tint|rouge|gloss|balm|リップ|ルージュ|ティント|립|틴트)/i.test(t);
+
+  // 1순위: 카테고리 키워드 필드로 판정.
+  if (isBlush(primary)) return 'blush';
+  if (isEye(primary)) return 'eye';
+  if (isBase(primary)) return 'base';
+  if (isLip(primary)) return 'lip';
+
+  // 2순위: 상품명 포함 전체 텍스트로 판정.
+  if (isBlush(text)) return 'blush';
+  if (isEye(text)) return 'eye';
+  if (isBase(text)) return 'base';
+  if (isLip(text)) return 'lip';
+
+  // 어느 카테고리에도 확실히 맞지 않으면 베이스로 몰지 않고 제외한다.
+  return null;
+}
+
+function groupItemMatchProducts(products: RakutenProduct[]): Record<ItemMatchColumnKey, RakutenProduct[]> {
+  return products.reduce<Record<ItemMatchColumnKey, RakutenProduct[]>>(
+    (groups, product) => {
+      const key = itemMatchColumnFor(product);
+      if (key) groups[key].push(product);
+      return groups;
+    },
+    { lip: [], blush: [], eye: [], base: [] },
+  );
+}
+
+// 퍼스널컬러 색상어(한국어)를 일본 마켓(라쿠텐) 검색어로 번역한다. 한국어 색상어는
+// 라쿠텐/아마존에서 0건이 나오므로, 색상 매칭이 실제로 되도록 일본어로 현지화한다.
+// (예: "코랄 핑크" → "コーラルピンク"). KR은 네이버가 한국어를 그대로 이해하므로 원문 사용.
+const PC_COLOR_ATOMS_JA: Record<string, string> = {
+  코랄: 'コーラル', 핑크: 'ピンク', 피치: 'ピーチ', 베이지: 'ベージュ', 브릭: 'ブリック',
+  레드: 'レッド', 테라코타: 'テラコッタ', 누드: 'ヌード', 로즈: 'ローズ', 브라운: 'ブラウン',
+  쿨: 'クール', 버건디: 'バーガンディ', 체리: 'チェリー', 클리어: 'クリア', 말린: 'ドライ',
+  장미: 'ローズ', 모브: 'モーブ', 살구: 'アプリコット', 라이트: 'ライト', 시나몬: 'シナモン',
+  웜: 'ウォーム', 소프트: 'ソフト', 라벤더: 'ラベンダー', 맑은: 'クリア', 플럼: 'プラム',
+  더스티: 'ダスティ', 샴페인: 'シャンパン', 카멜: 'キャメル', 카키: 'カーキ', 뮤트: 'ミュート',
+  올리브: 'オリーブ', 차콜: 'チャコール', 딥: 'ディープ', 네이비: 'ネイビー', 블랙: 'ブラック',
+  실버: 'シルバー', 그레이: 'グレー', 아이보리: 'アイボリー', 옐로우: 'イエロー',
+  내추럴: 'ナチュラル', 뉴트럴: 'ニュートラル', 샌드: 'サンド', 베이스: 'ベース',
+};
+
+function localizeColorToJa(koPhrase: string): string {
+  return koPhrase
+    .split(/\s+/)
+    .map((atom) => PC_COLOR_ATOMS_JA[atom] ?? atom)
+    .join('');
+}
+
+// 색상어(한국어) → 영어. 네이버에 영어로도 검색하면 수입/럭셔리(샤넬·맥·나스 등)까지
+// 함께 잡혀 K뷰티(한국어 검색)와 상호 보완된다.
+const PC_COLOR_ATOMS_EN: Record<string, string> = {
+  코랄: 'coral', 핑크: 'pink', 피치: 'peach', 베이지: 'beige', 브릭: 'brick',
+  레드: 'red', 테라코타: 'terracotta', 누드: 'nude', 로즈: 'rose', 브라운: 'brown',
+  쿨: 'cool', 버건디: 'burgundy', 체리: 'cherry', 클리어: 'clear', 말린: 'dried',
+  장미: 'rose', 모브: 'mauve', 살구: 'apricot', 라이트: 'light', 시나몬: 'cinnamon',
+  웜: 'warm', 소프트: 'soft', 라벤더: 'lavender', 맑은: 'clear', 플럼: 'plum',
+  더스티: 'dusty', 샴페인: 'champagne', 카멜: 'camel', 카키: 'khaki', 뮤트: 'muted',
+  올리브: 'olive', 차콜: 'charcoal', 딥: 'deep', 네이비: 'navy', 블랙: 'black',
+  실버: 'silver', 그레이: 'gray', 아이보리: 'ivory', 옐로우: 'yellow',
+  내추럴: 'natural', 뉴트럴: 'neutral', 샌드: 'sand', 베이스: 'base',
+};
+
+function localizeColorToEn(koPhrase: string): string {
+  return koPhrase
+    .split(/\s+/)
+    .map((atom) => PC_COLOR_ATOMS_EN[atom] ?? atom)
+    .join(' ');
 }
 
 export default function App() {
@@ -568,7 +694,8 @@ export default function App() {
   const [cameraReady, setCameraReady] = useState(false);
   const [analysis, setAnalysis] = useState<AnalyzeSkinResponse | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
-  const [selectedPlatform, setSelectedPlatform] = useState<RecommendationPlatform>('all');
+  const [skinRegion, setSkinRegion] = useState<ItemRegion>('kr');
+  const [selectedPlatform, setSelectedPlatform] = useState<ItemPlatform>('all');
   const [message, setMessage] = useState('제 피부 상태에 맞는 루틴을 어떻게 구성하면 좋을까요?');
   const [answer, setAnswer] = useState('');
   const [answerSources, setAnswerSources] = useState<string[]>([]);
@@ -620,7 +747,7 @@ export default function App() {
 
   useEffect(() => {
     if (appModule !== 'personal-color' || personalColorStep !== 4 || !personalColorResult) return;
-    if (selectedMood) return; // 무드를 선택한 경우 무드 기반 추천(moodItems)을 사용한다.
+    // Step 4 아이템 매칭은 무드가 아니라 '얼굴분석(퍼스널컬러)' 기반으로 추천한다.
     if (personalColorItems) return;
     loadPersonalColorItems();
   }, [appModule, personalColorStep, personalColorResult, personalColorItems, selectedMood, itemRegion, itemPlatform]);
@@ -769,21 +896,53 @@ export default function App() {
     }
   }
 
-  function personalColorItemKeywords() {
+  function personalColorItemKeywords(region: ItemRegion = itemRegion) {
     if (!personalColorResult) return [];
     const makeup = personalColorResult.makeup;
+    if (region === 'jp') {
+      // JP: 라쿠텐 = 일본어 색상어 + 일본어 카테고리어.
+      const cat = { lip: 'リップ', blush: 'チーク', eye: 'アイシャドウ', base: 'ファンデーション' } as const;
+      const build = (values: string[], key: keyof typeof cat) =>
+        values.map((item) => `${localizeColorToJa(item)} ${cat[key]}`);
+      return [
+        ...build(makeup.lip, 'lip'),
+        ...build(makeup.blush, 'blush'),
+        ...build(makeup.eye, 'eye'),
+        ...build(makeup.base, 'base'),
+      ].slice(0, 10);
+    }
+    // KR: 네이버에 한국어(K뷰티)와 영어(수입/럭셔리)를 함께 검색해 커버리지를 넓힌다.
+    const koCat = { lip: '립', blush: '블러셔', eye: '아이섀도우', base: '파운데이션' } as const;
+    const enCat = { lip: 'lipstick', blush: 'blush', eye: 'eyeshadow', base: 'foundation' } as const;
+    const bilingual = (values: string[], key: keyof typeof koCat) =>
+      values[0] ? [`${values[0]} ${koCat[key]}`, `${localizeColorToEn(values[0])} ${enCat[key]}`] : [];
     return [
-      ...makeup.lip.map((item) => `${item} リップ`),
-      ...makeup.blush.map((item) => `${item} チーク`),
-      ...makeup.eye.map((item) => `${item} アイシャドウ`),
-      ...makeup.base.map((item) => `${item} ファンデーション`),
-      `${personalColorResult.label} コスメ`,
-      '日本 コスメ',
+      ...bilingual(makeup.lip, 'lip'),
+      ...bilingual(makeup.blush, 'blush'),
+      ...bilingual(makeup.eye, 'eye'),
+      ...bilingual(makeup.base, 'base'),
     ].slice(0, 10);
   }
 
+  function combinedPersonalColorMoodKeywords(mood: StyleMood, region: ItemRegion = itemRegion) {
+    const toneKeywords = personalColorItemKeywords(region);
+    const moodKeywords = region === 'jp' ? mood.keywords.jp : mood.keywords.kr;
+    const profileKeywords = personalColorResult
+      ? region === 'jp'
+        ? [
+            `${personalColorResult.label} コスメ`,
+            `${personalColorResult.tone} ${personalColorResult.subtype} メイク`,
+          ]
+        : [
+            `${personalColorResult.label} 코스메틱`,
+            `${personalColorResult.tone} ${personalColorResult.subtype} 메이크업`,
+          ]
+      : [];
+    return Array.from(new Set([...toneKeywords, ...moodKeywords, ...profileKeywords])).slice(0, 14);
+  }
+
   async function loadPersonalColorItems(region: ItemRegion = itemRegion, platform: ItemPlatform = itemPlatform) {
-    const keywords = personalColorItemKeywords();
+    const keywords = personalColorItemKeywords(region);
     if (!keywords.length) return;
     setLoading('personal-color-items');
     try {
@@ -805,7 +964,7 @@ export default function App() {
     setMoodItems(null);
     setLoading('style-mood-items');
     try {
-      setMoodItems(await matchPersonalColorItems(mood.keywords, region, platform));
+      setMoodItems(await matchPersonalColorItems(combinedPersonalColorMoodKeywords(mood, region), region, platform));
     } catch {
       setMoodItems({
         provider: 'recommender',
@@ -905,6 +1064,7 @@ export default function App() {
         selectedPlatform,
         result.analysis_mode,
         result.body_conditions,
+        skinRegion,
       ));
     } catch {
       setError('분석에 실패했습니다. 백엔드가 실행 중인지, 피부 사진이 정상적으로 선택되었는지 확인해 주세요.');
@@ -913,10 +1073,8 @@ export default function App() {
     }
   }
 
-  async function handlePlatformChange(platform: RecommendationPlatform) {
-    setSelectedPlatform(platform);
+  async function reloadRecommendation(region: ItemRegion, platform: ItemPlatform) {
     if (!analysis) return;
-
     setLoading('recommend');
     setError('');
     try {
@@ -927,12 +1085,24 @@ export default function App() {
         platform,
         analysis.analysis_mode,
         analysis.body_conditions,
+        region,
       ));
     } catch {
-      setError('플랫폼별 추천을 다시 계산하지 못했습니다. 백엔드 연결을 확인해 주세요.');
+      setError('추천을 다시 계산하지 못했습니다. 백엔드 연결을 확인해 주세요.');
     } finally {
       setLoading('');
     }
+  }
+
+  async function handlePlatformChange(platform: ItemPlatform) {
+    setSelectedPlatform(platform);
+    await reloadRecommendation(skinRegion, platform);
+  }
+
+  async function handleSkinRegionChange(region: ItemRegion) {
+    setSkinRegion(region);
+    setSelectedPlatform('all');
+    await reloadRecommendation(region, 'all');
   }
 
   async function handleChat() {
@@ -1565,11 +1735,14 @@ export default function App() {
       }
 
       if (personalColorStep === 4) {
+        // Step 4는 얼굴분석(퍼스널컬러) 기반 추천으로 고정한다. 무드는 Step 3 메이크업
+        // 미리보기 전용이며 아이템 매칭에는 관여하지 않는다.
         const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? null;
         const items = activeMood ? moodItems : personalColorItems;
         const itemsLoading = loading === (activeMood ? 'style-mood-items' : 'personal-color-items');
         const refreshItems = () => (activeMood ? selectStyleMood(activeMood) : loadPersonalColorItems());
         const isJapanRegion = itemRegion === 'jp';
+        const groupedProducts = groupItemMatchProducts(items?.products ?? []);
         return (
           <Box>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
@@ -1581,10 +1754,8 @@ export default function App() {
                       ? '마츠키요 상품 연동은 준비 중입니다. 실제 입점 확인 후 이 탭에만 표시합니다.'
                       : itemPlatform === 'oliveyoung'
                         ? '올리브영 글로벌 상품 연동은 준비 중입니다. 일본/한국 양쪽에서 선택할 수 있게 열어두었습니다.'
-                        : activeMood
-                          ? `‘${activeMood.label}’ 무드에 어울리는 일본 라쿠텐 뷰티 상품을 추천합니다.`
-                          : '퍼스널컬러 추천 색상을 일본 라쿠텐 뷰티 상품 검색과 연결합니다.'
-                    : '한국(KR) 상품은 Amazon.com과 올리브영 중심으로 분리해 표시할 예정입니다.'}
+                        : '얼굴분석(퍼스널컬러) 결과에 맞춰 일본 라쿠텐 뷰티 상품을 추천합니다.'
+                    : '얼굴분석(퍼스널컬러) 결과에 맞춰 한국(네이버) 뷰티 상품을 추천합니다.'}
                 </Typography>
               </Box>
               <Stack direction="row" spacing={1.5} alignItems="center">
@@ -1592,32 +1763,37 @@ export default function App() {
                 <Button
                   variant="outlined"
                   onClick={refreshItems}
-                  disabled={(!activeMood && !personalColorResult) || itemsLoading}
+                  disabled={!personalColorResult || itemsLoading}
                 >
                   상품 새로고침
                 </Button>
               </Stack>
             </Stack>
 
-            {!isJapanRegion && (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                한국(KR) 탭은 실제 상품 데이터 provider가 붙기 전까지 상품 카드를 표시하지 않습니다.
-                Amazon.com/올리브영 상품 DB 또는 검색 API가 연결되면 이 영역에만 노출하겠습니다.
+            {activeMood && personalColorResult && (
+              <Alert severity="success" sx={{ mt: 2 }}>
+                {personalColorResult.label} 분석 결과와 ‘{activeMood.label}’ 무드를 함께 반영해 색상 적합도 순으로 추천합니다.
               </Alert>
             )}
 
-            {!activeMood && (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                ‘AI 스타일 컨설팅’에서 메이크업 무드를 선택하면 그 무드에 맞춘 추천 제품을 보여드려요.
-              </Alert>
-            )}
-
-            <Grid container spacing={1.5} sx={{ mt: 2 }}>
-              {makeupGroups.map((group) => (
+            <Grid container spacing={1.5} className="item-match-columns" sx={{ mt: 2 }}>
+              {makeupGroups.map((group, groupIndex) => (
                 <Grid item xs={12} md={3} key={group.label}>
-                  <Box className="kiosk-match-card compact">
-                    <Typography fontWeight={900}>{group.label} color</Typography>
-                    <Typography color="text.secondary" sx={{ mt: 1 }}>{group.values.join(', ')}</Typography>
+                  <Box className="item-match-column">
+                    <Box className="kiosk-match-card compact">
+                      <Typography fontWeight={900}>{group.label} color</Typography>
+                      <Typography color="text.secondary" sx={{ mt: 1 }}>{group.values.join(', ')}</Typography>
+                    </Box>
+                    <Stack spacing={2} className="item-match-product-stack">
+                      {groupedProducts[ITEM_MATCH_COLUMN_KEYS[groupIndex]].map((product) => (
+                        <RakutenProductCard
+                          key={`${product.id}-${product.keyword}`}
+                          product={product}
+                          selectedPlatform={itemPlatform}
+                          region={itemRegion}
+                        />
+                      ))}
+                    </Stack>
                   </Box>
                 </Grid>
               ))}
@@ -1635,13 +1811,6 @@ export default function App() {
               <Alert severity="info" sx={{ mt: 2 }}>{items.message}</Alert>
             )}
 
-            <Grid container spacing={2} sx={{ mt: 1 }}>
-              {(items?.products ?? []).slice(0, 8).map((product) => (
-                <Grid item xs={12} sm={6} md={3} key={`${product.id}-${product.keyword}`}>
-                  <RakutenProductCard product={product} selectedPlatform={itemPlatform} />
-                </Grid>
-              ))}
-            </Grid>
           </Box>
         );
       }
@@ -1931,19 +2100,34 @@ export default function App() {
           <Paper className="page-panel" elevation={0}>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} gap={1.5}>
               <Typography variant="h5" fontWeight={800}>맞춤 추천</Typography>
-              <FormControl size="small" sx={{ minWidth: 180 }}>
-                <InputLabel>구매 플랫폼</InputLabel>
-                <Select
-                  label="구매 플랫폼"
-                  value={selectedPlatform}
-                  onChange={(event) => handlePlatformChange(event.target.value as RecommendationPlatform)}
-                  disabled={loading === 'recommend' || loading === 'analyzing'}
-                >
-                  {PLATFORM_FILTERS.map((platform) => (
-                    <MenuItem key={platform.value} value={platform.value}>{platform.label}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                <FormControl size="small" sx={{ minWidth: 130 }}>
+                  <InputLabel>지역</InputLabel>
+                  <Select
+                    label="지역"
+                    value={skinRegion}
+                    onChange={(event) => handleSkinRegionChange(event.target.value as ItemRegion)}
+                    disabled={loading === 'recommend' || loading === 'analyzing'}
+                  >
+                    {ITEM_REGION_FILTERS.map((region) => (
+                      <MenuItem key={region.value} value={region.value}>{region.label}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <FormControl size="small" sx={{ minWidth: 160 }}>
+                  <InputLabel>구매 플랫폼</InputLabel>
+                  <Select
+                    label="구매 플랫폼"
+                    value={selectedPlatform}
+                    onChange={(event) => handlePlatformChange(event.target.value as ItemPlatform)}
+                    disabled={loading === 'recommend' || loading === 'analyzing'}
+                  >
+                    {(skinRegion === 'jp' ? JP_ITEM_PLATFORM_FILTERS : KR_ITEM_PLATFORM_FILTERS).map((platform) => (
+                      <MenuItem key={platform.value} value={platform.value}>{platform.label}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Stack>
             </Stack>
             {loading === 'recommend' && <LinearProgress sx={{ mt: 2 }} />}
             {recommendation ? (
@@ -1961,80 +2145,76 @@ export default function App() {
                 {!recommendation.products.length && (
                   <Alert severity="info">선택한 플랫폼에 맞는 추천 후보가 아직 부족합니다. 모든 플랫폼으로 넓혀 보거나 상품 카탈로그를 보강해 주세요.</Alert>
                 )}
-                {recommendation.products.map((product, index) => {
-                  const links = buildShopLinks(product);
-                  const matched = product.matched_platforms ?? [];
-                  const visiblePlatforms = SHOP_PLATFORMS
-                    .filter((platform) => selectedPlatform === 'all' || platform.key === selectedPlatform)
-                    .filter((platform) => matched.length === 0 || matched.includes(platform.key))
-                    .filter((platform) => !platform.kbeautyOnly || isKBeauty(product.brand));
-                  return (
-                  <Box key={product.id} className="product-row">
-                    <Typography variant="caption" color="text.secondary">추천 {index + 1}</Typography>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1}>
-                      <Typography fontWeight={800}>{product.name}</Typography>
-                      <Chip size="small" label={`${product.score ?? 0}`} color="secondary" />
-                    </Stack>
-                    <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
-                      <Typography variant="body2" color="text.secondary">
-                        {product.brand} · {product.category}
-                        {product.price > 0 && ` · $${(product.price / 100).toFixed(2)}`}
-                      </Typography>
-                      {product.avg_rating != null && (
-                        <Typography variant="caption" color="text.secondary">
-                          ★ {product.avg_rating.toFixed(1)}
-                          {product.review_count != null && ` (${product.review_count.toLocaleString()}개 리뷰)`}
-                        </Typography>
-                      )}
-                    </Stack>
-                    <Typography variant="body2" sx={{ mt: 0.5 }}>{product.description}</Typography>
-                    <Stack direction="row" gap={1} flexWrap="wrap" sx={{ mt: 1 }}>
-                      {visiblePlatforms.map((platform) => (
-                        <Button
-                          key={platform.key}
-                          component="a"
-                          href={links[platform.key]}
-                          target="_blank"
-                          rel="noreferrer"
-                          size="small"
-                          variant="contained"
-                          disableElevation
-                          startIcon={
-                            <Box
-                              sx={{
-                                width: 18,
-                                height: 18,
-                                borderRadius: '4px',
-                                bgcolor: '#fff',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}
-                            >
-                              <Box
-                                component="img"
-                                src={faviconUrl(platform.domain)}
-                                alt=""
-                                width={14}
-                                height={14}
-                                sx={{ display: 'block' }}
-                              />
-                            </Box>
-                          }
-                          sx={{
-                            bgcolor: platform.bg,
-                            color: platform.fg,
-                            fontWeight: 700,
-                            '&:hover': { bgcolor: platform.hover },
-                          }}
-                        >
-                          {platform.label} 열기
-                        </Button>
-                      ))}
-                    </Stack>
-                  </Box>
-                  );
-                })}
+                <Grid container spacing={1.5}>
+                  {recommendation.products.map((product, index) => {
+                    // 퍼스널컬러 카드와 동일한 버튼 체계: 입점 리졸버가 채운 platform_links를
+                    // ITEM_PLATFORM_META(라쿠텐 포함)로 렌더하고, 선택 플랫폼으로 필터한다.
+                    const links = product.platform_links ?? {};
+                    const matched = product.matched_platforms?.length
+                      ? product.matched_platforms
+                      : Object.keys(links);
+                    const visiblePlatforms = matched
+                      .filter((key): key is ItemPlatform => key !== 'all' && key in ITEM_PLATFORM_META && Boolean(links[key]))
+                      .filter((key) => selectedPlatform === 'all' || key === selectedPlatform)
+                      .map((key) => ITEM_PLATFORM_META[key]);
+                    return (
+                      <Grid item xs={12} sm={6} key={product.id}>
+                        <Box className="rakuten-product-card">
+                          <Box className="rakuten-product-image">
+                            {product.image_url ? (
+                              <img src={product.image_url} alt={product.name} />
+                            ) : (
+                              <Sparkles size={26} />
+                            )}
+                          </Box>
+                          <Stack direction="row" justifyContent="space-between" alignItems="center">
+                            <Chip label={`추천 ${index + 1} · ${product.category}`} size="small" sx={{ width: 'fit-content' }} />
+                            <Chip size="small" label={`${product.score ?? 0}`} color="secondary" />
+                          </Stack>
+                          <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
+                          <Typography variant="body2" color="text.secondary" noWrap>
+                            {product.brand}
+                            {product.price > 0 && ` · $${(product.price / 100).toFixed(2)}`}
+                          </Typography>
+                          {product.avg_rating != null && (
+                            <Typography variant="caption" color="text.secondary">
+                              ★ {product.avg_rating.toFixed(1)}
+                              {product.review_count != null && ` (${product.review_count.toLocaleString()})`}
+                            </Typography>
+                          )}
+                          <Typography
+                            variant="body2"
+                            sx={{ mt: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                          >
+                            {product.description}
+                          </Typography>
+                          <Stack direction="row" gap={0.8} flexWrap="wrap" sx={{ mt: 'auto', pt: 1.2 }}>
+                            {visiblePlatforms.map((platform) => (
+                              <Button
+                                key={platform.key}
+                                component="a"
+                                href={links[platform.key]}
+                                target="_blank"
+                                rel="noreferrer"
+                                size="small"
+                                variant="contained"
+                                disableElevation
+                                startIcon={
+                                  <Box sx={{ width: 16, height: 16, borderRadius: '4px', bgcolor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <Box component="img" src={faviconUrl(platform.domain)} alt="" width={12} height={12} sx={{ display: 'block' }} />
+                                  </Box>
+                                }
+                                sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
+                              >
+                                {platform.label}
+                              </Button>
+                            ))}
+                          </Stack>
+                        </Box>
+                      </Grid>
+                    );
+                  })}
+                </Grid>
               </Stack>
             ) : (
               <Alert severity="info" sx={{ mt: 2 }}>분석 후 추천 상품이 표시됩니다.</Alert>

@@ -58,6 +58,28 @@ FIELDNAMES = [
     "imageUrl",
 ]
 
+MAKEUP_WORDS = (
+    "makeup",
+    "lip",
+    "lipstick",
+    "tint",
+    "rouge",
+    "gloss",
+    "blush",
+    "cheek",
+    "eye",
+    "eyeshadow",
+    "shadow",
+    "palette",
+    "mascara",
+    "liner",
+    "foundation",
+    "cushion",
+    "concealer",
+    "primer",
+    "powder",
+)
+
 
 def build_session(cf_clearance: str) -> requests.Session:
     session = requests.Session()
@@ -168,10 +190,19 @@ def fetch_product(session: requests.Session, prdtNo: str) -> dict | None:
         return None
 
 
+def is_makeup_row(row: dict) -> bool:
+    haystack = " ".join(
+        str(row.get(field) or "").lower()
+        for field in ("prdtNameEn", "korPrdtName", "category", "subCategory")
+    )
+    return any(word in haystack for word in MAKEUP_WORDS)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Crawl Olive Young Global product catalog via internal API.")
     parser.add_argument("--cf-clearance", required=True, help="Value of cf_clearance cookie from your browser session")
     parser.add_argument("--brand", default="", help="Filter products by brand name keyword (e.g. 'BIOHEAL BOH')")
+    parser.add_argument("--makeup-only", action="store_true", help="Keep only makeup/color product rows")
     parser.add_argument("--limit", type=int, default=0, help="Max products to fetch (0 = all)")
     parser.add_argument("--delay", type=float, default=0.8, help="Delay between requests in seconds (default: 0.8)")
     parser.add_argument("--out", default="data/manifests/oliveyoung_global_products.csv")
@@ -202,6 +233,8 @@ def main() -> int:
 
         brand_filter = args.brand.lower()
         if brand_filter and brand_filter not in (row["brandName"] or "").lower() and brand_filter not in (row["prdtNameEn"] or "").lower():
+            continue
+        if args.makeup_only and not is_makeup_row(row):
             continue
 
         results.append(row)
