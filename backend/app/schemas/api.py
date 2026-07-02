@@ -157,6 +157,8 @@ class ProductOut(BaseModel):
     image_url: str | None = None
     avg_rating: float | None = None
     review_count: int | None = None
+    reason_tags: list[str] = Field(default_factory=list)
+    evidence_note: str | None = None
 
 
 class RecommendationResponse(BaseModel):

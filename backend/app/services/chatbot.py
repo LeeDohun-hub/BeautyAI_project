@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.models import ChatHistory
 from app.schemas.api import ChatResponse
 from app.services.problem_skin_knowledge import build_knowledge_answer, get_problem_skin_knowledge
+from app.services.skincare_ingredient_knowledge import build_skincare_answer, get_skincare_ingredient_knowledge
 
 
 KNOWLEDGE_BASE = [
@@ -28,6 +29,13 @@ def answer_skin_question(db: Session, message: str, user_id: int | None = None, 
     knowledge_matches = get_problem_skin_knowledge().search(message, context)
     if knowledge_matches and knowledge_matches[0].score >= 2:
         answer, sources = build_knowledge_answer(knowledge_matches)
+        db.add(ChatHistory(user_id=user_id, message=message, answer=answer))
+        db.commit()
+        return ChatResponse(answer=answer, sources=sources)
+
+    skincare_matches = get_skincare_ingredient_knowledge().search(message, context)
+    if skincare_matches and skincare_matches[0].score >= 2:
+        answer, sources = build_skincare_answer(skincare_matches)
         db.add(ChatHistory(user_id=user_id, message=message, answer=answer))
         db.commit()
         return ChatResponse(answer=answer, sources=sources)

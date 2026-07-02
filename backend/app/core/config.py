@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     body_skin_model_path: str = "./data/models/body_skin_mobilenet_v3.pt"
     personal_color_model_path: str = "./data/models/personal_color_efficientnet.pt"
     problem_skin_knowledge_path: str = "./data/rag/problem_skin_knowledge.jsonl"
+    skincare_ingredient_knowledge_path: str = "./data/rag/skincare_ingredient_knowledge.jsonl"
     naver_client_id: str | None = None
     naver_client_secret: str | None = None
     rakuten_app_id: str | None = None

@@ -5,6 +5,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import Ingredient, Product, ProductIngredient, RecommendationHistory, SkinAnalysis, Survey
 from app.services.platform_availability import unavailable_platforms_bulk
+from app.services.skincare_ingredient_knowledge import (
+    build_skincare_recommendation_hint,
+    skincare_recommendation_context,
+)
 from app.schemas.api import (
     BodyConditionScore,
     IngredientOut,
@@ -252,6 +256,15 @@ PERSONAL_COLOR_SKINCARE_TERMS = {
     # 스킨케어 누출 차단(예: "Under Eye Patch"의 eye, 콜라겐 패드 등이 메이크업으로 오분류됨).
     "patch", "pad", "collagen", "peptide", "pdrn", "hydrogel",
     "hydrating", "vitalizing", "dark spot", "wrinkle", "lotion", "emulsion",
+}
+
+REASON_TARGET_LABELS = {
+    "acne": "여드름 케어",
+    "pore": "모공/피지",
+    "wrinkle": "탄력/주름",
+    "redness": "진정/홍조",
+    "pigmentation": "톤/색소",
+    "oiliness": "유분 밸런스",
 }
 
 PERSONAL_COLOR_CATEGORY_TERMS: dict[str, set[str]] = {
@@ -736,11 +749,21 @@ def recommend_products(
         ingredients = infer_ingredients(db, scores, survey)
     ingredient_targets = {target for ingredient in ingredients for target in ingredient.targets.split(",")}
 
+    knowledge_match = None
+    knowledge_targets: set[str] = set()
+    knowledge_note = ""
+    if analysis_mode != "body":
+        knowledge_context = {"survey": survey.model_dump(), "scores": scores.model_dump()}
+        knowledge_match, knowledge_targets, knowledge_note = skincare_recommendation_context(
+            " ".join(sorted(ingredient_targets)),
+            knowledge_context,
+        )
+
     products = db.query(Product).options(
         selectinload(Product.brand),
         selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
     ).all()
-    scored: list[tuple[float, float, Product]] = []
+    scored: list[tuple[float, float, Product, list[str], str | None]] = []
     for product in products:
         platform_score = platform_fit_score(product, platform)
         if platform_score < 0:
@@ -780,10 +803,15 @@ def recommend_products(
                 ),
                 1,
             )
+            reason_tags = [f"{safe_matches}개 바디 진정 성분", "바디 보습 카테고리"]
+            evidence_note = None
         else:
-            ingredient_match = len(ingredient_targets.intersection(product_targets)) * 6
+            matched_targets = ingredient_targets.intersection(product_targets)
+            ingredient_match = len(matched_targets) * 6
             skin_type_match = 8 if survey.skin_type in product.skin_types or "all" in product.skin_types else 0
             concern_match = sum(scores.model_dump().get(target, 0) for target in product_targets) / max(1, len(product_targets)) * 0.35
+            knowledge_overlap = knowledge_targets.intersection(product_targets)
+            knowledge_bonus = min(10.0, len(knowledge_overlap) * 5.0)
             rating_score = rating_score_for(product)
             total = round(
                 min(
@@ -791,12 +819,22 @@ def recommend_products(
                     ingredient_match
                     + skin_type_match
                     + concern_match
+                    + knowledge_bonus
                     + platform_score
                     + rating_score,
                 ),
                 1,
             )
-        scored.append((total, platform_score, product))
+            reason_tags = [
+                REASON_TARGET_LABELS.get(target, target)
+                for target in sorted(matched_targets.union(knowledge_overlap))
+            ][:4]
+            if skin_type_match:
+                reason_tags.append("피부 타입 적합")
+            if platform_score >= 8:
+                reason_tags.append("선택 플랫폼 매칭")
+            evidence_note = knowledge_note if knowledge_overlap and knowledge_match else None
+        scored.append((total, platform_score, product, reason_tags, evidence_note))
 
     # When a specific platform is requested, prefer products that actually live on
     # that platform (higher platform_fit_score) before falling back to rating, so
@@ -808,7 +846,7 @@ def recommend_products(
         reverse=True,
     )[:5]
     ingredient_names = [ingredient.name for ingredient in ingredients]
-    product_names = [product.name for _, _, product in top_products]
+    product_names = [product.name for _, _, product, _reason_tags, _evidence_note in top_products]
 
     if user_id or analysis_id:
         db.add(Survey(user_id=user_id, skin_type=survey.skin_type, concerns=",".join(survey.concerns), sensitivity=survey.sensitivity, routine_level=survey.routine_level))
@@ -823,11 +861,25 @@ def recommend_products(
     db.refresh(history)
 
     # 후보 플랫폼을 미리 구한 뒤, 실시간 입점 확인으로 '실제 없는' 곳만 숨긴다.
-    matched_map = {product.id: matched_platforms(product) for _s, _ps, product in top_products}
+    matched_map = {product.id: matched_platforms(product) for _s, _ps, product, _reason_tags, _evidence_note in top_products}
     hidden_map = unavailable_platforms_bulk(
         (product.id, product.brand.name, product.name, set(matched_map[product.id]))
-        for _s, _ps, product in top_products
+        for _s, _ps, product, _reason_tags, _evidence_note in top_products
     )
+
+    explanation = (
+        build_body_explanation(body_conditions, ingredient_names, product_names)
+        if analysis_mode == "body"
+        else build_explanation(scores, survey, ingredient_names, product_names)
+    )
+    if analysis_mode != "body":
+        context = {
+            "survey": survey.model_dump(),
+            "scores": scores.model_dump(),
+        }
+        hint = build_skincare_recommendation_hint(" ".join(ingredient_targets), context)
+        if hint:
+            explanation = f"{explanation} {hint}"
 
     return RecommendationResponse(
         history_id=history.id,
@@ -855,14 +907,12 @@ def recommend_products(
                 image_url=product.image_url,
                 avg_rating=product.avg_rating or None,
                 review_count=product.review_count or None,
+                reason_tags=reason_tags,
+                evidence_note=evidence_note,
             )
-            for score, _platform_score, product in top_products
+            for score, _platform_score, product, reason_tags, evidence_note in top_products
         ],
-        explanation=(
-            build_body_explanation(body_conditions, ingredient_names, product_names)
-            if analysis_mode == "body"
-            else build_explanation(scores, survey, ingredient_names, product_names)
-        ),
+        explanation=explanation,
     )
 
 

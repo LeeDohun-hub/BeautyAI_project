@@ -24,3 +24,6 @@ data/models/*.bak-*
 *.db.bak-*
 aihub_datasets.txt
 data/
+
+# Office 임시 잠금 파일
+~$*

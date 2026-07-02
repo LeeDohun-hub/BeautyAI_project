@@ -104,6 +104,8 @@ export type Product = {
   image_url?: string | null;
   avg_rating?: number | null;
   review_count?: number | null;
+  reason_tags?: string[];
+  evidence_note?: string | null;
 };
 
 export type RecommendationPlatform =

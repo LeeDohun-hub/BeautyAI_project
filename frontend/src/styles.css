@@ -390,6 +390,278 @@ body {
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
 }
 
+.print-report-stage {
+  display: grid;
+  justify-items: center;
+  padding: 8px 0 4px;
+}
+
+.print-report-card {
+  width: min(100%, 860px);
+  aspect-ratio: 1.62 / 1;
+  overflow: hidden;
+  border: 1px solid #cfd6dd;
+  background: #fbfcfd;
+  color: #20242b;
+  box-shadow:
+    0 22px 60px rgba(8, 20, 30, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.82);
+}
+
+.report-top {
+  height: 60px;
+  display: grid;
+  grid-template-columns: 150px 1fr 120px;
+  border-bottom: 1px solid #d8dde3;
+}
+
+.report-top > * {
+  padding: 13px 18px;
+  border-right: 1px solid #d8dde3;
+}
+
+.report-top > *:last-child {
+  border-right: 0;
+}
+
+.report-kicker,
+.report-section-title {
+  color: #59636f;
+  font-size: 0.66rem !important;
+  font-weight: 900 !important;
+  letter-spacing: 0 !important;
+  text-transform: uppercase;
+}
+
+.report-date,
+.report-face {
+  margin-top: 4px !important;
+  font-size: 0.78rem !important;
+  font-weight: 800 !important;
+}
+
+.report-brand {
+  align-self: center;
+  color: #6d7480;
+  font-size: 1.05rem !important;
+  font-weight: 900 !important;
+  text-align: right;
+}
+
+.report-grid {
+  height: calc(100% - 60px);
+  display: grid;
+  grid-template-columns: 32% 68%;
+}
+
+.report-left {
+  padding: 18px;
+  border-right: 1px solid #d8dde3;
+}
+
+.report-main {
+  padding: 18px 20px;
+}
+
+.report-photo {
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  margin-bottom: 14px;
+  border: 1px solid #d8dde3;
+  background: #eef2f5;
+  color: #87919c;
+}
+
+.report-photo img,
+.report-mood-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.report-copy {
+  margin-top: 6px !important;
+  color: #3f4751;
+  font-size: 0.72rem !important;
+  line-height: 1.55 !important;
+}
+
+.report-copy.strong {
+  color: #1d232b;
+  font-weight: 900 !important;
+}
+
+.report-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.report-tags span {
+  color: #2f3742;
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.report-palette {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.report-palette > div {
+  height: 20px;
+  border: 1px solid rgba(30, 37, 46, 0.12);
+}
+
+.report-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 18px;
+  align-items: start;
+}
+
+.report-title {
+  margin-top: 8px !important;
+  font-size: clamp(1.25rem, 2.5vw, 1.75rem) !important;
+  font-weight: 950 !important;
+  line-height: 1.16 !important;
+}
+
+.report-mood-thumb {
+  aspect-ratio: 1 / 1.18;
+  overflow: hidden;
+  border: 1px solid #d8dde3;
+  background: #eef2f5;
+}
+
+.report-mood-thumb .style-mood-thumb {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+.report-makeup-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.report-mini-title {
+  color: #1e252d;
+  font-size: 0.75rem !important;
+  font-weight: 900 !important;
+}
+
+.product-title {
+  display: block;
+  margin-top: 16px !important;
+}
+
+.report-product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 12px;
+  margin-top: 8px;
+}
+
+.report-product {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.report-product-image {
+  width: 34px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #d8dde3;
+  background: #eef2f5;
+}
+
+.report-product-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.report-product-image span,
+.report-product-info span {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: #c2485c;
+  color: #fff;
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+
+.report-product-info {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.report-product.empty .report-product-image span,
+.report-product.empty .report-product-info span {
+  background: #9aa5b1;
+}
+
+.report-product-info .MuiTypography-root {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #333b45;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.report-bottom {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.fake-qr.small {
+  width: 74px;
+  height: 74px;
+  border-width: 6px;
+  background-size: 24px 24px;
+  box-shadow: none;
+}
+
+.fake-qr.small.alt {
+  filter: invert(0.08);
+}
+
+.report-qr-label {
+  margin-top: 4px !important;
+  width: 92px;
+  color: #4a5562;
+  font-size: 0.58rem !important;
+  font-weight: 900 !important;
+  text-align: center;
+}
+
 .face-shape-screen {
   color: #1a2433;
 }
@@ -608,6 +880,17 @@ body {
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 14px 30px rgba(9, 20, 32, 0.08);
+}
+
+.report-pick-control {
+  align-self: flex-start;
+  margin: -4px 0 0 -4px !important;
+}
+
+.report-pick-control .MuiFormControlLabel-label {
+  color: #59636f;
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 .item-match-column {

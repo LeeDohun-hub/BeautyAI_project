@@ -138,6 +138,9 @@ function buildRakutenShopLinks(product: RakutenProduct): Record<string, string> 
 
 // 사이트 파비콘 URL (구글 파비콘 서비스 — 실제 브랜드 로고를 안정적으로 제공)
 const faviconUrl = (domain: string) => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+// 실제 스캔 가능한 QR 이미지(외부 생성기). data 에 URL/텍스트를 넣으면 QR PNG를 돌려준다.
+const qrImageUrl = (data: string, size = 160) =>
+  `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=0&data=${encodeURIComponent(data)}`;
 
 const ageGroups = [
   { value: '10s', label: '10대' },
@@ -502,10 +505,14 @@ function RakutenProductCard({
   product,
   selectedPlatform = 'all',
   region = 'jp',
+  checked = false,
+  onCheckedChange,
 }: {
   product: RakutenProduct;
   selectedPlatform?: ItemPlatform;
   region?: ItemRegion;
+  checked?: boolean;
+  onCheckedChange?: (checked: boolean) => void;
 }) {
   const links = buildRakutenShopLinks(product);
   const matchedPlatforms = product.matched_platforms?.length
@@ -517,6 +524,19 @@ function RakutenProductCard({
     .map((key) => ITEM_PLATFORM_META[key]);
   return (
     <Box className="rakuten-product-card">
+      {onCheckedChange && (
+        <FormControlLabel
+          className="report-pick-control"
+          control={
+            <Checkbox
+              checked={checked}
+              onChange={(event) => onCheckedChange(event.target.checked)}
+              size="small"
+            />
+          }
+          label="결과지에 담기"
+        />
+      )}
       <Box className="rakuten-product-image">
         {product.image_url ? (
           <img src={product.image_url} alt={product.name} />
@@ -604,6 +624,98 @@ function groupItemMatchProducts(products: RakutenProduct[]): Record<ItemMatchCol
   );
 }
 
+function productPickKey(product: RakutenProduct): string {
+  return [product.id, product.keyword, product.name].filter(Boolean).join('::');
+}
+
+function displaySeasonLabel(label?: string): string {
+  if (!label) return '퍼스널컬러';
+  if (/[가-힣]/.test(label)) return label;
+  if (/winter|cool-deep|cool-bright/i.test(label)) return '겨울 쿨';
+  if (/summer/i.test(label)) return '여름 쿨';
+  if (/spring/i.test(label)) return '봄 웜';
+  if (/autumn|fall/i.test(label)) return '가을 웜';
+  return label;
+}
+
+function faceShapeLabel(shape?: string): string {
+  if (!shape) return '얼굴형분석전';
+  if (/[가-힣]/.test(shape)) return shape;
+  const normalized = shape.toLowerCase();
+  if (normalized.includes('oval')) return '계란형';
+  if (normalized.includes('round')) return '둥근형';
+  if (normalized.includes('square')) return '각진형';
+  if (normalized.includes('heart')) return '하트형';
+  if (normalized.includes('long')) return '긴형';
+  return shape;
+}
+
+function reportSeasonProfile(result?: PersonalColorResponse | null) {
+  const label = result?.label ?? '';
+  const seasonText = `${result?.season ?? ''} ${label}`.toLowerCase();
+  const detailText = `${result?.tone ?? ''} ${result?.subtype ?? ''} ${label}`.toLowerCase();
+  if (/가을|autumn|fall/.test(seasonText) || (!/봄|spring|여름|summer|겨울|winter/.test(seasonText) && /warm.*(mute|deep)|autumn|fall/.test(detailText))) {
+    return {
+      moodLine: '차분하고 세련된 분위기를 가지고 있어요.',
+      tags: ['#차분한', '#고급스러운', '#부드러운'],
+      colorLine: '부드럽고 탁도가 살짝 있는 웜 컬러가 잘 어울리며, 베이지와 브라운 계열을 더하면 분위기가 안정적으로 살아나요.',
+      finishLine: '따뜻하고 차분한 대비감을 살려 자연스러운 깊이와 분위기를 함께 정리했어요.',
+    };
+  }
+  if (/봄|spring/.test(seasonText) || (!/가을|autumn|fall|여름|summer|겨울|winter/.test(seasonText) && /warm.*(light|bright)|spring/.test(detailText))) {
+    return {
+      moodLine: '밝고 생기 있는 분위기를 가지고 있어요.',
+      tags: ['#맑은', '#상큼한', '#화사한'],
+      colorLine: '맑고 따뜻한 코랄, 피치, 라이트 베이지 계열이 잘 어울리며 과하게 탁한 컬러는 덜어내는 편이 좋아요.',
+      finishLine: '가볍고 맑은 색감을 중심으로 얼굴의 생기와 투명감을 함께 정리했어요.',
+    };
+  }
+  if (/여름|summer/.test(seasonText) || (!/봄|spring|가을|autumn|fall|겨울|winter/.test(seasonText) && /cool.*(light|mute|soft)|summer|rose|mauve/.test(detailText))) {
+    return {
+      moodLine: '부드럽고 깨끗한 분위기를 가지고 있어요.',
+      tags: ['#청초한', '#은은한', '#소프트한'],
+      colorLine: '차분한 로즈, 라벤더, 모브 계열이 잘 어울리며 노란기가 강한 색보다 부드러운 쿨 컬러가 안정적이에요.',
+      finishLine: '은은한 쿨 톤을 중심으로 피부의 맑음과 부드러운 인상을 함께 정리했어요.',
+    };
+  }
+  if (/겨울|winter/.test(seasonText) || (!/봄|spring|가을|autumn|fall|여름|summer/.test(seasonText) && /cool.*(deep|clear|strong|bright)|winter/.test(detailText))) {
+    return {
+      moodLine: '당당하고 또렷한 분위기를 가지고 있어요.',
+      tags: ['#선명한', '#존재감있는', '#시크한'],
+      colorLine: '선명하고 단정한 차가운 컬러가 잘 어울리며, 대비감 있는 포인트를 더하면 얼굴선과 분위기가 또렷하게 살아나요.',
+      finishLine: '맑고 차가운 대비감을 살려 생기와 존재감을 함께 정리했어요.',
+    };
+  }
+  return {
+    moodLine: result?.skin_summary ?? '분석 결과에 맞춰 어울리는 분위기를 정리했어요.',
+    tags: ['#균형있는', '#자연스러운', '#맞춤형'],
+    colorLine: result?.advice?.[0] ?? '분석된 퍼스널컬러에 맞춰 어울리는 컬러와 메이크업 톤을 정리했어요.',
+    finishLine: result?.advice?.[1] ?? '사진 분석 결과와 선택한 무드를 함께 반영했어요.',
+  };
+}
+
+function faceImpressionTag(face?: FaceShapeResponse | null): string {
+  const shape = faceShapeLabel(face?.detected ? face.shape : undefined);
+  if (/둥근|계란|oval|round/i.test(shape)) return '#부드러운인상';
+  if (/하트|heart/i.test(shape)) return '#러블리상';
+  if (/각진|square/i.test(shape)) return '#시크한인상';
+  if (/긴|long/i.test(shape)) return '#성숙한인상';
+  return '#인상분석전';
+}
+
+function reportMoodCopy(mood: StyleMood) {
+  if (mood.id === 'berry-sorbet') {
+    return {
+      label: '상큼 베리 소르베 무드 메이크업',
+      description: '차가운 베리 소르베처럼 상큼하면서도 도화적인 컬러감이, 강한 대비로 생기를 불어넣는 메이크업이에요.',
+    };
+  }
+  return {
+    label: `${mood.label} 무드 메이크업`,
+    description: `${mood.vibe} 분위기를 살려 퍼스널 컬러와 어울리는 메이크업으로 정리했어요.`,
+  };
+}
+
 // 퍼스널컬러 색상어(한국어)를 일본 마켓(라쿠텐) 검색어로 번역한다. 한국어 색상어는
 // 라쿠텐/아마존에서 0건이 나오므로, 색상 매칭이 실제로 되도록 일본어로 현지화한다.
 // (예: "코랄 핑크" → "コーラルピンク"). KR은 네이버가 한국어를 그대로 이해하므로 원문 사용.
@@ -683,6 +795,7 @@ export default function App() {
   const [moodThumbsLoading, setMoodThumbsLoading] = useState(false);
   const [itemRegion, setItemRegion] = useState<ItemRegion>('jp');
   const [itemPlatform, setItemPlatform] = useState<ItemPlatform>('all');
+  const [reportProductKeys, setReportProductKeys] = useState<string[]>([]);
   const [personalColorProfile, setPersonalColorProfile] = useState({
     age: '',
     gender: 'female',
@@ -1296,6 +1409,7 @@ export default function App() {
               setItemPlatform('all');
               setPersonalColorItems(null);
               setMoodItems(null);
+              setReportProductKeys([]);
             }}
           >
             {ITEM_REGION_FILTERS.map((region) => (
@@ -1312,6 +1426,7 @@ export default function App() {
               setItemPlatform(event.target.value as ItemPlatform);
               setPersonalColorItems(null);
               setMoodItems(null);
+              setReportProductKeys([]);
             }}
           >
             {(itemRegion === 'jp' ? JP_ITEM_PLATFORM_FILTERS : KR_ITEM_PLATFORM_FILTERS).map((platform) => (
@@ -1338,6 +1453,21 @@ export default function App() {
 
     const setProfile = (key: keyof typeof personalColorProfile, value: string | boolean) => {
       setPersonalColorProfile((profile) => ({ ...profile, [key]: value }));
+    };
+
+    const reportSourceProducts = (selectedMood && moodItems?.products.length ? moodItems.products : personalColorItems?.products) ?? [];
+    const pickedReportProducts = reportProductKeys
+      .map((key) => reportSourceProducts.find((product) => productPickKey(product) === key))
+      .filter((product): product is RakutenProduct => Boolean(product));
+    const fallbackReportProducts = reportSourceProducts.filter((product) => !reportProductKeys.includes(productPickKey(product)));
+    const reportItems = [...pickedReportProducts, ...fallbackReportProducts].slice(0, 4);
+    const toggleReportProduct = (product: RakutenProduct, checked: boolean) => {
+      const key = productPickKey(product);
+      setReportProductKeys((current) => {
+        if (!checked) return current.filter((item) => item !== key);
+        if (current.includes(key)) return current;
+        return [...current, key].slice(-4);
+      });
     };
 
     const renderPersonalStepContent = () => {
@@ -1479,6 +1609,23 @@ export default function App() {
                     <Typography color="text.secondary" sx={{ mt: 1 }}>
                       신뢰도 {Math.round(personalColorResult.confidence * 100)}% · {personalColorResult.skin_summary}
                     </Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
+                      <Chip
+                        size="small"
+                        label={`분석 품질 ${Math.round((personalColorResult.metrics.capture_quality ?? personalColorResult.confidence) * 100)}%`}
+                        color={(personalColorResult.metrics.capture_quality ?? personalColorResult.confidence) >= 0.72 ? 'success' : 'warning'}
+                      />
+                      <Chip
+                        size="small"
+                        label={personalColorResult.metrics.model_used ? '딥러닝 모델 사용' : '휴리스틱 보조'}
+                        variant="outlined"
+                      />
+                      <Chip
+                        size="small"
+                        label={personalColorResult.metrics.white_balanced ? '조명 보정 적용' : '조명 보정 제한'}
+                        variant="outlined"
+                      />
+                    </Stack>
                   </Box>
 
                   <Box>
@@ -1776,6 +1923,10 @@ export default function App() {
               </Alert>
             )}
 
+            <Alert severity="info" sx={{ mt: 2 }}>
+              결과지에 담을 상품을 최대 4개까지 체크할 수 있어요. 현재 {pickedReportProducts.length}개 선택됨.
+            </Alert>
+
             <Grid container spacing={1.5} className="item-match-columns" sx={{ mt: 2 }}>
               {makeupGroups.map((group, groupIndex) => (
                 <Grid item xs={12} md={3} key={group.label}>
@@ -1791,6 +1942,8 @@ export default function App() {
                           product={product}
                           selectedPlatform={itemPlatform}
                           region={itemRegion}
+                          checked={reportProductKeys.includes(productPickKey(product))}
+                          onCheckedChange={(checked) => toggleReportProduct(product, checked)}
                         />
                       ))}
                     </Stack>
@@ -1815,31 +1968,154 @@ export default function App() {
         );
       }
 
+      const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? STYLE_MOODS[0];
+      const reportDate = new Date().toISOString().slice(0, 10);
+      const quality = Math.round(((personalColorResult?.metrics.capture_quality ?? personalColorResult?.confidence) ?? 0.72) * 100);
+      const seasonTag = displaySeasonLabel(personalColorResult?.label);
+      const faceTag = faceShapeLabel(faceShape?.detected ? faceShape.shape : undefined);
+      const reportProfile = reportSeasonProfile(personalColorResult);
+      const faceTypeTags = [`#${seasonTag.replace(/\s+/g, '')}`, faceImpressionTag(faceShape), `#${faceTag}`];
+      const moodCopy = reportMoodCopy(activeMood);
+      const reportMakeupRows = [
+        { label: '립 메이크업', values: personalColorResult?.makeup.lip ?? ['와인 로즈', '말린 장미', '뮤트 플럼'] },
+        { label: '블러셔', values: personalColorResult?.makeup.blush ?? ['페일 체리', '푸시아 로즈', '로즈 핑크'] },
+        { label: '아이 메이크업', values: personalColorResult?.makeup.eye ?? ['뮤트 플럼', '베리 로즈', '말린 라일락'] },
+      ];
+
       return (
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={7}>
-            <Box className="kiosk-print-sheet">
-              <Typography variant="overline">BeautyAI report</Typography>
-              <Typography variant="h4" fontWeight={900}>{personalColorResult?.label ?? '퍼스널컬러 결과지'}</Typography>
-              <Typography color="text.secondary" sx={{ mt: 1 }}>
-                퍼스널컬러, 스타일 컨설팅, 아이템 매칭 결과를 한 장의 진단서로 출력하는 단계입니다.
-              </Typography>
-              <Divider sx={{ my: 2 }} />
-              <Stack spacing={1}>
-                {(personalColorResult?.advice ?? ['분석 결과가 출력지에 표시됩니다.']).map((item) => (
-                  <Typography key={item}>- {item}</Typography>
-                ))}
-              </Stack>
+        <Box className="print-report-stage">
+          <Box className="print-report-card">
+            <Box className="report-top">
+              <Box>
+                <Typography className="report-kicker">Date /</Typography>
+                <Typography className="report-date">{reportDate}</Typography>
+              </Box>
+              <Box>
+                <Typography className="report-kicker">Face Type /</Typography>
+                <Typography className="report-face">{faceTypeTags.join(' ')}</Typography>
+              </Box>
+              <Typography className="report-brand">BeautyAI</Typography>
             </Box>
-          </Grid>
-          <Grid item xs={12} md={5}>
-            <Box className="kiosk-qr-box">
-              <Box className="fake-qr" />
-              <Typography variant="h6" fontWeight={900}>QR 코드로 결과 확인</Typography>
-              <Typography color="text.secondary">문서 예시처럼 모바일에서 결과지를 다시 열 수 있는 영역입니다.</Typography>
+
+            <Box className="report-grid">
+              <Box className="report-left">
+                <Box className="report-photo">
+                  {personalColorPreview ? <img src={personalColorPreview} alt="분석 사진" /> : <Sparkles size={34} />}
+                </Box>
+                <Typography className="report-section-title">진단 요약</Typography>
+                <Typography className="report-copy">
+                  {reportProfile.moodLine}
+                </Typography>
+                <Box className="report-tags">
+                  {reportProfile.tags.map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                </Box>
+                <Typography className="report-copy">
+                  {personalColorResult?.advice?.[0] ?? reportProfile.colorLine}
+                </Typography>
+                <Stack direction="row" spacing={0.8} sx={{ mt: 1.2 }} flexWrap="wrap" useFlexGap>
+                  <Chip size="small" label={`신뢰도 ${Math.round((personalColorResult?.confidence ?? 0) * 100)}%`} />
+                  <Chip size="small" label={`품질 ${quality}%`} variant="outlined" />
+                </Stack>
+                <Box className="report-palette">
+                  {(personalColorResult?.palette ?? ['#E0A6B1', '#C95C7E', '#A9B5C8', '#4D5D77']).map((color) => (
+                    <Box key={color} sx={{ backgroundColor: color }} />
+                  ))}
+                </Box>
+              </Box>
+
+              <Box className="report-main">
+                <Box className="report-title-row">
+                  <Box>
+                    <Typography className="report-section-title">선택한 무드</Typography>
+                    <Typography className="report-title">{moodCopy.label}</Typography>
+                  </Box>
+                  <Box className="report-mood-thumb">
+                    {moodThumbnails[activeMood.id] ? (
+                      <img src={moodThumbnails[activeMood.id]} alt={activeMood.label} />
+                    ) : (
+                      <Box className={`style-mood-thumb ${activeMood.thumbClass}`} />
+                    )}
+                  </Box>
+                </Box>
+                <Typography className="report-copy strong">
+                  {moodCopy.description}
+                </Typography>
+                <Typography className="report-copy">
+                  {seasonTag} 타입의 특성과 선택한 무드를 바탕으로 {reportProfile.finishLine}
+                </Typography>
+
+                <Divider sx={{ my: 1.6 }} />
+
+                <Typography className="report-section-title">메이크업 톤</Typography>
+                <Box className="report-makeup-grid">
+                  {reportMakeupRows.map((group) => (
+                    <Box key={group.label}>
+                      <Typography className="report-mini-title">{group.label}</Typography>
+                      <Typography className="report-copy">{group.values.slice(0, 3).join(' / ')}</Typography>
+                    </Box>
+                  ))}
+                </Box>
+
+                <Typography className="report-section-title product-title">메이크업 룩 추천상품</Typography>
+                <Box className="report-product-grid">
+                  {reportItems.length ? reportItems.map((product, index) => (
+                    <Box className="report-product" key={`${product.id}-${product.keyword}-${index}`}>
+                      <Box className="report-product-image">
+                        {product.image_url ? (
+                          <img src={product.image_url} alt={product.name} />
+                        ) : (
+                          <span>{String(index + 1).padStart(2, '0')}</span>
+                        )}
+                      </Box>
+                      <Box className="report-product-info">
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <Typography>{product.brand} {product.name}</Typography>
+                      </Box>
+                    </Box>
+                  )) : ['립 메이크업 추천템', '블러셔 추천템', '아이 메이크업 추천템', '베이스 추천템'].map((item, index) => (
+                    <Box className="report-product empty" key={item}>
+                      <Box className="report-product-image">
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                      </Box>
+                      <Box className="report-product-info">
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <Typography>{item}</Typography>
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
+
+                <Box className="report-bottom">
+                  <Box>
+                    <Box
+                      component="img"
+                      className="report-qr-img"
+                      src={qrImageUrl(`${window.location.origin}/#report`)}
+                      alt="모바일 레포트 QR"
+                      sx={{ width: 74, height: 74, display: 'block', border: '6px solid #fff', background: '#fff', borderRadius: '4px' }}
+                    />
+                    <Typography className="report-qr-label">모바일 레포트에서 자세한 진단결과 보기</Typography>
+                  </Box>
+                  <Box>
+                    <Box
+                      component="img"
+                      className="report-qr-img"
+                      src={qrImageUrl('http://localhost:5174/cart')}
+                      alt="장바구니 QR"
+                      sx={{ width: 74, height: 74, display: 'block', border: '6px solid #fff', background: '#fff', borderRadius: '4px' }}
+                    />
+                    <Typography className="report-qr-label">Java WEB 장바구니에 선택 상품 담기</Typography>
+                  </Box>
+                </Box>
+              </Box>
             </Box>
-          </Grid>
-        </Grid>
+          </Box>
+          <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
+            Step 4에서 체크한 상품이 우선 표시되고, 선택이 부족하면 추천 목록에서 자동으로 채워집니다.
+          </Typography>
+        </Box>
       );
     };
 
@@ -2182,12 +2458,28 @@ export default function App() {
                               {product.review_count != null && ` (${product.review_count.toLocaleString()})`}
                             </Typography>
                           )}
-                          <Typography
-                            variant="body2"
-                            sx={{ mt: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-                          >
-                            {product.description}
-                          </Typography>
+                           <Typography
+                             variant="body2"
+                             sx={{ mt: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                           >
+                             {product.description}
+                           </Typography>
+                          {!!product.reason_tags?.length && (
+                            <Stack direction="row" gap={0.6} flexWrap="wrap" sx={{ mt: 1 }}>
+                              {product.reason_tags.slice(0, 4).map((tag) => (
+                                <Chip key={tag} size="small" label={tag} variant="outlined" />
+                              ))}
+                            </Stack>
+                          )}
+                          {product.evidence_note && (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{ mt: 0.8, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                            >
+                              {product.evidence_note}
+                            </Typography>
+                          )}
                           <Stack direction="row" gap={0.8} flexWrap="wrap" sx={{ mt: 'auto', pt: 1.2 }}>
                             {visiblePlatforms.map((platform) => (
                               <Button

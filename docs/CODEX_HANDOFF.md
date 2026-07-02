@@ -110,6 +110,183 @@ npm.cmd run build
 
 Result: passed.
 
+## 2026-07-02 Update: Personal-Color EfficientNet Bootstrap
+
+Files:
+
+```text
+backend/app/services/personal_color_analyzer.py
+scripts/prepare_personal_color_dataset.py
+scripts/train_personal_color_efficientnet.py
+```
+
+Local generated artifacts, ignored by git:
+
+```text
+data/manifests/personal_color_manifest.csv
+data/models/personal_color_efficientnet.pt
+```
+
+Done:
+
+- Generated `personal_color_manifest.csv` from `data/release/annotations.csv` and extracted `ORIGINAL_RGB_NOT_PROCESSED` images.
+- Matched all 4,920 annotation rows to images.
+  - train: 4,008
+  - test: 912
+  - autumn: 1,305
+  - summer: 1,129
+  - winter: 1,305
+  - spring: 1,181
+- Trained a quick CPU bootstrap model with:
+
+```powershell
+backend\.venv\Scripts\python.exe scripts\train_personal_color_efficientnet.py --manifest data\manifests\personal_color_manifest.csv --out data\models\personal_color_efficientnet.pt --epochs 3 --batch-size 32 --max-samples 400
+```
+
+Result:
+
+```text
+best val_acc=0.3836
+```
+
+Important note:
+
+- This is only a smoke-test/bootstrap model, not a production-quality model.
+- Full 15-epoch CPU training was started but stopped because it was projected to take multiple hours.
+- `PersonalColorAnalyzer` now keeps the model-predicted season when selecting the final profile. Before this fix, a model prediction such as `autumn` could become a final `spring` response because only warm/cool tone was used.
+
+Validation:
+
+```powershell
+cd C:\WorkSpace\Beauty_Project\BeautyAI_project\backend
+.\.venv\Scripts\python.exe -m pytest tests\test_api.py -q
+```
+
+Result:
+
+```text
+5 passed in 67.90s
+```
+
+## 2026-07-02 Update: Skincare Ingredient-Efficacy Knowledge
+
+Files:
+
+```text
+scripts/build_skincare_ingredient_knowledge.py
+backend/app/services/skincare_ingredient_knowledge.py
+backend/app/services/chatbot.py
+backend/app/services/recommender.py
+backend/app/core/config.py
+backend/tests/test_skincare_ingredient_knowledge.py
+```
+
+Local generated artifact, ignored by git:
+
+```text
+data/rag/skincare_ingredient_knowledge.jsonl
+```
+
+Done:
+
+- Added preprocessing for AI Hub `03.스킨케어 성분-효능 추천 데이터`.
+- The script reads label `.jsonl` files inside ZIP archives and writes service-safe JSONL records.
+- `chain_of_thought` from the source data is intentionally not stored or exposed.
+- Generated `data/rag/skincare_ingredient_knowledge.jsonl`.
+
+Generation result:
+
+```text
+Wrote 8341 records
+- 과각질/악건성: 55
+- 모공: 2562
+- 미백(색소침착/기미/칙칙함): 3162
+- 민감성(트러블/자극감): 8
+- 붉어짐(홍조): 131
+- 여드름/뾰루지: 781
+- 주름: 1597
+- 피부처짐/탄력저하: 45
+```
+
+Runtime behavior:
+
+- `/api/chat` still checks problem-skin makeup knowledge first.
+- If that match is weak, chat now falls back to skincare ingredient-efficacy knowledge.
+- Face-skin product recommendation explanations append a short ingredient-efficacy rationale when a close match exists.
+
+Useful command:
+
+```powershell
+cd C:\WorkSpace\Beauty_Project\BeautyAI_project
+backend\.venv\Scripts\python.exe scripts\build_skincare_ingredient_knowledge.py
+```
+
+Validation:
+
+```powershell
+cd C:\WorkSpace\Beauty_Project\BeautyAI_project\backend
+.\.venv\Scripts\python.exe -m pytest tests\test_skincare_ingredient_knowledge.py tests\test_problem_skin_knowledge.py -q
+.\.venv\Scripts\python.exe -m pytest tests\test_api.py -q
+```
+
+Result:
+
+```text
+4 passed in 4.34s
+5 passed in 95.28s
+```
+
+## 2026-07-02 Update: Evidence-Based Recommendation UX
+
+Files:
+
+```text
+backend/app/schemas/api.py
+backend/app/services/recommender.py
+backend/app/services/skincare_ingredient_knowledge.py
+backend/app/services/personal_color_analyzer.py
+frontend/src/types/api.ts
+frontend/src/App.tsx
+```
+
+Done:
+
+- Product recommendations now include optional:
+  - `reason_tags`
+  - `evidence_note`
+- Face-skin recommendations use `03.스킨케어 성분-효능 추천 데이터` matches more directly:
+  - maps matched skincare concern to internal targets such as `pore`, `acne`, `pigmentation`
+  - adds a small score bonus when product ingredient targets overlap the matched AI Hub concern
+  - adds product-level evidence notes when the match is relevant
+- Frontend recommendation cards now show reason chips and a short evidence note.
+- Personal-color analysis now adds:
+  - `metrics.capture_quality`
+  - capture/lighting/model-use guidance in `advice`
+- Frontend personal-color result card now shows:
+  - analysis quality
+  - whether the deep-learning model was used
+  - whether white-balance lighting correction was applied
+
+Validation:
+
+```powershell
+cd C:\WorkSpace\Beauty_Project\BeautyAI_project\backend
+.\.venv\Scripts\python.exe -m py_compile app\schemas\api.py app\services\recommender.py app\services\personal_color_analyzer.py app\services\skincare_ingredient_knowledge.py
+.\.venv\Scripts\python.exe -m pytest tests\test_skincare_ingredient_knowledge.py tests\test_problem_skin_knowledge.py -q
+.\.venv\Scripts\python.exe -m pytest tests\test_api.py -q
+
+cd C:\WorkSpace\Beauty_Project\BeautyAI_project\frontend
+npm.cmd run build
+```
+
+Result:
+
+```text
+4 passed in 4.53s
+5 passed in 81.19s
+frontend build passed
+```
+
 Python syntax:
 
 ```powershell

@@ -156,11 +156,12 @@ class PersonalColorAnalyzer:
         if season_pred is not None:
             season, model_conf = season_pred
             tone = SEASON_TONE[season]
+            subtype = self._subtype_for_model_season(season, brightness, chroma)
             model_used = True
         else:
             tone = "warm" if warmth >= 0.035 else "cool"
+            subtype = self._subtype_from_metrics(brightness, chroma, tone)
             model_used = False
-        subtype = self._subtype_from_metrics(brightness, chroma, tone)
 
         profile = PROFILES.get((tone, subtype)) or PROFILES[(tone, "soft")]
         if model_used:
@@ -168,6 +169,7 @@ class PersonalColorAnalyzer:
         else:
             confidence = min(0.9, max(0.56, 0.62 + abs(warmth) * 1.8 + abs(brightness - 0.58) * 0.22 + chroma * 0.24))
         summary = self._summary(profile, brightness, chroma, warmth, redness)
+        capture_advice = self._capture_advice(confidence, white_balanced, model_used, brightness, chroma)
 
         return PersonalColorResponse(
             season=profile.season,
@@ -178,15 +180,91 @@ class PersonalColorAnalyzer:
             skin_summary=summary,
             palette=profile.palette,
             makeup=profile.makeup,
-            advice=profile.advice,
+            advice=[*profile.advice, *capture_advice],
             metrics={
                 "brightness": round(brightness, 3),
                 "chroma": round(chroma, 3),
                 "warmth": round(warmth, 3),
                 "redness": round(redness, 3),
                 "white_balanced": 1.0 if white_balanced else 0.0,
+                "model_used": 1.0 if model_used else 0.0,
+                "capture_quality": round(self._capture_quality(confidence, white_balanced, model_used, brightness, chroma), 3),
             },
         )
+
+    def _subtype_from_metrics(self, brightness: float, chroma: float, tone: str) -> str:
+        """밝기/채도(WB 보정)로 subtype(light/bright/deep/soft)을 정한다. 웜/쿨은 별도 결정."""
+        if brightness >= 0.69:
+            return "light"
+        if chroma >= 0.18 and brightness >= 0.48:
+            return "bright" if tone == "cool" else "light"
+        if brightness <= 0.46:
+            return "deep"
+        return "soft"
+
+    def _subtype_for_model_season(self, season: str, brightness: float, chroma: float) -> str:
+        """모델이 맞힌 계절을 유지하면서 앱의 기존 subtype 프로필에 맞춘다."""
+        if season == "spring":
+            return "light"
+        if season == "summer":
+            return "light" if brightness >= 0.62 else "soft"
+        if season == "autumn":
+            return "deep" if brightness <= 0.46 else "soft"
+        if season == "winter":
+            return "deep" if brightness <= 0.46 else "bright"
+        return self._subtype_from_metrics(brightness, chroma, SEASON_TONE.get(season, "warm"))
+
+    def _predict_season(self, rgb: np.ndarray) -> tuple[str, float] | None:
+        """학습된 계절 분류기가 있으면 (계절, 신뢰도), 없으면 None(→휴리스틱)."""
+        classifier = _get_season_classifier()
+        if not classifier.available:
+            return None
+        try:
+            return classifier.predict(Image.fromarray(rgb.astype(np.uint8)))
+        except Exception:
+            return None
+
+    def _capture_quality(
+        self,
+        confidence: float,
+        white_balanced: bool,
+        model_used: bool,
+        brightness: float,
+        chroma: float,
+    ) -> float:
+        quality = 0.52 + confidence * 0.28
+        quality += 0.08 if white_balanced else -0.06
+        quality += 0.08 if model_used else -0.04
+        if 0.38 <= brightness <= 0.76:
+            quality += 0.06
+        else:
+            quality -= 0.08
+        if chroma < 0.035:
+            quality -= 0.05
+        return min(1.0, max(0.0, quality))
+
+    def _capture_advice(
+        self,
+        confidence: float,
+        white_balanced: bool,
+        model_used: bool,
+        brightness: float,
+        chroma: float,
+    ) -> list[str]:
+        tips: list[str] = []
+        if not model_used:
+            tips.append("현재는 학습 모델 대신 조명 보정 기반 휴리스틱을 함께 사용했습니다. 최종 학습 모델을 적용하면 계절 분류 안정도가 올라갑니다.")
+        if not white_balanced:
+            tips.append("눈흰자 기준 조명 보정이 충분히 잡히지 않았습니다. 자연광에서 정면 사진을 다시 찍으면 정확도가 좋아집니다.")
+        if brightness < 0.38:
+            tips.append("사진이 어두운 편입니다. 얼굴에 그림자가 적게 드는 밝은 장소에서 재촬영을 권장합니다.")
+        elif brightness > 0.76:
+            tips.append("사진이 밝게 날아간 편입니다. 직접 조명보다 부드러운 간접광에서 촬영해 주세요.")
+        if chroma < 0.035:
+            tips.append("피부 색 차이가 약하게 잡혔습니다. 필터와 보정 앱을 끄고 원본 사진으로 분석하는 편이 좋습니다.")
+        if confidence < 0.66:
+            tips.append("이번 결과는 신뢰도가 낮은 편이라 팔레트는 참고용으로 보고, 다른 조명 사진과 비교해 보세요.")
+        return tips[:3]
 
     def _white_balance(self, rgb: np.ndarray) -> tuple[np.ndarray, bool]:
         """공막(눈흰자) 기준 색항상성. 무채색이어야 할 눈흰자의 색을 조명색으로 보고 나눠,
