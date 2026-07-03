@@ -32,6 +32,14 @@ services:
       RAKUTEN_REFERER: ${RAKUTEN_REFERER:-http://127.0.0.1:5173/}
       NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
       NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
+      SKIN_MODEL_PATH: /data/models/skin_efficientnet_b0.pt
+      BODY_SKIN_MODEL_PATH: /data/models/body_skin_mobilenet_v3.pt
+      PERSONAL_COLOR_MODEL_PATH: /data/models/personal_color_efficientnet.pt
+    volumes:
+      # 컨테이너 안에서 config.project_root(=parents[3])는 '/'로 해석된다
+      # (WORKDIR=/app, 코드=/app/app/...). 따라서 기본 경로 ./data/... 는 /data/... 가 된다.
+      # 모델·RAG가 로드되려면 마운트가 반드시 /data 여야 한다(/app/data 아님).
+      - ./data:/data
     ports:
       - "8000:8000"
     depends_on:

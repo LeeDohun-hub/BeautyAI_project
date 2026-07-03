@@ -51,6 +51,9 @@ export type PersonalColorResponse = {
   tone: string;
   subtype: string;
   label: string;
+  alternate_season?: string | null;
+  alternate_label?: string | null;
+  decision_note?: string | null;
   confidence: number;
   skin_summary: string;
   palette: string[];

@@ -470,6 +470,51 @@ const STYLE_MOODS: StyleMood[] = [
   },
 ];
 
+type StyleMoodRecommendation = {
+  mood: StyleMood;
+  score: number;
+  reason: string;
+};
+
+const STYLE_MOOD_SCORE_MAP: Record<string, Partial<Record<string, number>>> = {
+  'cool-soft': { 'plum-creme': 5, 'berry-sorbet': 4.5, 'rose-wine': 4, 'cherry-chocolate': 2.5 },
+  'cool-light': { 'berry-sorbet': 5, 'plum-creme': 4, 'rose-wine': 3.5, 'peach-latte': 2 },
+  'cool-bright': { 'cherry-chocolate': 5, 'berry-sorbet': 4.5, 'rose-wine': 4, 'plum-creme': 3.5 },
+  'cool-deep': { 'cherry-chocolate': 5, 'rose-wine': 4.5, 'plum-creme': 4, 'berry-sorbet': 3 },
+  'warm-light': { 'peach-latte': 5, coral: 4.5, 'tomato-red': 3.5, 'caramel-mocha': 2 },
+  'warm-soft': { 'caramel-mocha': 5, coral: 3.5, 'peach-latte': 3, 'rose-wine': 2.5 },
+  'warm-deep': { 'caramel-mocha': 5, 'cherry-chocolate': 4.5, 'rose-wine': 3.5, 'tomato-red': 2.5 },
+};
+
+function moodRecommendationReason(result: PersonalColorResponse | null, mood: StyleMood): string {
+  if (!result) return '퍼스널컬러 분석 전 기본 무드 후보입니다.';
+  const season = displaySeasonLabel(result.label);
+  if (result.tone === 'cool') {
+    return `${season}의 차가운 색감과 ${mood.label}의 로즈·베리 계열 포인트가 잘 맞습니다.`;
+  }
+  return `${season}의 따뜻한 색감과 ${mood.label}의 피치·브라운 계열 포인트가 잘 맞습니다.`;
+}
+
+function recommendStyleMoods(
+  result: PersonalColorResponse | null,
+  face: FaceShapeResponse | null,
+): StyleMoodRecommendation[] {
+  const key = result ? `${result.tone}-${result.subtype}` : 'cool-soft';
+  const baseScores = STYLE_MOOD_SCORE_MAP[key] ?? STYLE_MOOD_SCORE_MAP[`${result?.tone ?? 'cool'}-soft`] ?? {};
+  const faceShape = faceShapeLabel(face?.detected ? face.shape : undefined);
+
+  return STYLE_MOODS
+    .map((mood) => {
+      let score = baseScores[mood.id] ?? 1;
+      if (/둥근|하트|계란/.test(faceShape) && ['berry-sorbet', 'peach-latte', 'plum-creme'].includes(mood.id)) score += 0.35;
+      if (/각진|긴/.test(faceShape) && ['cherry-chocolate', 'rose-wine', 'caramel-mocha'].includes(mood.id)) score += 0.35;
+      if (result?.metrics?.season_consistency && result.metrics.season_consistency >= 0.8) score += 0.25;
+      return { mood, score, reason: moodRecommendationReason(result, mood) };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+}
+
 // 퍼스널컬러 세부타입(`${tone}-${subtype}`)별 블러셔/쉐딩 큐레이션.
 // 블러셔 '색'은 분석 결과(makeup.blush)를 그대로 쓰고, 여기서는 톤에 맞는 브랜드·쉐딩 색·
 // 스와치 색만 타입별로 분기한다.
@@ -784,6 +829,7 @@ export default function App() {
   const [faceFiles, setFaceFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [personalColorFile, setPersonalColorFile] = useState<File | null>(null);
+  const [personalColorFiles, setPersonalColorFiles] = useState<File[]>([]);
   const [personalColorPreview, setPersonalColorPreview] = useState('');
   const [personalColorResult, setPersonalColorResult] = useState<PersonalColorResponse | null>(null);
   const [faceShape, setFaceShape] = useState<FaceShapeResponse | null>(null);
@@ -815,6 +861,10 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
+  const styleMoodRecommendations = useMemo(
+    () => recommendStyleMoods(personalColorResult, faceShape),
+    [personalColorResult, faceShape],
+  );
 
   const highestReadyStep = useMemo(() => {
     if (answer) return 4;
@@ -885,8 +935,9 @@ export default function App() {
   useEffect(() => {
     if (appModule !== 'personal-color' || personalColorStep !== 3) return;
     if (selectedMood || loading === 'style-mood-items') return;
-    selectStyleMood(STYLE_MOODS[0]);
-  }, [appModule, personalColorStep, selectedMood, loading]);
+    const firstRecommendation = styleMoodRecommendations[0]?.mood;
+    if (firstRecommendation) selectStyleMood(firstRecommendation);
+  }, [appModule, personalColorStep, selectedMood, loading, styleMoodRecommendations]);
 
   async function refreshCameraDevices() {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -968,14 +1019,16 @@ export default function App() {
   }
 
   function handlePersonalColorUpload(files: FileList | null) {
-    const file = Array.from(files ?? []).find((item) => item.type.startsWith('image/'));
-    if (!file) {
+    // 여러 장 허용: 첫 장은 미리보기·얼굴형 분석용, 전부는 퍼스널컬러 평균 판정용.
+    const images = Array.from(files ?? []).filter((item) => item.type.startsWith('image/'));
+    if (images.length === 0) {
       setError('퍼스널컬러 분석에 사용할 얼굴 사진을 선택해 주세요.');
       return;
     }
     if (personalColorPreview) URL.revokeObjectURL(personalColorPreview);
-    setPersonalColorFile(file);
-    setPersonalColorPreview(URL.createObjectURL(file));
+    setPersonalColorFile(images[0]);
+    setPersonalColorFiles(images);
+    setPersonalColorPreview(URL.createObjectURL(images[0]));
     setPersonalColorResult(null);
     setPersonalColorItems(null);
     setSelectedMood(null);
@@ -1001,7 +1054,8 @@ export default function App() {
       .catch(() => setFaceShape(null));
 
     try {
-      setPersonalColorResult(await analyzePersonalColor(personalColorFile));
+      const files = personalColorFiles.length > 0 ? personalColorFiles : [personalColorFile];
+      setPersonalColorResult(await analyzePersonalColor(files));
     } catch {
       setError('퍼스널컬러 분석에 실패했습니다. 정면 얼굴 사진과 조명이 충분한 이미지를 다시 선택해 주세요.');
     } finally {
@@ -1564,6 +1618,7 @@ export default function App() {
                 <Typography variant="h5" fontWeight={900}>Step 1. AI 퍼스널컬러 분석</Typography>
                 <Typography color="text.secondary">
                   정면 얼굴 사진을 넣으면 피부 밝기, 웜쿨, 채도 경향을 분석해 타입을 판정합니다.
+                  여러 장(다른 각도·조명)을 함께 넣으면 결과가 더 안정적입니다.
                 </Typography>
                 <Box className="personal-color-preview kiosk-preview">
                   {personalColorPreview ? (
@@ -1578,7 +1633,7 @@ export default function App() {
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                   <Button fullWidth variant="outlined" component="label" startIcon={<ImagePlus size={18} />}>
                     사진 선택
-                    <input hidden type="file" accept="image/*" onChange={(event) => handlePersonalColorUpload(event.target.files)} />
+                    <input hidden multiple type="file" accept="image/*" onChange={(event) => handlePersonalColorUpload(event.target.files)} />
                   </Button>
                   <Button
                     fullWidth
@@ -1590,6 +1645,11 @@ export default function App() {
                     {loading === 'personal-color' ? '분석 중...' : '분석 시작'}
                   </Button>
                 </Stack>
+                {personalColorFiles.length > 0 && (
+                  <Typography variant="caption" color="text.secondary">
+                    {personalColorFiles.length}장 선택됨{personalColorFiles.length === 1 ? ' · 2~3장을 함께 넣으면 판정이 더 안정적입니다.' : ' · 여러 장 평균으로 판정합니다.'}
+                  </Typography>
+                )}
                 {loading === 'personal-color' && <LinearProgress />}
               </Stack>
             </Grid>
@@ -1603,28 +1663,56 @@ export default function App() {
                 </Box>
               ) : (
                 <Stack spacing={2.5}>
-                  <Box className="kiosk-season-card">
+                  <Box
+                    className="kiosk-season-card"
+                    sx={{
+                      // 배경을 진단된 퍼스널컬러 팔레트로 물들인다. 어두운 스크림을 덧대
+                      // 흰 글씨 가독성은 유지하면서 계절색이 은은하게 비치게 한다.
+                      background: `linear-gradient(140deg, rgba(11,17,32,0.82), rgba(11,17,32,0.9)), linear-gradient(140deg, ${personalColorResult.palette.join(', ')})`,
+                    }}
+                  >
                     <Typography variant="overline">Personal color result</Typography>
                     <Typography variant="h3" fontWeight={900}>{personalColorResult.label}</Typography>
                     <Typography color="text.secondary" sx={{ mt: 1 }}>
                       신뢰도 {Math.round(personalColorResult.confidence * 100)}% · {personalColorResult.skin_summary}
                     </Typography>
+                    {personalColorResult.decision_note && (
+                      <Typography color="rgba(255,255,255,0.76)" sx={{ mt: 0.75, fontSize: 13 }}>
+                        {personalColorResult.decision_note}
+                      </Typography>
+                    )}
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
                       <Chip
                         size="small"
-                        label={`분석 품질 ${Math.round((personalColorResult.metrics.capture_quality ?? personalColorResult.confidence) * 100)}%`}
+                        label={`촬영 품질 ${Math.round((personalColorResult.metrics.capture_quality ?? personalColorResult.confidence) * 100)}%`}
                         color={(personalColorResult.metrics.capture_quality ?? personalColorResult.confidence) >= 0.72 ? 'success' : 'warning'}
+                      />
+                      <Chip
+                        size="small"
+                        label={personalColorResult.metrics.face_detected ? '얼굴 crop 적용' : '얼굴 crop 제한'}
+                        variant="outlined"
+                        sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
                       />
                       <Chip
                         size="small"
                         label={personalColorResult.metrics.model_used ? '딥러닝 모델 사용' : '휴리스틱 보조'}
                         variant="outlined"
+                        sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
                       />
                       <Chip
                         size="small"
                         label={personalColorResult.metrics.white_balanced ? '조명 보정 적용' : '조명 보정 제한'}
                         variant="outlined"
+                        sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
                       />
+                      {personalColorResult.alternate_label && (personalColorResult.metrics.season_margin ?? 1) < 0.16 && (
+                        <Chip
+                          size="small"
+                          label={`인접 타입 ${personalColorResult.alternate_label}`}
+                          variant="outlined"
+                          sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
+                        />
+                      )}
                     </Stack>
                   </Box>
 
@@ -1822,18 +1910,20 @@ export default function App() {
       }
 
       if (personalColorStep === 3) {
-        const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? null;
+        const activeRecommendation =
+          styleMoodRecommendations.find((item) => item.mood.id === selectedMood) ?? styleMoodRecommendations[0] ?? null;
+        const activeMood = activeRecommendation?.mood ?? null;
         return (
           <Box className="style-consult-screen">
             <Typography variant="caption" color="primary" fontWeight={900}>AI 스타일 컨설팅</Typography>
             <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
               AI 스타일 컨설턴트가<br />추천하는 메이크업 무드에요!
             </Typography>
-            <Chip className="style-consult-hint" label="추천 무드가 모델 사진에 바로 적용되어 표시됩니다" sx={{ mt: 2 }} />
+            <Chip className="style-consult-hint" label="퍼스널컬러 분석 결과로 상위 3개 무드를 골랐습니다" sx={{ mt: 2 }} />
 
             <Grid container spacing={2} sx={{ mt: 0.5 }}>
-              {STYLE_MOODS.map((mood) => (
-                <Grid item xs={6} sm={4} md={3} key={mood.id}>
+              {styleMoodRecommendations.map(({ mood, reason }, index) => (
+                <Grid item xs={12} sm={4} key={mood.id}>
                   <Box
                     className={`style-mood-card${selectedMood === mood.id ? ' selected' : ''}`}
                     role="button"
@@ -1854,6 +1944,9 @@ export default function App() {
                       <Box className={`style-mood-thumb ${mood.thumbClass}`} />
                     )}
                     <Typography className="style-mood-label" fontWeight={900}>{mood.label}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {index + 1}순위 · {reason}
+                    </Typography>
                   </Box>
                 </Grid>
               ))}
@@ -1862,7 +1955,7 @@ export default function App() {
             {activeMood && (
               <Box sx={{ mt: 3 }}>
                 <Alert severity="success" icon={<Sparkles size={18} />}>
-                  AI가 ‘{activeMood.label}’ 무드를 우선 추천했어요. {activeMood.vibe}
+                  AI가 ‘{activeMood.label}’ 무드를 우선 추천했어요. {activeRecommendation?.reason ?? activeMood.vibe}
                 </Alert>
 
                 <Button
@@ -1968,7 +2061,7 @@ export default function App() {
         );
       }
 
-      const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? STYLE_MOODS[0];
+      const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? styleMoodRecommendations[0]?.mood ?? STYLE_MOODS[0];
       const reportDate = new Date().toISOString().slice(0, 10);
       const quality = Math.round(((personalColorResult?.metrics.capture_quality ?? personalColorResult?.confidence) ?? 0.72) * 100);
       const seasonTag = displaySeasonLabel(personalColorResult?.label);

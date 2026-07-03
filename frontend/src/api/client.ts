@@ -13,9 +13,11 @@ export async function analyzeSkin(file: File, analysisMode: AnalysisMode): Promi
   return data;
 }
 
-export async function analyzePersonalColor(file: File): Promise<PersonalColorResponse> {
+export async function analyzePersonalColor(files: File | File[]): Promise<PersonalColorResponse> {
   const form = new FormData();
-  form.append('image', file);
+  // 여러 장을 보내면 백엔드가 계절 확률을 평균해 판정을 안정화한다.
+  const list = Array.isArray(files) ? files : [files];
+  for (const file of list) form.append('images', file);
   const { data } = await api.post<PersonalColorResponse>('/api/analyze-personal-color', form);
   return data;
 }

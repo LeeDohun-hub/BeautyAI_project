@@ -132,12 +132,17 @@ async def analyze_skin(
 
 
 @router.post("/analyze-personal-color", response_model=PersonalColorResponse)
-async def analyze_personal_color(image: UploadFile = File(...)) -> PersonalColorResponse:
-    if not image.content_type or not image.content_type.startswith("image/"):
+async def analyze_personal_color(images: list[UploadFile] = File(...)) -> PersonalColorResponse:
+    # 여러 장을 받으면 계절 확률·피부 지표를 평균해 여름쿨↔겨울쿨 흔들림을 줄인다(한 장도 허용).
+    if not images:
         raise HTTPException(status_code=400, detail="An image file is required.")
-    image_bytes = await image.read()
+    image_bytes: list[bytes] = []
+    for image in images:
+        if not image.content_type or not image.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="An image file is required.")
+        image_bytes.append(await image.read())
     try:
-        return PersonalColorAnalyzer().analyze(image_bytes)
+        return PersonalColorAnalyzer().analyze_many(image_bytes)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not analyze this image.") from exc
 

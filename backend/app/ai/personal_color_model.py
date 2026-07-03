@@ -53,11 +53,18 @@ class EfficientNetSeasonClassifier:
 
     def predict(self, image: Image.Image) -> tuple[str, float] | None:
         """(계절, 신뢰도) 또는 None. 신뢰도는 softmax 최대 확률."""
+        probs = self.predict_probs(image)
+        if probs is None:
+            return None
+        season = max(probs, key=probs.get)
+        return season, probs[season]
+
+    def predict_probs(self, image: Image.Image) -> dict[str, float] | None:
+        """계절별 softmax 확률 dict 또는 None. 여러 장 평균(앙상블)용으로 전체 분포를 반환한다."""
         if not self.load() or self.model is None or self.transform is None or self.torch is None:
             return None
         tensor = self.transform(image.convert("RGB")).unsqueeze(0)
         with self.torch.no_grad():
             logits = self.model(tensor).squeeze(0)
             probs = self.torch.softmax(logits, dim=0)
-            conf, idx = self.torch.max(probs, dim=0)
-        return SEASONS[int(idx)], float(conf)
+        return {season: float(probs[i]) for i, season in enumerate(SEASONS)}

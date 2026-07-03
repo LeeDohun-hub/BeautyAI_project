@@ -9,6 +9,8 @@ RUN apt-get update \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# 퍼스널컬러/피부 학습 모델(EfficientNet) 추론용 PyTorch(CPU 전용, 용량 최소화).
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision
 COPY app ./app
 
 EXPOSE 8000

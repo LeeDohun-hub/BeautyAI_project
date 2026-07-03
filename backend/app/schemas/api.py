@@ -54,6 +54,9 @@ class PersonalColorResponse(BaseModel):
     tone: str
     subtype: str
     label: str
+    alternate_season: str | None = None
+    alternate_label: str | None = None
+    decision_note: str | None = None
     confidence: float
     skin_summary: str
     palette: list[str]
