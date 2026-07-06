@@ -162,6 +162,9 @@ class ProductOut(BaseModel):
     review_count: int | None = None
     reason_tags: list[str] = Field(default_factory=list)
     evidence_note: str | None = None
+    # 상품 출처. KR 지역에서 네이버 한글 데이터로 보강되면 "naver"가 되어, 입점 리졸버가
+    # 네이버 버튼을 실제 상품 URL로 연결한다(그 외에는 검색 링크).
+    source: str = ""
 
 
 class RecommendationResponse(BaseModel):

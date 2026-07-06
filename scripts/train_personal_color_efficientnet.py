@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
@@ -70,6 +71,8 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--max-samples", type=int, default=0)
+    parser.add_argument("--label-smoothing", type=float, default=0.1, help="0 to disable.")
+    parser.add_argument("--mixup-alpha", type=float, default=0.2, help="Beta alpha; 0 to disable mixup.")
     args = parser.parse_args()
 
     frame = pd.read_csv(args.manifest)
@@ -109,7 +112,7 @@ def main() -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    criterion = nn.CrossEntropyLoss(weight=weights.to(device))
+    criterion = nn.CrossEntropyLoss(weight=weights.to(device), label_smoothing=args.label_smoothing)
     train_loader = DataLoader(SeasonDataset(train_frame, train_transform), batch_size=args.batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(SeasonDataset(val_frame, val_transform), batch_size=args.batch_size, shuffle=False, num_workers=0)
 
@@ -119,7 +122,15 @@ def main() -> int:
         for images, targets in tqdm(train_loader, desc=f"epoch {epoch} train"):
             images, targets = images.to(device), targets.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(images), targets)
+            if args.mixup_alpha > 0 and images.size(0) > 1:
+                # Mixup: 두 샘플을 lam 비율로 섞어 결정경계를 매끄럽게 한다(과적합 완화).
+                lam = float(np.random.beta(args.mixup_alpha, args.mixup_alpha))
+                perm = torch.randperm(images.size(0), device=device)
+                images = lam * images + (1.0 - lam) * images[perm]
+                outputs = model(images)
+                loss = lam * criterion(outputs, targets) + (1.0 - lam) * criterion(outputs, targets[perm])
+            else:
+                loss = criterion(model(images), targets)
             loss.backward()
             optimizer.step()
 

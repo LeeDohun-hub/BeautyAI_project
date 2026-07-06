@@ -59,12 +59,20 @@ class EfficientNetSeasonClassifier:
         season = max(probs, key=probs.get)
         return season, probs[season]
 
-    def predict_probs(self, image: Image.Image) -> dict[str, float] | None:
-        """계절별 softmax 확률 dict 또는 None. 여러 장 평균(앙상블)용으로 전체 분포를 반환한다."""
+    def predict_probs(self, image: Image.Image, *, tta: bool = True) -> dict[str, float] | None:
+        """계절별 softmax 확률 dict 또는 None. 여러 장 평균(앙상블)용으로 전체 분포를 반환한다.
+
+        tta=True 이면 원본 + 수평 뒤집기의 softmax를 평균한다(test-time augmentation).
+        얼굴은 좌우 대칭이라 flip 은 라벨을 바꾸지 않으면서 예측을 안정화한다.
+        """
         if not self.load() or self.model is None or self.transform is None or self.torch is None:
             return None
-        tensor = self.transform(image.convert("RGB")).unsqueeze(0)
+        rgb = image.convert("RGB")
+        views = [rgb]
+        if tta:
+            views.append(rgb.transpose(Image.FLIP_LEFT_RIGHT))
         with self.torch.no_grad():
-            logits = self.model(tensor).squeeze(0)
-            probs = self.torch.softmax(logits, dim=0)
+            batch = self.torch.stack([self.transform(view) for view in views])
+            logits = self.model(batch)
+            probs = self.torch.softmax(logits, dim=1).mean(dim=0)
         return {season: float(probs[i]) for i, season in enumerate(SEASONS)}

@@ -131,9 +131,14 @@ const KR_ITEM_PLATFORM_FILTERS: { value: ItemPlatform; label: string }[] = [
 
 // 라쿠텐 검색 결과 상품의 플랫폼 링크: 라쿠텐은 실제 상품 URL, 나머지는 브랜드+상품명 검색 URL.
 function buildRakutenShopLinks(product: RakutenProduct): Record<string, string> {
-  return product.platform_links && Object.keys(product.platform_links).length
+  const links = product.platform_links && Object.keys(product.platform_links).length
     ? product.platform_links
     : { rakuten: product.product_url };
+
+  return Object.entries(links).reduce<Record<string, string>>((acc, [platform, url]) => {
+    if (url) acc[platform] = url;
+    return acc;
+  }, {});
 }
 
 // 사이트 파비콘 URL (구글 파비콘 서비스 — 실제 브랜드 로고를 안정적으로 제공)
@@ -606,7 +611,7 @@ function RakutenProductCard({
           <Button
             key={platform.key}
             component="a"
-            href={links[platform.key] ?? product.product_url}
+            href={links[platform.key]}
             target="_blank"
             rel="noreferrer"
             size="small"

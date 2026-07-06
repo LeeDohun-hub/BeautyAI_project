@@ -127,7 +127,7 @@ REAL_PRODUCTS = [
         2899,
         "Night cream with retinol and Vitamin B3 (niacinamide). 24-hour hydration and visibly improved skin texture.",
         ["Retinol", "Niacinamide"],
-        "https://www.amazon.com/dp/B07MCJFKQ8",
+        _search("Olay", "Regenerist Retinol 24 Night Face Moisturizer"),
     ),
     (
         "CeraVe",

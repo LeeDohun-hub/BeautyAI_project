@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -32,6 +33,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
+
+os.environ.setdefault("GLOG_minloglevel", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 from app.ai.personal_color_model import EfficientNetSeasonClassifier  # noqa: E402
 from app.services import personal_color_analyzer as analyzer_module  # noqa: E402
@@ -108,6 +112,16 @@ def top2_from_probs(probs: dict[str, float] | None, fallback: str) -> list[str]:
     return [season for season, _ in sorted(probs.items(), key=lambda item: item[1], reverse=True)[:2]]
 
 
+def predict_from_probs(probs: dict[str, float] | None, fallback: str) -> str:
+    if not probs:
+        return fallback
+    return max(probs, key=probs.get)
+
+
+def warmcool(season: str) -> str:
+    return "warm" if season in {"spring", "autumn"} else "cool"
+
+
 def empty_matrix() -> dict[str, dict[str, int]]:
     return {actual: {pred: 0 for pred in SEASONS} for actual in SEASONS}
 
@@ -125,12 +139,30 @@ def write_predictions(path: Path, predictions: list[dict[str, Any]]) -> None:
         "image_path",
         "actual",
         "predicted",
+        "model_predicted",
+        "color_predicted",
         "correct",
+        "model_correct",
+        "color_correct",
         "top2_correct",
+        "model_top2_correct",
+        "color_top2_correct",
+        "warmcool_correct",
+        "model_warmcool_correct",
+        "color_warmcool_correct",
         "confidence",
         "top1_prob",
         "top2_prob",
+        "model_top1_prob",
+        "color_top1_prob",
         "season_margin",
+        "color_vector_used",
+        "skin_vector_quality",
+        "lab_l",
+        "lab_a",
+        "lab_b",
+        "hsv_s",
+        "landmark_skin_samples",
         "alternate_label",
         "model_used",
         "face_detected",
@@ -180,6 +212,11 @@ def main() -> int:
     errors: list[dict[str, str]] = []
     label_counts: Counter[str] = Counter()
     predicted_counts: Counter[str] = Counter()
+    method_counts: dict[str, Counter[str]] = {
+        "blended": Counter(),
+        "model": Counter(),
+        "color": Counter(),
+    }
     model_used_count = 0
     face_detected_count = 0
 
@@ -205,14 +242,32 @@ def main() -> int:
 
         predicted = response.season
         probs = reading.get("season_probs")
+        model_probs = reading.get("model_season_probs")
+        color_probs = reading.get("color_season_probs")
         ordered_probs = sorted((probs or {}).items(), key=lambda item: item[1], reverse=True)
+        ordered_model_probs = sorted((model_probs or {}).items(), key=lambda item: item[1], reverse=True)
+        ordered_color_probs = sorted((color_probs or {}).items(), key=lambda item: item[1], reverse=True)
+        model_predicted = predict_from_probs(model_probs, predicted)
+        color_predicted = predict_from_probs(color_probs, predicted)
         top2 = top2_from_probs(probs, predicted)
+        model_top2 = top2_from_probs(model_probs, model_predicted)
+        color_top2 = top2_from_probs(color_probs, color_predicted)
         correct = predicted == actual
+        model_correct = model_predicted == actual
+        color_correct = color_predicted == actual
         top2_correct = actual in top2
+        model_top2_correct = actual in model_top2
+        color_top2_correct = actual in color_top2
+        warmcool_correct = warmcool(predicted) == warmcool(actual)
+        model_warmcool_correct = warmcool(model_predicted) == warmcool(actual)
+        color_warmcool_correct = warmcool(color_predicted) == warmcool(actual)
 
         matrix[actual][predicted] += 1
         label_counts[actual] += 1
         predicted_counts[predicted] += 1
+        method_counts["blended"][predicted] += 1
+        method_counts["model"][model_predicted] += 1
+        method_counts["color"][color_predicted] += 1
         model_used_count += int(response.metrics.get("model_used", 0.0) >= 1.0)
         face_detected_count += int(response.metrics.get("face_detected", 0.0) >= 1.0)
         predictions.append(
@@ -220,12 +275,30 @@ def main() -> int:
                 "image_path": str(image_path),
                 "actual": actual,
                 "predicted": predicted,
+                "model_predicted": model_predicted,
+                "color_predicted": color_predicted,
                 "correct": int(correct),
+                "model_correct": int(model_correct),
+                "color_correct": int(color_correct),
                 "top2_correct": int(top2_correct),
+                "model_top2_correct": int(model_top2_correct),
+                "color_top2_correct": int(color_top2_correct),
+                "warmcool_correct": int(warmcool_correct),
+                "model_warmcool_correct": int(model_warmcool_correct),
+                "color_warmcool_correct": int(color_warmcool_correct),
                 "confidence": response.confidence,
                 "top1_prob": round(float(ordered_probs[0][1]), 4) if ordered_probs else "",
                 "top2_prob": round(float(ordered_probs[1][1]), 4) if len(ordered_probs) > 1 else "",
+                "model_top1_prob": round(float(ordered_model_probs[0][1]), 4) if ordered_model_probs else "",
+                "color_top1_prob": round(float(ordered_color_probs[0][1]), 4) if ordered_color_probs else "",
                 "season_margin": response.metrics.get("season_margin", ""),
+                "color_vector_used": response.metrics.get("color_vector_used", 0.0),
+                "skin_vector_quality": response.metrics.get("skin_vector_quality", ""),
+                "lab_l": response.metrics.get("lab_l", ""),
+                "lab_a": response.metrics.get("lab_a", ""),
+                "lab_b": response.metrics.get("lab_b", ""),
+                "hsv_s": response.metrics.get("hsv_s", ""),
+                "landmark_skin_samples": response.metrics.get("landmark_skin_samples", ""),
                 "alternate_label": response.alternate_label or "",
                 "model_used": response.metrics.get("model_used", 0.0),
                 "face_detected": response.metrics.get("face_detected", 0.0),
@@ -239,6 +312,18 @@ def main() -> int:
     total = len(predictions)
     correct_total = sum(int(row["correct"]) for row in predictions)
     top2_total = sum(int(row["top2_correct"]) for row in predictions)
+    warmcool_total = sum(int(row["warmcool_correct"]) for row in predictions)
+    method_metrics = {}
+    for method, prefix in (("blended", ""), ("model", "model_"), ("color", "color_")):
+        method_correct = sum(int(row[f"{prefix}correct"]) for row in predictions)
+        method_top2 = sum(int(row[f"{prefix}top2_correct"]) for row in predictions)
+        method_warmcool = sum(int(row[f"{prefix}warmcool_correct"]) for row in predictions)
+        method_metrics[method] = {
+            "accuracy": round(method_correct / total, 4) if total else 0.0,
+            "top2_accuracy": round(method_top2 / total, 4) if total else 0.0,
+            "warmcool_accuracy": round(method_warmcool / total, 4) if total else 0.0,
+            "predicted_counts": dict(method_counts[method]),
+        }
     low_margin_total = sum(
         1
         for row in predictions
@@ -263,6 +348,8 @@ def main() -> int:
         "errors": len(errors),
         "accuracy": round(correct_total / total, 4) if total else 0.0,
         "top2_accuracy": round(top2_total / total, 4) if total else 0.0,
+        "warmcool_accuracy": round(warmcool_total / total, 4) if total else 0.0,
+        "method_metrics": method_metrics,
         "low_margin_rate": round(low_margin_total / total, 4) if total else 0.0,
         "low_margin_count": low_margin_total,
         "model_used_rate": round(model_used_count / total, 4) if total else 0.0,
@@ -290,7 +377,16 @@ def main() -> int:
     errors_path.write_text(json.dumps(errors, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"evaluated={total} errors={len(errors)}")
-    print(f"accuracy={report['accuracy']:.4f} top2_accuracy={report['top2_accuracy']:.4f}")
+    print(
+        f"accuracy={report['accuracy']:.4f} top2_accuracy={report['top2_accuracy']:.4f} "
+        f"warmcool_accuracy={report['warmcool_accuracy']:.4f}"
+    )
+    for method, metrics in method_metrics.items():
+        print(
+            f"{method}: accuracy={metrics['accuracy']:.4f} "
+            f"top2={metrics['top2_accuracy']:.4f} warmcool={metrics['warmcool_accuracy']:.4f} "
+            f"predicted={metrics['predicted_counts']}"
+        )
     print(f"model_used_rate={report['model_used_rate']:.4f} face_detected_rate={report['face_detected_rate']:.4f}")
     print(f"report: {report_path}")
     print(f"matrix: {matrix_path}")

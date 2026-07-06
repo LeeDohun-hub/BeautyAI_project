@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+import colorsys
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -156,22 +157,32 @@ class PersonalColorAnalyzer:
         # 조명 색온도 캐스트 제거: 눈흰자(공막) 기준 색항상성. 같은 사람이 사진마다
         # 봄웜↔가을웜으로 뒤집히는 주원인(warmth 흔들림)을 줄인다. 눈흰자를 못 찾으면 원본 유지.
         balanced_rgb, white_balanced = self._white_balance(model_rgb)
-        skin_pixels = self._skin_pixels(balanced_rgb)
+        landmark_pixels, landmark_count = self._landmark_skin_pixels(balanced_rgb)
+        skin_pixels = landmark_pixels if landmark_pixels.size else self._skin_pixels(balanced_rgb)
         if skin_pixels.size == 0:
             skin_pixels = self._center_pixels(balanced_rgb)
 
-        mean_rgb = skin_pixels.mean(axis=0)
-        season_probs = self._predict_season_probs(model_rgb)
+        color_vector = self._skin_color_vector(skin_pixels)
+        mean_rgb = color_vector["mean_rgb"]
+        model_season_probs = self._predict_season_probs(model_rgb)
+        color_season_probs = self._color_season_probs(color_vector)
+        season_probs = self._blend_season_probs(model_season_probs, color_season_probs, color_vector)
         return {
             "brightness": float(np.mean(mean_rgb) / 255),
             "chroma": float((np.max(mean_rgb) - np.min(mean_rgb)) / 255),
-            "warmth": float(((mean_rgb[0] - mean_rgb[2]) + 0.42 * (mean_rgb[1] - mean_rgb[2])) / 255),
+            "warmth": float(color_vector["warmth"]),
             "redness": float((mean_rgb[0] - mean_rgb[1]) / 255),
             # 계절 확률은 WB 미적용 얼굴 crop으로 예측해 배경/옷/머리색 영향을 줄인다.
             "season_probs": season_probs,
+            "model_season_probs": model_season_probs,
+            "color_season_probs": color_season_probs,
+            "color_vector": color_vector,
+            "landmark_skin_samples": float(landmark_count),
             "white_balanced": white_balanced,
             "face_detected": face_detected,
-            "sample_weight": self._reading_weight(face_detected, white_balanced, season_probs),
+            "sample_weight": self._reading_weight(
+                face_detected, white_balanced, season_probs, color_vector["quality"], landmark_count
+            ),
         }
 
     def _combine_readings(self, readings: list[dict]) -> dict:
@@ -180,12 +191,23 @@ class PersonalColorAnalyzer:
         weight_sum = max(1e-6, sum(weights))
         combined: dict = {
             key: sum(r[key] * w for r, w in zip(readings, weights)) / weight_sum
-            for key in ("brightness", "chroma", "warmth", "redness")
+            for key in ("brightness", "chroma", "warmth", "redness", "landmark_skin_samples")
         }
+        combined["color_vector"] = self._combine_color_vectors(readings, weights, weight_sum)
         prob_items = [
             (r["season_probs"], float(r.get("sample_weight", 1.0)))
             for r in readings
             if r["season_probs"] is not None
+        ]
+        model_prob_items = [
+            (r["model_season_probs"], float(r.get("sample_weight", 1.0)))
+            for r in readings
+            if r.get("model_season_probs") is not None
+        ]
+        color_prob_items = [
+            (r["color_season_probs"], float(r.get("sample_weight", 1.0)))
+            for r in readings
+            if r.get("color_season_probs") is not None
         ]
         if prob_items:
             prob_weight_sum = max(1e-6, sum(w for _, w in prob_items))
@@ -200,6 +222,8 @@ class PersonalColorAnalyzer:
         else:
             combined["season_probs"] = None
             combined["season_consistency"] = 0.0
+        combined["model_season_probs"] = self._weighted_probability_average(model_prob_items)
+        combined["color_season_probs"] = self._weighted_probability_average(color_prob_items)
         combined["white_balanced"] = any(r["white_balanced"] for r in readings)
         combined["face_detected"] = any(r.get("face_detected") for r in readings)
         combined["sample_weight"] = weight_sum / len(readings)
@@ -211,6 +235,9 @@ class PersonalColorAnalyzer:
         warmth = reading["warmth"]
         redness = reading["redness"]
         season_probs = reading["season_probs"]
+        model_season_probs = reading.get("model_season_probs")
+        color_season_probs = reading.get("color_season_probs")
+        color_vector = reading.get("color_vector") or {}
         white_balanced = reading["white_balanced"]
         face_detected = bool(reading.get("face_detected", False))
         season_consistency = float(reading.get("season_consistency", 0.0))
@@ -223,29 +250,30 @@ class PersonalColorAnalyzer:
             else (ordered_seasons[0][1] if ordered_seasons else 0.0)
         )
 
-        # 웜/쿨(계절)은 주관적이라 학습 모델이 있으면 모델로 결정, 없으면 warmth 휴리스틱.
+        # 계절은 CNN 단독이 아니라 피부색 벡터(Lab/HSV)와 블렌딩한 확률로 결정한다.
         # subtype(밝기/선명도)은 측정 가능한 축이라 WB 보정 지표로 계산한다.
         if season_probs is not None:
             season = max(season_probs, key=season_probs.get)
             model_conf = season_probs[season]
             tone = SEASON_TONE[season]
             subtype = self._subtype_for_model_season(season, brightness, chroma)
-            model_used = True
+            model_used = model_season_probs is not None
             if alternate_season:
                 alternate_profile = self._profile_for_season(alternate_season, brightness, chroma)
         else:
             tone = "warm" if warmth >= 0.035 else "cool"
             subtype = self._subtype_from_metrics(brightness, chroma, tone)
-            model_used = False
+            model_used = model_season_probs is not None
 
         profile = PROFILES.get((tone, subtype)) or PROFILES[(tone, "soft")]
         decision_note = self._decision_note(profile, alternate_profile, season_margin, samples, season_consistency)
-        if model_used:
+        color_quality = float(color_vector.get("quality", 0.0))
+        if season_probs is not None:
             if samples > 1:
-                confidence = 0.55 * model_conf + 0.35 * season_consistency + (0.1 if face_detected else 0.0)
+                confidence = 0.5 * model_conf + 0.25 * season_consistency + 0.15 * color_quality + (0.1 if face_detected else 0.0)
                 confidence = min(0.97, max(0.6, confidence))
             else:
-                confidence = min(0.97, max(0.6, model_conf))
+                confidence = min(0.97, max(0.58, 0.78 * model_conf + 0.22 * color_quality))
         else:
             confidence = min(0.9, max(0.56, 0.62 + abs(warmth) * 1.8 + abs(brightness - 0.58) * 0.22 + chroma * 0.24))
         summary = self._summary(profile, brightness, chroma, warmth, redness, model_used)
@@ -284,7 +312,12 @@ class PersonalColorAnalyzer:
                 "sample_weight": round(float(reading.get("sample_weight", 1.0)), 3),
                 "season_consistency": round(season_consistency, 3),
                 "season_margin": round(season_margin, 3),
+                "color_vector_used": 1.0 if color_season_probs else 0.0,
+                "landmark_skin_samples": round(float(reading.get("landmark_skin_samples", 0.0)), 1),
+                **self._color_vector_metrics(color_vector),
                 **self._season_probability_metrics(season_probs),
+                **self._season_probability_metrics(model_season_probs, "model_prob"),
+                **self._season_probability_metrics(color_season_probs, "color_prob"),
             },
         )
 
@@ -320,10 +353,119 @@ class PersonalColorAnalyzer:
             return []
         return sorted(season_probs.items(), key=lambda item: item[1], reverse=True)
 
-    def _season_probability_metrics(self, season_probs: dict[str, float] | None) -> dict[str, float]:
+    def _season_probability_metrics(self, season_probs: dict[str, float] | None, prefix: str = "prob") -> dict[str, float]:
         if not season_probs:
             return {}
-        return {f"prob_{season}": round(float(prob), 4) for season, prob in season_probs.items()}
+        return {f"{prefix}_{season}": round(float(prob), 4) for season, prob in season_probs.items()}
+
+    def _weighted_probability_average(
+        self, prob_items: list[tuple[dict[str, float] | None, float]]
+    ) -> dict[str, float] | None:
+        items = [(probs, weight) for probs, weight in prob_items if probs]
+        if not items:
+            return None
+        weight_sum = max(1e-6, sum(weight for _, weight in items))
+        return {
+            season: sum(probs[season] * weight for probs, weight in items) / weight_sum
+            for season in items[0][0]
+        }
+
+    def _blend_season_probs(
+        self,
+        model_probs: dict[str, float] | None,
+        color_probs: dict[str, float] | None,
+        color_vector: dict,
+    ) -> dict[str, float] | None:
+        if model_probs is None:
+            return color_probs
+        if color_probs is None:
+            return model_probs
+
+        color_quality = float(color_vector.get("quality", 0.0))
+        model_top = max(model_probs, key=model_probs.get)
+        color_top = max(color_probs, key=color_probs.get)
+        low_chroma_winter_shift = self._looks_like_low_chroma_winter_shift(model_top, color_top, color_vector)
+        if low_chroma_winter_shift:
+            return color_probs
+        golden_autumn_shift = self._looks_like_golden_autumn_shift(model_top, color_top, color_vector)
+        if golden_autumn_shift:
+            return color_probs
+        ordered = sorted(model_probs.values(), reverse=True)
+        model_margin = ordered[0] - (ordered[1] if len(ordered) > 1 else 0.0)
+        color_weight = 0.06 + 0.16 * min(1.0, max(0.0, color_quality))
+        if model_margin < 0.08:
+            color_weight += 0.05
+        elif model_margin > 0.24:
+            color_weight -= 0.08
+        color_weight = min(0.24, max(0.04, color_weight))
+        model_weight = 1.0 - color_weight
+        blended = {
+            season: model_probs[season] * model_weight + color_probs.get(season, 0.0) * color_weight
+            for season in model_probs
+        }
+        total = max(1e-6, sum(blended.values()))
+        return {season: value / total for season, value in blended.items()}
+
+    def _looks_like_low_chroma_winter_shift(self, model_top: str, color_top: str, color_vector: dict) -> bool:
+        """Cross-dataset faces often collapse to winter when the photo is low-chroma.
+        In that narrow case, trust the Lab/HSV warm signal more strongly."""
+        if model_top != "winter" or color_top not in {"spring", "autumn"}:
+            return False
+        return (
+            float(color_vector.get("hsv_s", 1.0)) <= 0.15
+            and float(color_vector.get("lab_a", 99.0)) <= 5.0
+            and float(color_vector.get("lab_b", 99.0)) <= 18.0
+        )
+
+    def _looks_like_golden_autumn_shift(self, model_top: str, color_top: str, color_vector: dict) -> bool:
+        """CNN often reads deep golden autumn skin as winter (autumn_as_winter is a
+        top confusion). When the CNN says winter but the Lab yellow axis is clearly
+        golden (high b*) and the color vector says autumn, trust the warm autumn read.
+        Complementary to the low-chroma winter shift, which covers pale low-b* cases
+        (lab_b <= 18); this one covers golden high-b* cases (lab_b >= 20)."""
+        if model_top != "winter" or color_top != "autumn":
+            return False
+        return float(color_vector.get("lab_b", -99.0)) >= 20.0
+
+    def _combine_color_vectors(self, readings: list[dict], weights: list[float], weight_sum: float) -> dict:
+        keys = (
+            "lab_l",
+            "lab_a",
+            "lab_b",
+            "lab_chroma",
+            "hsv_h",
+            "hsv_s",
+            "hsv_v",
+            "warmth",
+            "quality",
+            "skin_density",
+            "pixel_count",
+        )
+        combined = {
+            key: sum(float(r["color_vector"].get(key, 0.0)) * w for r, w in zip(readings, weights)) / weight_sum
+            for key in keys
+        }
+        combined["mean_rgb"] = sum(
+            np.asarray(r["color_vector"].get("mean_rgb", np.zeros(3)), dtype=np.float32) * w
+            for r, w in zip(readings, weights)
+        ) / weight_sum
+        return combined
+
+    def _color_vector_metrics(self, color_vector: dict) -> dict[str, float]:
+        if not color_vector:
+            return {}
+        return {
+            "lab_l": round(float(color_vector.get("lab_l", 0.0)), 3),
+            "lab_a": round(float(color_vector.get("lab_a", 0.0)), 3),
+            "lab_b": round(float(color_vector.get("lab_b", 0.0)), 3),
+            "lab_chroma": round(float(color_vector.get("lab_chroma", 0.0)), 3),
+            "hsv_h": round(float(color_vector.get("hsv_h", 0.0)), 3),
+            "hsv_s": round(float(color_vector.get("hsv_s", 0.0)), 3),
+            "hsv_v": round(float(color_vector.get("hsv_v", 0.0)), 3),
+            "skin_vector_quality": round(float(color_vector.get("quality", 0.0)), 3),
+            "skin_density": round(float(color_vector.get("skin_density", 0.0)), 3),
+            "skin_pixel_count": round(float(color_vector.get("pixel_count", 0.0)), 1),
+        }
 
     def _decision_note(
         self,
@@ -389,10 +531,14 @@ class PersonalColorAnalyzer:
         face_detected: bool,
         white_balanced: bool,
         season_probs: dict[str, float] | None,
+        color_quality: float = 0.0,
+        landmark_count: int = 0,
     ) -> float:
         weight = 1.0
         weight += 0.35 if face_detected else -0.25
         weight += 0.15 if white_balanced else -0.05
+        weight += min(0.22, max(0.0, color_quality) * 0.22)
+        weight += min(0.18, landmark_count / max(1, len(self._SKIN_SAMPLE_LANDMARKS)) * 0.18)
         if season_probs:
             ordered = sorted(season_probs.values(), reverse=True)
             margin = ordered[0] - (ordered[1] if len(ordered) > 1 else 0.0)
@@ -440,6 +586,14 @@ class PersonalColorAnalyzer:
     # 얼굴 외곽 + 이마/턱/양 볼 주요 랜드마크. crop은 옷/배경/염색모 영향 축소용이다.
     _FACE_CROP_LANDMARKS = (
         10, 152, 234, 454, 127, 356, 93, 323, 58, 288, 172, 397, 136, 365, 148, 377
+    )
+
+    # 뺨/이마/턱/코 주변의 피부 대표점. 입술, 눈썹, 머리카락 영역은 의도적으로 제외한다.
+    _SKIN_SAMPLE_LANDMARKS = (
+        10, 151, 9, 8, 168, 197, 195, 5, 4, 1,
+        50, 101, 118, 187, 205, 36, 203, 177,
+        280, 330, 347, 411, 425, 266, 423, 401,
+        152, 175, 199, 200, 201, 421,
     )
 
     def _face_crop(self, rgb: np.ndarray) -> tuple[np.ndarray, bool]:
@@ -582,14 +736,52 @@ class PersonalColorAnalyzer:
         image.thumbnail((720, 720))
         return np.asarray(image, dtype=np.float32)
 
+    def _landmark_skin_pixels(self, rgb: np.ndarray) -> tuple[np.ndarray, int]:
+        try:
+            import mediapipe as mp
+        except Exception:
+            return np.empty((0, 3), dtype=np.float32), 0
+        img = np.ascontiguousarray(rgb.astype(np.uint8))
+        h, w = img.shape[:2]
+        try:
+            with mp.solutions.face_mesh.FaceMesh(
+                static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5
+            ) as mesh:
+                result = mesh.process(img)
+        except Exception:
+            return np.empty((0, 3), dtype=np.float32), 0
+        if not result.multi_face_landmarks:
+            return np.empty((0, 3), dtype=np.float32), 0
+
+        lm = result.multi_face_landmarks[0].landmark
+        radius = max(3, int(min(h, w) * 0.018))
+        chunks: list[np.ndarray] = []
+        for idx in self._SKIN_SAMPLE_LANDMARKS:
+            cx = int(np.clip(lm[idx].x * w, 0, w - 1))
+            cy = int(np.clip(lm[idx].y * h, 0, h - 1))
+            patch = rgb[max(0, cy - radius): min(h, cy + radius + 1), max(0, cx - radius): min(w, cx + radius + 1)]
+            pixels = self._filter_skin_pixels(patch)
+            if len(pixels) >= 8:
+                chunks.append(pixels)
+        if not chunks:
+            return np.empty((0, 3), dtype=np.float32), 0
+        pixels = np.concatenate(chunks).astype(np.float32)
+        return self._trim_luminance_outliers(pixels), len(chunks)
+
     def _skin_pixels(self, rgb: np.ndarray) -> np.ndarray:
         height, width, _ = rgb.shape
         y1, y2 = int(height * 0.18), int(height * 0.82)
         x1, x2 = int(width * 0.2), int(width * 0.8)
         crop = rgb[y1:y2, x1:x2]
-        r, g, b = crop[..., 0], crop[..., 1], crop[..., 2]
-        maxc = np.max(crop, axis=2)
-        minc = np.min(crop, axis=2)
+        pixels = self._filter_skin_pixels(crop)
+        return self._trim_luminance_outliers(pixels)
+
+    def _filter_skin_pixels(self, rgb: np.ndarray) -> np.ndarray:
+        if rgb.size == 0:
+            return np.empty((0, 3), dtype=np.float32)
+        r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+        maxc = np.max(rgb, axis=2)
+        minc = np.min(rgb, axis=2)
         mask = (
             (r > 70)
             & (g > 45)
@@ -601,12 +793,98 @@ class PersonalColorAnalyzer:
             & (g < 235)
             & (b < 230)
         )
-        pixels = crop[mask]
+        return rgb[mask].astype(np.float32)
+
+    def _trim_luminance_outliers(self, pixels: np.ndarray) -> np.ndarray:
         if len(pixels) > 1800:
             luminance = pixels @ np.array([0.2126, 0.7152, 0.0722])
             lo, hi = np.percentile(luminance, [15, 85])
             pixels = pixels[(luminance >= lo) & (luminance <= hi)]
         return pixels
+
+    def _skin_color_vector(self, pixels: np.ndarray) -> dict:
+        pixels = pixels.reshape(-1, 3).astype(np.float32)
+        if len(pixels) == 0:
+            pixels = np.array([[160.0, 120.0, 105.0]], dtype=np.float32)
+        mean_rgb = pixels.mean(axis=0)
+        lab = self._rgb_to_lab(pixels)
+        lab_mean = lab.mean(axis=0)
+        hsv = self._rgb_to_hsv(pixels)
+        hsv_mean = hsv.mean(axis=0)
+        lab_chroma = float(np.sqrt(lab_mean[1] ** 2 + lab_mean[2] ** 2))
+        warmth = float(((mean_rgb[0] - mean_rgb[2]) + 0.42 * (mean_rgb[1] - mean_rgb[2])) / 255)
+        density = min(1.0, len(pixels) / 2600)
+        luminance = pixels @ np.array([0.2126, 0.7152, 0.0722])
+        spread = float(np.std(luminance) / 255)
+        quality = min(1.0, max(0.18, 0.35 + density * 0.45 + (0.18 if spread < 0.14 else 0.06)))
+        return {
+            "mean_rgb": mean_rgb,
+            "lab_l": float(lab_mean[0]),
+            "lab_a": float(lab_mean[1]),
+            "lab_b": float(lab_mean[2]),
+            "lab_chroma": lab_chroma,
+            "hsv_h": float(hsv_mean[0]),
+            "hsv_s": float(hsv_mean[1]),
+            "hsv_v": float(hsv_mean[2]),
+            "warmth": warmth,
+            "quality": quality,
+            "skin_density": density,
+            "pixel_count": float(len(pixels)),
+        }
+
+    def _color_season_probs(self, vector: dict) -> dict[str, float] | None:
+        if not vector:
+            return None
+        lab_l = float(vector["lab_l"])
+        lab_b = float(vector["lab_b"])
+        lab_chroma = float(vector["lab_chroma"])
+        hsv_s = float(vector["hsv_s"])
+        hsv_v = float(vector["hsv_v"])
+        warmth = float(vector["warmth"])
+
+        warm_prob = self._clamp(0.5 + lab_b / 42 + warmth * 1.35, 0.08, 0.92)
+        light_axis = self._clamp((lab_l - 42) / 34, 0.05, 0.95)
+        vivid_axis = self._clamp(0.58 * hsv_s + 0.42 * (lab_chroma / 42), 0.05, 0.95)
+        deep_axis = self._clamp(1.0 - (0.68 * light_axis + 0.32 * hsv_v), 0.05, 0.95)
+        muted_axis = self._clamp(1.0 - vivid_axis, 0.05, 0.95)
+
+        scores = {
+            "spring": warm_prob * (0.6 * light_axis + 0.4 * vivid_axis),
+            "autumn": warm_prob * (0.54 * deep_axis + 0.46 * muted_axis),
+            "summer": (1.0 - warm_prob) * (0.58 * light_axis + 0.42 * muted_axis),
+            "winter": (1.0 - warm_prob) * (0.52 * deep_axis + 0.48 * vivid_axis),
+        }
+        smoothed = {season: score + 0.035 for season, score in scores.items()}
+        total = max(1e-6, sum(smoothed.values()))
+        return {season: score / total for season, score in smoothed.items()}
+
+    def _rgb_to_lab(self, pixels: np.ndarray) -> np.ndarray:
+        rgb = np.clip(pixels / 255.0, 0.0, 1.0)
+        linear = np.where(rgb > 0.04045, ((rgb + 0.055) / 1.055) ** 2.4, rgb / 12.92)
+        xyz = linear @ np.array(
+            [
+                [0.4124564, 0.3575761, 0.1804375],
+                [0.2126729, 0.7151522, 0.0721750],
+                [0.0193339, 0.1191920, 0.9503041],
+            ],
+            dtype=np.float32,
+        ).T
+        xyz = xyz / np.array([0.95047, 1.0, 1.08883], dtype=np.float32)
+        epsilon = 216 / 24389
+        kappa = 24389 / 27
+        f = np.where(xyz > epsilon, np.cbrt(xyz), (kappa * xyz + 16) / 116)
+        l = 116 * f[:, 1] - 16
+        a = 500 * (f[:, 0] - f[:, 1])
+        b = 200 * (f[:, 1] - f[:, 2])
+        return np.stack([l, a, b], axis=1)
+
+    def _rgb_to_hsv(self, pixels: np.ndarray) -> np.ndarray:
+        rgb = np.clip(pixels / 255.0, 0.0, 1.0)
+        hsv = np.array([colorsys.rgb_to_hsv(float(r), float(g), float(b)) for r, g, b in rgb], dtype=np.float32)
+        return hsv
+
+    def _clamp(self, value: float, low: float, high: float) -> float:
+        return min(high, max(low, float(value)))
 
     def _center_pixels(self, rgb: np.ndarray) -> np.ndarray:
         height, width, _ = rgb.shape

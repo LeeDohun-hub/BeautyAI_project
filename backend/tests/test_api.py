@@ -1,11 +1,13 @@
 from collections.abc import Generator
 from io import BytesIO
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.main import app
+from app.services.personal_color_analyzer import PersonalColorAnalyzer
 
 
 @pytest.fixture()
@@ -96,3 +98,22 @@ def test_body_recommendation_avoids_strong_actives(client: TestClient) -> None:
     assert not product_ingredients.intersection(
         {"Retinol", "Salicylic Acid", "Glycolic Acid", "Lactic Acid"}
     )
+
+
+def test_personal_color_reports_color_vector_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    analyzer = PersonalColorAnalyzer()
+    monkeypatch.setattr(analyzer, "_face_crop", lambda rgb: (rgb, False))
+    monkeypatch.setattr(analyzer, "_white_balance", lambda rgb: (rgb, False))
+    monkeypatch.setattr(analyzer, "_landmark_skin_pixels", lambda rgb: (np.empty((0, 3), dtype=np.float32), 0))
+    monkeypatch.setattr(analyzer, "_predict_season_probs", lambda rgb: None)
+
+    image = Image.new("RGB", (96, 96), (190, 145, 125))
+    payload = BytesIO()
+    image.save(payload, format="JPEG")
+
+    result = analyzer.analyze(payload.getvalue())
+
+    assert result.metrics["color_vector_used"] == 1.0
+    assert result.metrics["skin_vector_quality"] > 0
+    assert {"lab_l", "lab_a", "lab_b", "hsv_s"}.issubset(result.metrics)
+    assert sum(result.metrics[f"prob_{season}"] for season in ("spring", "summer", "autumn", "winter")) == pytest.approx(1.0, abs=0.002)

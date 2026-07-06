@@ -29,6 +29,8 @@ from app.services.chatbot import answer_skin_question
 from app.services.body_skin_analyzer import BodySkinAnalyzer
 from app.services.image_router import get_skin_image_router
 from app.services.naver_client import NaverClient
+from app.services.naver_kr_enricher import enrich_products_with_naver_kr
+from app.services.oliveyoung_availability import prune_global_oliveyoung, unavailable_on_global_ids
 from app.services.personal_color_analyzer import PersonalColorAnalyzer
 from app.services.platform_resolver import dedup_by_line, resolve_product_platforms
 from app.services.product_image_provider import fill_missing_images
@@ -192,10 +194,26 @@ def recommend(payload: RecommendationRequest, db: Session = Depends(get_db)) -> 
             payload.user_id,
             "all",
         )
+    # KR 국내몰은 Cloudflare로 직접 검증이 불가하다. 올리브영은 제조사 상품을 글로벌몰·국내몰
+    # 양쪽에 함께 올리는 경향이 있어, 글로벌몰 조회를 KR 입점 대리 신호로 쓴다. 반드시 네이버
+    # 한글 보강 '전'(영문 정체성)에 판정해야 영문 글로벌몰과 매칭된다.
+    oliveyoung_hidden_ids = (
+        unavailable_on_global_ids(response.products) if region == "kr" else set()
+    )
+    # KR 지역: 영문 카탈로그 상품을 네이버 한글 데이터(브랜드/상품명/URL/이미지)로 보강한다.
+    # 퍼스널컬러 카드처럼 한글로 표시·검색되게 해 한국 플랫폼(올리브영 등) 조회 성공률을 높인다.
+    if region == "kr":
+        enrich_products_with_naver_kr(response.products)
     # 퍼스널컬러 화면과 동일하게: 지역별 입점 리졸버로 플랫폼 버튼을 통일한다.
     # KR=네이버/Amazon.com/올리브영 국내몰, JP=라쿠텐/Amazon.co.jp/올리브영 글로벌.
     for product in response.products:
-        resolve_product_platforms(product, region)
+        resolve_product_platforms(
+            product, region, hide_oliveyoung=id(product) in oliveyoung_hidden_ids
+        )
+    # 올리브영 글로벌몰(JP 지역): 실제 입점 검증 — 0건이면 버튼 제거, 있으면 검증된 검색어로 교체.
+    # 국내몰(KR)은 Cloudflare 403으로 검증 불가라 개선 쿼리로 항상 표시한다(prune 대상 아님).
+    if region == "jp":
+        prune_global_oliveyoung(response.products)
     # 카드 이미지 보강(KR=네이버, JP=라쿠텐 검색 이미지, 이미 있으면 유지).
     fill_missing_images(response.products, region)
     return response
@@ -324,6 +342,9 @@ def personal_color_item_match(
     # 아마존/올리브영 라인 검색링크)을 채운다. 네트워크 호출은 top N에만 한정한다.
     for product in products:
         resolve_product_platforms(product, region)
+    # 올리브영 글로벌몰(JP): 실제 입점 검증 — 조회 0건인 상품은 올리브영 버튼을 숨긴다.
+    if region == "jp":
+        prune_global_oliveyoung(products)
 
     # 이미지가 없는 상품은 지역별 실시간 검색(KR=네이버, JP=라쿠텐)으로 대표 이미지를 보강한다.
     fill_missing_images(products, region)
