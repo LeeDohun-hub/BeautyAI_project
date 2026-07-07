@@ -752,6 +752,15 @@ def recommend_products(
     knowledge_match = None
     knowledge_targets: set[str] = set()
     knowledge_note = ""
+    # 사용자의 '실제' 피부 고민 타깃 = 사진 점수가 유의미한 타깃 ∪ 설문에서 고른 고민 타깃.
+    # 이걸로 랭킹을 몰아줘야 사진이 달라지면 추천도 달라진다(예전엔 infer_ingredients가
+    # 사실상 6개 타깃 전부를 반환해 '타깃 많은 브로드 상품'만 상위 독식했다).
+    score_map = scores.model_dump()
+    user_concern_targets: set[str] = {name for name, value in score_map.items() if value >= 40}
+    for concern in list(survey.concerns) + list(survey.makeup_concerns) + list(survey.area_concerns) + list(survey.male_extras):
+        for target in CONCERN_TARGET_MAP.get(concern, [concern.lower()]):
+            if target in score_map:
+                user_concern_targets.add(target)
     if analysis_mode != "body":
         knowledge_context = {"survey": survey.model_dump(), "scores": scores.model_dump()}
         knowledge_match, knowledge_targets, knowledge_note = skincare_recommendation_context(
@@ -807,27 +816,38 @@ def recommend_products(
             evidence_note = None
         else:
             matched_targets = ingredient_targets.intersection(product_targets)
-            ingredient_match = len(matched_targets) * 6
             skin_type_match = 8 if survey.skin_type in product.skin_types or "all" in product.skin_types else 0
-            concern_match = sum(scores.model_dump().get(target, 0) for target in product_targets) / max(1, len(product_targets)) * 0.35
+            # ── 사진 점수 지배 랭킹 ──────────────────────────────────────────────
+            # severity_focus: 제품이 다루는 타깃들의 '평균' 사용자 심각도(0-100).
+            # 합계가 아니라 평균이라, 온갖 타깃을 다 나열한 브로드 상품이 무관한 저점 타깃까지
+            # 끌고 오면 오히려 점수가 내려간다 → 사용자의 '강한 고민'에 집중한 제품이 상위로.
+            severity_focus = (
+                sum(score_map.get(target, 0) for target in product_targets) / len(product_targets)
+                if product_targets
+                else 0.0
+            )
+            # concern_hits: 제품이 실제로 커버하는 '사용자 고민' 타깃(사진>=40 또는 설문 고민).
+            concern_hits = product_targets & user_concern_targets
+            concern_coverage = len(concern_hits)
             knowledge_overlap = knowledge_targets.intersection(product_targets)
-            knowledge_bonus = min(10.0, len(knowledge_overlap) * 5.0)
             rating_score = rating_score_for(product)
             total = round(
                 min(
                     99.0,
-                    ingredient_match
-                    + skin_type_match
-                    + concern_match
-                    + knowledge_bonus
-                    + platform_score
-                    + rating_score,
+                    severity_focus * 0.55            # 0..55  사진 점수(지배적)
+                    + concern_coverage * 6.0         # 0..~18 사용자 고민 커버 보너스
+                    + skin_type_match                # 0/8
+                    + min(6.0, rating_score * 0.6)   # 0..6   품질(부차)
+                    + min(4.0, platform_score * 0.5) # 0..4   플랫폼 적합(부차)
+                    + (2.0 if knowledge_overlap else 0.0),
                 ),
                 1,
             )
+            # 이유표시는 '사용자가 실제로 겪는 고민 ∩ 제품 타깃' 우선(없으면 성분 근거로 폴백).
+            reason_source = concern_hits or matched_targets.union(knowledge_overlap)
             reason_tags = [
                 REASON_TARGET_LABELS.get(target, target)
-                for target in sorted(matched_targets.union(knowledge_overlap))
+                for target in sorted(reason_source, key=lambda t: score_map.get(t, 0), reverse=True)
             ][:4]
             if skin_type_match:
                 reason_tags.append("피부 타입 적합")

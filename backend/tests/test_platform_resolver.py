@@ -3,7 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 from urllib.parse import quote_plus
 
+import pytest
+
+import app.services.platform_resolver as pr
 from app.services.platform_resolver import (
+    OLIVEYOUNG_GLOBAL_DETAIL,
     OLIVEYOUNG_KR_SEARCH,
     build_search_query,
     oliveyoung_kr_query,
@@ -11,13 +15,11 @@ from app.services.platform_resolver import (
 )
 
 
-def test_naver_junk_brand_is_excluded_from_oliveyoung_query() -> None:
-    # 네이버가 브랜드 미상일 때 채우는 '네이버쇼핑'이 검색어 앞에 붙으면 올리브영이 0건이 된다.
-    # (실측: query=네이버쇼핑+하우스랩스+페어 → '검색 결과가 없어요')
-    assert oliveyoung_kr_query("네이버쇼핑", "하우스랩스 페어 파운데이션") == "하우스랩스 페어 파운데이션"
-    assert "네이버쇼핑" not in build_search_query("네이버쇼핑", "하우스랩스 페어 파운데이션")
-    # 진짜 한글 브랜드는 기존대로 앞에 붙는다.
-    assert oliveyoung_kr_query("라로슈포제", "La Roche Posay 라로슈포제 시카플라스트 밤").startswith("라로슈포제")
+@pytest.fixture(autouse=True)
+def _no_catalog(monkeypatch):
+    # 레거시(검색 링크) 동작 테스트는 실제 카탈로그 CSV 유무와 무관하게 '카탈로그 없음'을
+    # 가정한다. 카탈로그 분기 테스트는 본문에서 catalog_available 을 True로 덮어쓴다.
+    monkeypatch.setattr(pr, "catalog_available", lambda: False)
 
 
 def _expected_oliveyoung_kr(brand: str, name: str) -> str:
@@ -33,6 +35,15 @@ def _product(source: str, product_url: str = "https://item.rakuten.co.jp/shop/ex
         platform_links={},
         matched_platforms=[],
     )
+
+
+def test_naver_junk_brand_is_excluded_from_oliveyoung_query() -> None:
+    assert oliveyoung_kr_query("네이버쇼핑", "하우스랩스 페어 파운데이션") == "하우스랩스 페어 파운데이션"
+    assert "네이버쇼핑" not in build_search_query("네이버쇼핑", "하우스랩스 페어 파운데이션")
+    assert oliveyoung_kr_query(
+        "라로슈포제",
+        "La Roche Posay 라로슈포제 시카플라스트 밤",
+    ).startswith("라로슈포제")
 
 
 def test_rakuten_source_keeps_only_verified_rakuten_button_for_jp() -> None:
@@ -61,7 +72,6 @@ def test_naver_source_adds_oliveyoung_kr_search_button_for_kr() -> None:
     resolve_product_platforms(product, "kr")
 
     assert product.platform_links["naver"] == "https://search.shopping.naver.com/catalog/123"
-    # 국내몰은 서버 검증이 불가능하므로 검색 링크로 항상 노출한다(네이버 보강 상품도 동일).
     assert product.platform_links["oliveyoung"] == _expected_oliveyoung_kr(product.brand, product.name)
     assert product.matched_platforms == ["naver", "oliveyoung"]
 
@@ -110,7 +120,6 @@ def test_naver_source_uses_korean_search_link_for_oliveyoung_kr() -> None:
 
     resolve_product_platforms(product, "kr")
 
-    # 하드코딩 goodsNo 없이 한글 라인명 검색 링크로 노출된다.
     assert product.platform_links["oliveyoung"] == (
         OLIVEYOUNG_KR_SEARCH + quote_plus("라로슈포제 시카플라스트 밤")
     )
@@ -141,7 +150,6 @@ def test_merged_product_with_direct_naver_link_adds_only_oliveyoung_kr_search_bu
 
     resolve_product_platforms(product, "kr")
 
-    # 네이버 직링크는 유지하고, 검증 불가한 amazon은 붙이지 않되 올리브영 검색 링크는 노출한다.
     assert product.platform_links == {
         "naver": "https://search.shopping.naver.com/catalog/123",
         "oliveyoung": _expected_oliveyoung_kr(product.brand, product.name),
@@ -168,13 +176,13 @@ def test_non_rakuten_jp_product_can_expose_search_platform_buttons() -> None:
 
 
 def test_search_query_keeps_compound_slash_in_product_identity() -> None:
-    # 'AHA/BHA'는 붙은 슬래시라 상품 정체성이다. ' / ' 별칭 구분자와 달리 자르면 안 된다.
-    # (자르면 'COSRX AHA'만 남아 라쿠텐/아마존 검색이 실제 토너를 못 찾는다.)
     query = build_search_query("COSRX", "AHA/BHA Clarifying Treatment Toner")
     assert query == "COSRX AHA BHA Clarifying Treatment Toner"
 
-    # ' / ' 공백 구분자는 기존대로 이후를 버린다(영문 별칭 분리).
-    aliased = build_search_query("코스알엑스", "코스알엑스 바하 블랙헤드 피지 100ml / COSRX, BHA Blackhead Power Liquid")
+    aliased = build_search_query(
+        "코스알엑스",
+        "코스알엑스 바하 블랙헤드 피지 100ml / COSRX, BHA Blackhead Power Liquid",
+    )
     assert aliased == "코스알엑스 바하 블랙헤드 피지"
 
 
@@ -184,3 +192,66 @@ def test_search_query_drops_japanese_shop_prefix_before_latin_brand() -> None:
 
     assert build_search_query("", failed) == build_search_query("", successful)
     assert build_search_query("", failed).startswith("YOYOSOFT")
+
+
+def _match(prdt_no: str, gds_cd: str = ""):
+    return SimpleNamespace(prdt_no=prdt_no, gds_cd=gds_cd, score=1.0)
+
+
+def test_jp_catalog_match_uses_prdt_no_direct_link(monkeypatch) -> None:
+    # 카탈로그가 있으면 JP 올리브영은 검색이 아니라 prdtNo 직링크.
+    monkeypatch.setattr(pr, "catalog_available", lambda: True)
+    monkeypatch.setattr(pr, "match_oliveyoung", lambda brand, name: _match("GA210000002"))
+    product = _product("database", "")
+
+    resolve_product_platforms(product, "jp")
+
+    assert product.platform_links["oliveyoung"] == OLIVEYOUNG_GLOBAL_DETAIL + quote_plus("GA210000002")
+
+
+def test_jp_catalog_miss_hides_oliveyoung_button(monkeypatch) -> None:
+    # 카탈로그에 없으면(미취급 확정) JP 올리브영 버튼을 붙이지 않는다.
+    monkeypatch.setattr(pr, "catalog_available", lambda: True)
+    monkeypatch.setattr(pr, "match_oliveyoung", lambda brand, name: None)
+    product = _product("database", "")
+
+    resolve_product_platforms(product, "jp")
+
+    assert "oliveyoung" not in product.platform_links
+    assert "amazon_jp" in product.platform_links  # 다른 버튼은 유지
+
+
+def test_jp_rakuten_source_still_gets_verified_catalog_oliveyoung(monkeypatch) -> None:
+    # 라쿠텐 실상품이라도 올리브영 글로벌 카탈로그에 매칭되면 '검증된 prdtNo 직링크'를 함께 붙인다.
+    # (예전엔 라쿠텐 직링크면 올리브영 매칭 자체를 건너뛰어 JP에 버튼이 안 붙었다.)
+    monkeypatch.setattr(pr, "catalog_available", lambda: True)
+    monkeypatch.setattr(pr, "match_oliveyoung", lambda brand, name: _match("GA210000009"))
+    product = _product("rakuten")
+
+    resolve_product_platforms(product, "jp")
+
+    assert product.platform_links["rakuten"] == "https://item.rakuten.co.jp/shop/example/"
+    assert product.platform_links["oliveyoung"] == OLIVEYOUNG_GLOBAL_DETAIL + quote_plus("GA210000009")
+    assert product.matched_platforms == ["oliveyoung", "rakuten"]
+
+
+def test_jp_rakuten_source_no_speculative_search_button_without_catalog(monkeypatch) -> None:
+    # 카탈로그가 없으면(검색 링크는 미검증) 라쿠텐 직링크 상품엔 올리브영을 붙이지 않는다.
+    monkeypatch.setattr(pr, "catalog_available", lambda: False)
+    product = _product("rakuten")
+
+    resolve_product_platforms(product, "jp")
+
+    assert "oliveyoung" not in product.platform_links
+    assert product.platform_links == {"rakuten": "https://item.rakuten.co.jp/shop/example/"}
+
+
+def test_kr_sets_provisional_search_link_ignoring_global_catalog(monkeypatch) -> None:
+    # KR은 글로벌 카탈로그와 무관하게 잠정 한글 검색 링크를 붙인다(실검증/직링크는 KR 라이브 prune).
+    monkeypatch.setattr(pr, "catalog_available", lambda: True)
+    monkeypatch.setattr(pr, "match_oliveyoung", lambda brand, name: None)
+    product = _product("naver", "https://search.shopping.naver.com/catalog/123")
+
+    resolve_product_platforms(product, "kr")
+
+    assert product.platform_links["oliveyoung"] == _expected_oliveyoung_kr(product.brand, product.name)

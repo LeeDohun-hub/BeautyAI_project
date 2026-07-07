@@ -21,6 +21,7 @@ import re
 from urllib.parse import quote_plus
 
 from app.services.matsukiyo_matcher import normalize_key
+from app.services.oliveyoung_catalog import catalog_available, match_oliveyoung
 from app.services.recommender import JBEAUTY_BRANDS, KBEAUTY_BRANDS
 
 # 상품명 '꼬리'에 붙는 쉐이드(색상)·구조(시리즈/에디션) 수식어. 라인명만 남길 때 제거.
@@ -133,6 +134,10 @@ AMAZON_US_SEARCH = "https://www.amazon.com/s?k="
 # 올리브영: 한국 지역은 국내몰(oliveyoung.co.kr), 일본 지역은 글로벌몰(global.oliveyoung.com).
 OLIVEYOUNG_KR_SEARCH = "https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query="
 OLIVEYOUNG_GLOBAL_SEARCH = "https://global.oliveyoung.com/display/search?query="
+# JP 글로벌몰: 카탈로그 매칭 시 붙이는 '상품 직링크'(검색 아님 → 오탐 원천 차단).
+OLIVEYOUNG_GLOBAL_DETAIL = "https://global.oliveyoung.com/product/detail?prdtNo="
+# KR 국내몰의 goodsNo 직링크/입점 검증은 oliveyoung_kr_search(NewMainSearchApi + curl_cffi)가
+# 담당한다. 글로벌 API의 gdsCd는 EAN 바코드라 국내몰 goodsNo가 아니다(실측).
 
 
 def build_search_query(brand: str, name: str) -> str:
@@ -227,6 +232,22 @@ def oliveyoung_kr_query(brand: str, name: str) -> str:
     return " ".join(core[:3]).strip()
 
 
+def _oliveyoung_global_link(brand: str, name: str) -> str:
+    """올리브영 글로벌몰 링크. 카탈로그가 있으면 매칭 상품의 prdtNo 직링크(없으면 빈 문자열),
+    카탈로그 전(크롤 전)이면 라이브 검색 링크로 폴백한다(routes의 prune_global이 검증/제거)."""
+    if catalog_available():
+        match = match_oliveyoung(brand, name)
+        return OLIVEYOUNG_GLOBAL_DETAIL + quote_plus(match.prdt_no) if match else ""
+    cand = oliveyoung_query_candidates(brand, name)[0]
+    return OLIVEYOUNG_GLOBAL_SEARCH + quote_plus(cand)
+
+
+def _oliveyoung_kr_link(brand: str, name: str) -> str:
+    """올리브영 국내몰 잠정 링크(한글 검색). 실제 입점 검증과 goodsNo 직링크 교체/제거는
+    oliveyoung_kr_search.prune_kr_oliveyoung 이 런타임 라이브 검색으로 담당한다."""
+    return OLIVEYOUNG_KR_SEARCH + quote_plus(oliveyoung_kr_query(brand, name))
+
+
 def _is_kbeauty_brand(brand: str) -> bool:
     b = (brand or "").lower()
     return any(name in b for name in KBEAUTY_BRANDS)
@@ -277,11 +298,22 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
             links["amazon_jp"] = _search_url(AMAZON_JP_SEARCH, brand, name)
         # 올리브영: 일본 지역은 글로벌몰. 글로벌몰은 K뷰티+글로벌 브랜드(The Ordinary 등)를
         # 취급하므로, 일본 드럭스토어(J-뷰티) 브랜드만 제외하고 붙인다.
-        # 여기선 '가장 구체적인 후보'로 잠정 링크를 걸고, 실제 입점 검증/정제는
-        # oliveyoung_availability.prune_global_oliveyoung 이 담당한다(0건이면 버튼 제거).
-        if not has_direct_rakuten and not _is_jbeauty_brand(brand):
-            cand = oliveyoung_query_candidates(brand, name)[0]
-            links["oliveyoung"] = OLIVEYOUNG_GLOBAL_SEARCH + quote_plus(cand)
+        if not _is_jbeauty_brand(brand):
+            if catalog_available():
+                # 카탈로그 매칭은 prdtNo '직링크'(검증됨)라 오탐 위험이 없다. 따라서 라쿠텐
+                # 실상품(has_direct_rakuten)에도 붙인다 — 라쿠텐에서 찾은 K뷰티 상품이 올리브영
+                # 글로벌에도 있으면 두 버튼을 함께 노출해야 하기 때문(예전엔 라쿠텐 상품이면
+                # 올리브영 매칭 자체를 건너뛰어 'JP에 아예 안 붙는' 문제가 있었다).
+                match = match_oliveyoung(brand, name)
+                if match:
+                    links["oliveyoung"] = OLIVEYOUNG_GLOBAL_DETAIL + quote_plus(match.prdt_no)
+            elif not has_direct_rakuten:
+                # 카탈로그가 없을 때만 잠정 '검색 링크'로 걸고, 실입점 검증/정제는
+                # prune_global_oliveyoung 이 담당한다(0건이면 제거). 검색 링크는 미검증이므로
+                # 라쿠텐 직링크 상품엔 붙이지 않는다(투기적 버튼 방지).
+                oy = _oliveyoung_global_link(brand, name)
+                if oy:
+                    links["oliveyoung"] = oy
     else:  # KR
         if has_direct_naver:
             links["naver"] = direct_naver_url
@@ -298,7 +330,9 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
         # 조회를 KR 입점 대리 신호로 써서(routes에서 보강 전 영문 정체성으로 판정) 조회되는
         # 상품만 '한글 우선 쿼리' 검색 링크로 노출한다(한국 플랫폼은 한글 검색이 안전).
         if not hide_oliveyoung:
-            links["oliveyoung"] = OLIVEYOUNG_KR_SEARCH + quote_plus(oliveyoung_kr_query(brand, name))
+            oy = _oliveyoung_kr_link(brand, name)
+            if oy:
+                links["oliveyoung"] = oy
 
     _sync_platform_buttons(product, links)
 

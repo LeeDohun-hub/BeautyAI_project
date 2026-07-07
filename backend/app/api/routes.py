@@ -1,7 +1,7 @@
 import json
 import re
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
@@ -30,7 +30,9 @@ from app.services.body_skin_analyzer import BodySkinAnalyzer
 from app.services.image_router import get_skin_image_router
 from app.services.naver_client import NaverClient
 from app.services.naver_kr_enricher import enrich_products_with_naver_kr
-from app.services.oliveyoung_availability import prune_global_oliveyoung, unavailable_on_global_ids
+from app.services.oliveyoung_availability import prune_global_oliveyoung
+from app.services.oliveyoung_catalog import catalog_available
+from app.services.oliveyoung_kr_search import prune_kr_oliveyoung
 from app.services.personal_color_analyzer import PersonalColorAnalyzer
 from app.services.platform_resolver import dedup_by_line, resolve_product_platforms
 from app.services.product_image_provider import fill_missing_images
@@ -46,6 +48,24 @@ from app.services.recommender import (
 from app.services.skin_analyzer import SkinAnalyzer, summarize_scores
 
 router = APIRouter(prefix="/api")
+
+
+def _resolve_region(raw_region: str | None, request: Request, fallback: str) -> str:
+    region = (raw_region or "auto").strip().lower()
+    if region in {"kr", "jp"}:
+        return region
+    for header in ("cf-ipcountry", "x-vercel-ip-country", "cloudfront-viewer-country", "x-country-code"):
+        country = (request.headers.get(header) or "").strip().upper()
+        if country == "KR":
+            return "kr"
+        if country == "JP":
+            return "jp"
+    accept_language = (request.headers.get("accept-language") or "").lower()
+    if accept_language.startswith("ja") or ",ja" in accept_language:
+        return "jp"
+    if accept_language.startswith("ko") or ",ko" in accept_language:
+        return "kr"
+    return fallback
 
 
 # 아이템 매칭 카테고리 분류(프론트 itemMatchColumnFor와 동일 규칙). 한/영/일 토큰 모두 인식.
@@ -164,8 +184,12 @@ async def analyze_face_shape(image: UploadFile = File(...)) -> FaceShapeResponse
 
 
 @router.post("/recommend", response_model=RecommendationResponse)
-def recommend(payload: RecommendationRequest, db: Session = Depends(get_db)) -> RecommendationResponse:
-    region = (payload.region or "kr").strip().lower()
+def recommend(
+    payload: RecommendationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> RecommendationResponse:
+    region = _resolve_region(payload.region, request, "kr")
     # 스킨케어 상품은 글로벌 카탈로그라 지역/플랫폼과 무관하게 피부적합도로 고른다("all").
     # 지역·플랫폼 구분은 아래 입점 리졸버(버튼)와 프론트 필터에서 처리한다.
     if payload.analysis_mode == "body":
@@ -194,26 +218,20 @@ def recommend(payload: RecommendationRequest, db: Session = Depends(get_db)) -> 
             payload.user_id,
             "all",
         )
-    # KR 국내몰은 Cloudflare로 직접 검증이 불가하다. 올리브영은 제조사 상품을 글로벌몰·국내몰
-    # 양쪽에 함께 올리는 경향이 있어, 글로벌몰 조회를 KR 입점 대리 신호로 쓴다. 반드시 네이버
-    # 한글 보강 '전'(영문 정체성)에 판정해야 영문 글로벌몰과 매칭된다.
-    oliveyoung_hidden_ids = (
-        unavailable_on_global_ids(response.products) if region == "kr" else set()
-    )
     # KR 지역: 영문 카탈로그 상품을 네이버 한글 데이터(브랜드/상품명/URL/이미지)로 보강한다.
-    # 퍼스널컬러 카드처럼 한글로 표시·검색되게 해 한국 플랫폼(올리브영 등) 조회 성공률을 높인다.
+    # 국내몰 라이브 검색이 한글로 이뤄지므로, 보강 '후'(한글 정체성)에 입점 검증해야 잘 맞는다.
     if region == "kr":
         enrich_products_with_naver_kr(response.products)
     # 퍼스널컬러 화면과 동일하게: 지역별 입점 리졸버로 플랫폼 버튼을 통일한다.
     # KR=네이버/Amazon.com/올리브영 국내몰, JP=라쿠텐/Amazon.co.jp/올리브영 글로벌.
     for product in response.products:
-        resolve_product_platforms(
-            product, region, hide_oliveyoung=id(product) in oliveyoung_hidden_ids
-        )
-    # 올리브영 글로벌몰(JP 지역): 실제 입점 검증 — 0건이면 버튼 제거, 있으면 검증된 검색어로 교체.
-    # 국내몰(KR)은 Cloudflare 403으로 검증 불가라 개선 쿼리로 항상 표시한다(prune 대상 아님).
-    if region == "jp":
+        resolve_product_platforms(product, region)
+    # 올리브영 입점 검증: JP=글로벌 카탈로그 직링크(카탈로그 없을 때만 라이브 prune). KR=국내몰
+    # NewMainSearchApi 라이브 검색으로 goodsNo 직링크 교체/미취급 버튼 제거(curl_cffi).
+    if region == "jp" and not catalog_available():
         prune_global_oliveyoung(response.products)
+    elif region == "kr":
+        prune_kr_oliveyoung(response.products)
     # 카드 이미지 보강(KR=네이버, JP=라쿠텐 검색 이미지, 이미 있으면 유지).
     fill_missing_images(response.products, region)
     return response
@@ -222,10 +240,11 @@ def recommend(payload: RecommendationRequest, db: Session = Depends(get_db)) -> 
 @router.post("/personal-color/item-match", response_model=PersonalColorItemMatchResponse)
 def personal_color_item_match(
     payload: PersonalColorItemMatchRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> PersonalColorItemMatchResponse:
     keywords = [keyword.strip() for keyword in payload.keywords if keyword.strip()]
-    region = (payload.region or "jp").strip().lower()
+    region = _resolve_region(payload.region, request, "jp")
     platform = (payload.platform or "all").strip().lower()
     db_products = recommend_personal_color_products(
         db,
@@ -342,9 +361,13 @@ def personal_color_item_match(
     # 아마존/올리브영 라인 검색링크)을 채운다. 네트워크 호출은 top N에만 한정한다.
     for product in products:
         resolve_product_platforms(product, region)
-    # 올리브영 글로벌몰(JP): 실제 입점 검증 — 조회 0건인 상품은 올리브영 버튼을 숨긴다.
+    # 올리브영 입점 검증: JP=글로벌 카탈로그(없을 때만 라이브 prune), KR=국내몰 라이브 검색으로
+    # goodsNo 직링크 교체/미취급 버튼 제거.
     if region == "jp":
-        prune_global_oliveyoung(products)
+        if not catalog_available():
+            prune_global_oliveyoung(products)
+    elif region == "kr":
+        prune_kr_oliveyoung(products)
 
     # 이미지가 없는 상품은 지역별 실시간 검색(KR=네이버, JP=라쿠텐)으로 대표 이미지를 보강한다.
     fill_missing_images(products, region)

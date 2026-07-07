@@ -16,3 +16,4 @@ chromadb==0.5.23
 pytest==8.3.4
 httpx==0.28.1
 
+curl_cffi==0.15.0

@@ -10,6 +10,7 @@ import {
   FormControlLabel,
   FormControl,
   Grid,
+  IconButton,
   InputLabel,
   LinearProgress,
   MenuItem,
@@ -35,6 +36,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import { analyzeFaceShape, analyzePersonalColor, analyzeSkin, chat, getHistory, getMoodThumbnails, matchPersonalColorItems, recommend } from './api/client';
 import type { AnalysisMode, AnalyzeSkinResponse, BodyConditionScore, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
@@ -109,6 +111,21 @@ const ITEM_PLATFORM_META: Record<ItemPlatform, { key: ItemPlatform; label: strin
 };
 
 type ItemRegion = 'jp' | 'kr';
+
+function detectInitialRegion(): ItemRegion {
+  if (typeof window === 'undefined') return 'kr';
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  const languages = [navigator.language, ...Array.from(navigator.languages || [])]
+    .filter(Boolean)
+    .map((value) => value.toLowerCase());
+  if (timeZone === 'Asia/Tokyo' || languages.some((value) => value.startsWith('ja'))) {
+    return 'jp';
+  }
+  if (timeZone === 'Asia/Seoul' || languages.some((value) => value.startsWith('ko'))) {
+    return 'kr';
+  }
+  return 'kr';
+}
 
 const ITEM_REGION_FILTERS: { value: ItemRegion; label: string }[] = [
   { value: 'jp', label: '일본(JP)' },
@@ -814,6 +831,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const previewUrlsRef = useRef<string[]>([]);
+  const personalColorPreviewsRef = useRef<string[]>([]);
   const [appModule, setAppModule] = useState<AppModule>('home');
   const [currentStep, setCurrentStep] = useState(0);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('face');
@@ -833,9 +851,9 @@ export default function App() {
   });
   const [faceFiles, setFaceFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
-  const [personalColorFile, setPersonalColorFile] = useState<File | null>(null);
   const [personalColorFiles, setPersonalColorFiles] = useState<File[]>([]);
-  const [personalColorPreview, setPersonalColorPreview] = useState('');
+  const [personalColorPreviews, setPersonalColorPreviews] = useState<string[]>([]);
+  const [personalColorIndex, setPersonalColorIndex] = useState(0);
   const [personalColorResult, setPersonalColorResult] = useState<PersonalColorResponse | null>(null);
   const [faceShape, setFaceShape] = useState<FaceShapeResponse | null>(null);
   const [personalColorStep, setPersonalColorStep] = useState(0);
@@ -844,7 +862,7 @@ export default function App() {
   const [moodItems, setMoodItems] = useState<PersonalColorItemMatchResponse | null>(null);
   const [moodThumbnails, setMoodThumbnails] = useState<Record<string, string>>({});
   const [moodThumbsLoading, setMoodThumbsLoading] = useState(false);
-  const [itemRegion, setItemRegion] = useState<ItemRegion>('jp');
+  const [itemRegion, setItemRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [itemPlatform, setItemPlatform] = useState<ItemPlatform>('all');
   const [reportProductKeys, setReportProductKeys] = useState<string[]>([]);
   const [personalColorProfile, setPersonalColorProfile] = useState({
@@ -858,7 +876,7 @@ export default function App() {
   const [cameraReady, setCameraReady] = useState(false);
   const [analysis, setAnalysis] = useState<AnalyzeSkinResponse | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
-  const [skinRegion, setSkinRegion] = useState<ItemRegion>('kr');
+  const [skinRegion, setSkinRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [selectedPlatform, setSelectedPlatform] = useState<ItemPlatform>('all');
   const [message, setMessage] = useState('제 피부 상태에 맞는 루틴을 어떻게 구성하면 좋을까요?');
   const [answer, setAnswer] = useState('');
@@ -870,6 +888,14 @@ export default function App() {
     () => recommendStyleMoods(personalColorResult, faceShape),
     [personalColorResult, faceShape],
   );
+
+  // 퍼스널컬러 다중 사진: files/previews는 인덱스로 정렬되며, 화살표로 순회한다.
+  // 현재 인덱스를 벗어나지 않도록 정규화한 '현재 사진/미리보기'를 파생값으로 노출한다.
+  const personalColorCount = personalColorFiles.length;
+  const safePersonalColorIndex =
+    personalColorCount === 0 ? 0 : Math.min(personalColorIndex, personalColorCount - 1);
+  const personalColorFile = personalColorFiles[safePersonalColorIndex] ?? null;
+  const personalColorPreview = personalColorPreviews[safePersonalColorIndex] ?? '';
 
   const highestReadyStep = useMemo(() => {
     if (answer) return 4;
@@ -905,13 +931,17 @@ export default function App() {
   useEffect(() => {
     return () => {
       previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-      if (personalColorPreview) URL.revokeObjectURL(personalColorPreview);
+      personalColorPreviewsRef.current.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [personalColorPreview]);
+  }, []);
 
   useEffect(() => {
     previewUrlsRef.current = previewUrls;
   }, [previewUrls]);
+
+  useEffect(() => {
+    personalColorPreviewsRef.current = personalColorPreviews;
+  }, [personalColorPreviews]);
 
   useEffect(() => {
     if (appModule !== 'personal-color' || personalColorStep !== 4 || !personalColorResult) return;
@@ -1023,22 +1053,61 @@ export default function App() {
     setError('');
   }
 
+  const PERSONAL_COLOR_MAX = 5;
+
+  function clearPersonalColorResults() {
+    setPersonalColorResult(null);
+    setPersonalColorItems(null);
+    setSelectedMood(null);
+    setMoodItems(null);
+    setFaceShape(null);
+  }
+
   function handlePersonalColorUpload(files: FileList | null) {
-    // 여러 장 허용: 첫 장은 미리보기·얼굴형 분석용, 전부는 퍼스널컬러 평균 판정용.
+    // 여러 장 허용(누적): 이미 담긴 사진에 새로 고른 사진을 이어 붙인다. 최대 5장.
+    // 현재 보고 있는 사진(화살표 순회)이 얼굴형 분석·미리보기 기준이 된다.
     const images = Array.from(files ?? []).filter((item) => item.type.startsWith('image/'));
     if (images.length === 0) {
       setError('퍼스널컬러 분석에 사용할 얼굴 사진을 선택해 주세요.');
       return;
     }
-    if (personalColorPreview) URL.revokeObjectURL(personalColorPreview);
-    setPersonalColorFile(images[0]);
-    setPersonalColorFiles(images);
-    setPersonalColorPreview(URL.createObjectURL(images[0]));
-    setPersonalColorResult(null);
-    setPersonalColorItems(null);
-    setSelectedMood(null);
-    setMoodItems(null);
+    const availableSlots = PERSONAL_COLOR_MAX - personalColorFiles.length;
+    if (availableSlots <= 0) {
+      setError(`퍼스널컬러 사진은 최대 ${PERSONAL_COLOR_MAX}장까지 선택할 수 있습니다.`);
+      return;
+    }
+    const filesToAdd = images.slice(0, availableSlots);
+    setError(
+      images.length > availableSlots
+        ? `퍼스널컬러 사진은 최대 ${PERSONAL_COLOR_MAX}장까지 선택할 수 있어 일부만 추가했습니다.`
+        : '',
+    );
+    setPersonalColorFiles((current) => [...current, ...filesToAdd]);
+    setPersonalColorPreviews((current) => [...current, ...filesToAdd.map((item) => URL.createObjectURL(item))]);
+    setPersonalColorIndex(personalColorFiles.length); // 새로 추가한 첫 장을 보여준다.
+    clearPersonalColorResults();
+  }
+
+  function removePersonalColorFile(index: number) {
+    URL.revokeObjectURL(personalColorPreviews[index]);
+    setPersonalColorFiles((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    setPersonalColorPreviews((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    setPersonalColorIndex((current) => (current > index ? current - 1 : current));
+    clearPersonalColorResults();
+  }
+
+  function clearPersonalColorFiles() {
+    personalColorPreviews.forEach((url) => URL.revokeObjectURL(url));
+    setPersonalColorFiles([]);
+    setPersonalColorPreviews([]);
+    setPersonalColorIndex(0);
+    clearPersonalColorResults();
     setError('');
+  }
+
+  function stepPersonalColorImage(delta: number) {
+    if (personalColorCount === 0) return;
+    setPersonalColorIndex((current) => (current + delta + personalColorCount) % personalColorCount);
   }
 
   async function handlePersonalColorAnalyze() {
@@ -1625,9 +1694,54 @@ export default function App() {
                   정면 얼굴 사진을 넣으면 피부 밝기, 웜쿨, 채도 경향을 분석해 타입을 판정합니다.
                   여러 장(다른 각도·조명)을 함께 넣으면 결과가 더 안정적입니다.
                 </Typography>
-                <Box className="personal-color-preview kiosk-preview">
+                <Box className="personal-color-preview kiosk-preview" sx={{ position: 'relative' }}>
                   {personalColorPreview ? (
-                    <img src={personalColorPreview} alt="퍼스널컬러 분석 미리보기" />
+                    <>
+                      <img src={personalColorPreview} alt={`퍼스널컬러 분석 미리보기 ${safePersonalColorIndex + 1}`} />
+                      {personalColorCount > 1 && (
+                        <>
+                          <IconButton
+                            aria-label="이전 사진"
+                            onClick={() => stepPersonalColorImage(-1)}
+                            sx={{
+                              position: 'absolute', top: '50%', left: 8, transform: 'translateY(-50%)',
+                              bgcolor: 'rgba(0,0,0,0.5)', color: '#fff', '&:hover': { bgcolor: 'rgba(0,0,0,0.7)' },
+                            }}
+                          >
+                            <ArrowLeft size={20} />
+                          </IconButton>
+                          <IconButton
+                            aria-label="다음 사진"
+                            onClick={() => stepPersonalColorImage(1)}
+                            sx={{
+                              position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)',
+                              bgcolor: 'rgba(0,0,0,0.5)', color: '#fff', '&:hover': { bgcolor: 'rgba(0,0,0,0.7)' },
+                            }}
+                          >
+                            <ArrowRight size={20} />
+                          </IconButton>
+                        </>
+                      )}
+                      <Box
+                        sx={{
+                          position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+                          bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: 10,
+                          px: 1.2, py: 0.3, fontSize: 13, fontWeight: 700,
+                        }}
+                      >
+                        {safePersonalColorIndex + 1} / {personalColorCount}
+                      </Box>
+                      <IconButton
+                        aria-label="이 사진 삭제"
+                        onClick={() => removePersonalColorFile(safePersonalColorIndex)}
+                        sx={{
+                          position: 'absolute', top: 8, right: 8,
+                          bgcolor: 'rgba(0,0,0,0.5)', color: '#fff', '&:hover': { bgcolor: 'rgba(211,47,47,0.85)' },
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </IconButton>
+                    </>
                   ) : (
                     <Stack alignItems="center" spacing={1}>
                       <ImagePlus size={34} />
@@ -1635,10 +1749,44 @@ export default function App() {
                     </Stack>
                   )}
                 </Box>
+                {personalColorCount > 0 && (
+                  <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 0.5 }}>
+                    {personalColorPreviews.map((url, index) => (
+                      <Box
+                        key={url}
+                        onClick={() => setPersonalColorIndex(index)}
+                        sx={{
+                          position: 'relative', flex: '0 0 auto', width: 56, height: 56, borderRadius: 1.5,
+                          overflow: 'hidden', cursor: 'pointer',
+                          border: (theme) =>
+                            `2px solid ${index === safePersonalColorIndex ? theme.palette.primary.main : 'transparent'}`,
+                        }}
+                      >
+                        <img src={url} alt={`선택한 사진 ${index + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <IconButton
+                          aria-label={`${index + 1}번 사진 삭제`}
+                          onClick={(event) => { event.stopPropagation(); removePersonalColorFile(index); }}
+                          sx={{
+                            position: 'absolute', top: 0, right: 0, p: 0.2,
+                            bgcolor: 'rgba(0,0,0,0.55)', color: '#fff', '&:hover': { bgcolor: 'rgba(211,47,47,0.9)' },
+                          }}
+                        >
+                          <X size={12} />
+                        </IconButton>
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                  <Button fullWidth variant="outlined" component="label" startIcon={<ImagePlus size={18} />}>
-                    사진 선택
-                    <input hidden multiple type="file" accept="image/*" onChange={(event) => handlePersonalColorUpload(event.target.files)} />
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    component="label"
+                    startIcon={<ImagePlus size={18} />}
+                    disabled={personalColorCount >= PERSONAL_COLOR_MAX}
+                  >
+                    {personalColorCount > 0 ? '사진 추가' : '사진 선택'}
+                    <input hidden multiple type="file" accept="image/*" onChange={(event) => { handlePersonalColorUpload(event.target.files); event.target.value = ''; }} />
                   </Button>
                   <Button
                     fullWidth
@@ -1650,10 +1798,15 @@ export default function App() {
                     {loading === 'personal-color' ? '분석 중...' : '분석 시작'}
                   </Button>
                 </Stack>
-                {personalColorFiles.length > 0 && (
-                  <Typography variant="caption" color="text.secondary">
-                    {personalColorFiles.length}장 선택됨{personalColorFiles.length === 1 ? ' · 2~3장을 함께 넣으면 판정이 더 안정적입니다.' : ' · 여러 장 평균으로 판정합니다.'}
-                  </Typography>
+                {personalColorCount > 0 && (
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Typography variant="caption" color="text.secondary">
+                      {personalColorCount}/{PERSONAL_COLOR_MAX}장 선택됨{personalColorCount === 1 ? ' · 2~3장을 함께 넣으면 판정이 더 안정적입니다.' : ' · 여러 장 평균으로 판정합니다.'}
+                    </Typography>
+                    <Button size="small" color="inherit" startIcon={<Trash2 size={14} />} onClick={clearPersonalColorFiles}>
+                      전체 삭제
+                    </Button>
+                  </Stack>
                 )}
                 {loading === 'personal-color' && <LinearProgress />}
               </Stack>

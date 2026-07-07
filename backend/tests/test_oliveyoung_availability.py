@@ -87,25 +87,3 @@ def test_prune_skips_products_without_oliveyoung(monkeypatch):
     oa.prune_global_oliveyoung([p])
     assert called["n"] == 0
     assert p.platform_links == {"rakuten": "r"}
-
-
-def test_unavailable_on_global_ids_flags_only_unverified(monkeypatch):
-    # 글로벌몰에 조회되는 상품은 제외, 0건/확인불가는 숨김 대상 id로 모은다.
-    available = {"The Ordinary Niacinamide 10%"}
-    monkeypatch.setattr(
-        oa, "resolve_global_query",
-        lambda brand, name: "The Ordinary Niacinamide 10%" if "Niacinamide" in name else None,
-    )
-    keep = _product("The Ordinary", "Niacinamide 10% + Zinc 1%", {})
-    drop = _product("Olay", "Regenerist Retinol 24 Night Face Moisturizer", {})
-    hidden = oa.unavailable_on_global_ids([keep, drop])
-    assert id(drop) in hidden
-    assert id(keep) not in hidden
-    assert available  # 문서화용: 조회 성공 쿼리는 유지 신호
-
-
-def test_unavailable_on_global_ids_ignores_empty_names(monkeypatch):
-    monkeypatch.setattr(oa, "resolve_global_query", lambda brand, name: None)
-    p = _product("Brand", "", {})
-    # 이름이 없으면 검증 대상에서 제외(숨김 집합에 넣지 않는다).
-    assert oa.unavailable_on_global_ids([p]) == set()
