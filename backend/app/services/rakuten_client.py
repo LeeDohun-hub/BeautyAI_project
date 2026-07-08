@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from urllib.parse import quote_plus, urlparse
 
@@ -133,7 +134,8 @@ class RakutenClient:
             image_url = None
             if images:
                 first = images[0]
-                image_url = first.get("imageUrl") if isinstance(first, dict) else str(first)
+                raw = first.get("imageUrl") if isinstance(first, dict) else str(first)
+                image_url = _upsize_rakuten_image(raw)
             shop_name = str(item.get("shopName") or "Rakuten").strip()
             products.append(
                 RakutenProduct(
@@ -149,6 +151,22 @@ class RakutenClient:
                 )
             )
         return products
+
+
+_RAKUTEN_EX_RE = re.compile(r"_ex=\d+x\d+")
+
+
+def _upsize_rakuten_image(url: object) -> str | None:
+    """라쿠텐 썸네일 URL의 `_ex=128x128`을 더 큰 크기로 올려 카드 화질을 개선한다.
+
+    thumbnail.image.rakuten.co.jp는 `_ex` 파라미터로 크기를 즉석 리사이즈하므로
+    128x128 → 300x300으로 교체해도 유효한 이미지가 반환된다. `_ex`가 없거나
+    다른 호스트면 원본을 그대로 둔다.
+    """
+    text = str(url or "").strip()
+    if not text:
+        return None
+    return _RAKUTEN_EX_RE.sub("_ex=300x300", text)
 
 
 def _optional_float(value: object) -> float | None:

@@ -9,6 +9,7 @@ pymysql==1.1.1
 cryptography==44.0.0
 beautifulsoup4==4.12.3
 numpy==1.26.4
+scikit-learn==1.7.2
 Pillow==10.4.0
 mediapipe==0.10.18
 openai==1.59.7

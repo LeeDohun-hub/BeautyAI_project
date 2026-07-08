@@ -1,14 +1,16 @@
 """상품 대표 이미지 실시간 보강.
 
-DB/카탈로그 상품은 이미지가 없는 경우가 많다. Amazon 이미지 API가 막혀 있어,
-이미 연결된 실시간 검색 API로 대체 이미지를 끌어온다.
+DB/카탈로그 상품은 이미지가 없거나 죽은 URL(예: 올리브영 CDN 403)을 가진 경우가 많다.
+Amazon 이미지 API가 막혀 있어, 이미 연결된 실시간 검색 API/카탈로그로 대체 이미지를 끌어온다.
 
-- 한국(KR) 상품: 네이버 쇼핑 검색의 첫 일치 상품 썸네일(`image`).
-- 일본(JP) 상품: 라쿠텐 이치바 검색의 첫 상품 이미지(`mediumImageUrls`).
+여러 소스를 우선순위대로 **캐스케이드**해, 하나가 비거나 죽으면 다음 소스로 넘어간다:
+- 한국(KR): 네이버 쇼핑(`image`) → 올리브영 글로벌 카탈로그(`imageUrl`).
+- 일본(JP): 라쿠텐 이치바(`mediumImageUrls`) → 올리브영 글로벌 카탈로그 → 네이버.
 
 브랜드가 어긋난 엉뚱한 이미지가 붙지 않도록, 브랜드를 아는 경우 브랜드 토큰이
-겹치는 결과만 채택한다. 키가 없거나 오류면 빈 문자열을 반환해 기존 placeholder를
-유지한다. 결과는 TTL 캐시로 재검색을 줄인다.
+겹치는 결과만 채택한다. 후보 URL은 실제로 이미지가 응답하는지 검증(`_is_live_image`)해서
+채택하므로, 죽은 URL은 살아있는 다른 소스 이미지로 교체된다. 모든 소스가 실패할 때만
+빈 문자열로 두어(프론트 placeholder) 마지막 폴백을 한다. 결과는 TTL 캐시로 재검색을 줄인다.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from typing import Callable, Iterable
 import httpx
 
 from app.core.config import get_settings
+from app.services.oliveyoung_catalog import match_oliveyoung
 from app.services.rakuten_client import RakutenClient
 
 NAVER_SHOP_API = "https://openapi.naver.com/v1/search/shop.json"
@@ -139,31 +142,86 @@ def rakuten_image(brand: str, name: str) -> str:
     return result
 
 
-def _provider_for(region: str) -> Callable[[str, str], str] | None:
-    region = (region or "").strip().lower()
-    if region == "kr":
-        return naver_image
-    if region == "jp":
-        return rakuten_image
-    return None
+def oliveyoung_catalog_image(brand: str, name: str) -> str:
+    """올리브영 글로벌 카탈로그(로컬 CSV)에서 브랜드+상품명 매칭 상품의 대표 이미지를 찾는다."""
+    match = match_oliveyoung(brand, name)
+    return match.image_url if match else ""
+
+
+# 지역별 이미지 소스 우선순위. 앞에서부터 시도해 살아있는 첫 이미지를 채택한다.
+_PROVIDER_CASCADE: dict[str, list[Callable[[str, str], str]]] = {
+    "kr": [naver_image, oliveyoung_catalog_image],
+    "jp": [rakuten_image, oliveyoung_catalog_image, naver_image],
+}
+
+_IMAGE_MAGIC = (b"\xff\xd8", b"\x89PNG", b"GIF8", b"RIFF")
+
+
+def _is_live_image(url: str) -> bool:
+    """URL이 실제 이미지를 반환하는지 확인한다(올리브영 403/XML 등 죽은 URL 걸러냄).
+
+    HTTP 200 + 앞부분 매직바이트(JPEG/PNG/GIF/WEBP)로 판별한다. 올리브영 CDN은 유효
+    이미지를 `application/octet-stream`으로도 주므로 content-type이 아니라 바이트로 본다.
+    결과는 TTL 캐시로 재확인을 줄인다.
+    """
+    url = (url or "").strip()
+    if not url:
+        return False
+    key = f"live::{url}"
+    cached = _cache_get(key)
+    if cached is not _MISS:
+        return cached == "1"
+
+    ok = False
+    try:
+        with httpx.stream(
+            "GET",
+            url,
+            timeout=_REQUEST_TIMEOUT,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0"},
+        ) as response:
+            if response.status_code == 200:
+                head = next(response.iter_bytes(chunk_size=8), b"")
+                ok = head.startswith(_IMAGE_MAGIC)
+    except Exception:
+        ok = False
+
+    _cache_set(key, "1" if ok else "0")
+    return ok
+
+
+def _resolve_image(brand: str, name: str, current: str, providers: list[Callable[[str, str], str]]) -> str | None:
+    """현재 이미지가 살아있으면 유지(None 반환), 아니면 소스 캐스케이드로 살아있는 이미지를 찾는다.
+
+    반환값: 새로 채택한 URL, 유지면 None, 전부 실패면 "" (placeholder로 비움).
+    """
+    if current and _is_live_image(current):
+        return None
+    for provider in providers:
+        try:
+            candidate = str(provider(brand, name) or "").strip()
+        except Exception:
+            candidate = ""
+        if candidate and candidate != current and _is_live_image(candidate):
+            return candidate
+    return ""
 
 
 def fill_missing_images(items: Iterable[object], region: str) -> int:
-    """이미지가 없는 상품 객체의 image_url을 지역별 API로 채운다(제자리 수정).
+    """상품 객체의 image_url을 지역별 소스 캐스케이드로 채우거나 교체한다(제자리 수정).
+
+    이미지가 없는 상품은 물론, 죽은 URL(예: 올리브영 403)을 가진 상품도 검증해서 살아있는
+    다른 소스 이미지로 교체한다. 모든 소스가 실패하면 빈 문자열로 비운다(프론트 placeholder).
 
     items: image_url/brand/name 속성을 가진 (mutable) 객체 목록.
-    반환값: 실제로 이미지를 채운 개수.
+    반환값: 실제로 이미지를 채우거나 교체한 개수.
     """
-    provider = _provider_for(region)
-    if provider is None:
+    providers = _PROVIDER_CASCADE.get((region or "").strip().lower())
+    if not providers:
         return 0
 
-    targets = [
-        item
-        for item in items
-        if not str(getattr(item, "image_url", "") or "").strip()
-        and str(getattr(item, "name", "") or "").strip()
-    ]
+    targets = [item for item in items if str(getattr(item, "name", "") or "").strip()]
     if not targets:
         return 0
 
@@ -171,21 +229,24 @@ def fill_missing_images(items: Iterable[object], region: str) -> int:
     with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(targets))) as executor:
         futures = {
             executor.submit(
-                provider,
+                _resolve_image,
                 str(getattr(item, "brand", "") or ""),
                 str(getattr(item, "name", "") or ""),
+                str(getattr(item, "image_url", "") or "").strip(),
+                providers,
             ): item
             for item in targets
         }
         for future in as_completed(futures):
             item = futures[future]
             try:
-                image = future.result()
+                resolved = future.result()
             except Exception:
-                image = ""
-            if image:
-                item.image_url = image
-                filled += 1
+                resolved = None
+            if resolved is not None and resolved != str(getattr(item, "image_url", "") or "").strip():
+                item.image_url = resolved
+                if resolved:
+                    filled += 1
     return filled
 
 

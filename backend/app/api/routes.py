@@ -357,6 +357,12 @@ def personal_color_item_match(
     # 베이스/블러셔 컬럼이 비지 않고, 각 컬럼은 카테고리 내 점수순으로 채워진다.
     products = _balance_item_categories(ranked, limit=8, per_category=2)
 
+    # KR: 국내몰 라이브 검색은 한글로 이뤄지므로, 입점 검증 '전에' 네이버 한글 데이터로 보강한다.
+    # 영문 DB 상품명('TIRTIR Mask Fit Red Cushion')은 국내몰 검색 0건이지만, 한글 정체성
+    # ('티르티르 마스크 핏 레드 쿠션')이면 매칭돼 올리브영 goodsNo 직링크가 붙는다(사용자 지적).
+    if region == "kr":
+        enrich_products_with_naver_kr(products)
+
     # 입점 리졸버: 최종 노출 상품마다 플랫폼 전반(라쿠텐/네이버 매칭 + 마츠키요 인덱스 +
     # 아마존/올리브영 라인 검색링크)을 채운다. 네트워크 호출은 top N에만 한정한다.
     for product in products:

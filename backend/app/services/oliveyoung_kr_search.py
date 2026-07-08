@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import csv
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -221,6 +222,66 @@ def _query_candidates(brand: str, name: str) -> list[str]:
     return out
 
 
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+# 영문 브랜드 → 한글 브랜드 별칭. 네이버가 한글 타이틀을 안 줘서 한글명에서 브랜드를 못 뽑는
+# 경우(rom&nd 'B15026 Rom&nd …')에도 한글 브랜드로 국내몰 검색/채점이 되게 한다.
+_BRAND_ALIAS = {
+    "romnd": "롬앤", "romand": "롬앤", "peripera": "페리페라", "espoir": "에스쁘아",
+    "clio": "클리오", "colorgram": "컬러그램", "cologram": "컬러그램", "wakemake": "웨이크메이크",
+    "tirtir": "티르티르", "hera": "헤라", "laneige": "라네즈", "innisfree": "이니스프리",
+    "etude": "에뛰드", "amuse": "어뮤즈", "muzigae": "무지개", "lilybyred": "릴리바이레드",
+    "dasique": "데이지크", "fwee": "퓌", "clove": "클로브", "unleashia": "언리시아",
+    "romandbyromnd": "롬앤", "holika": "홀리카", "missha": "미샤", "mediheal": "메디힐",
+    "cosrx": "코스알엑스", "roundlab": "라운드랩", "torriden": "토리든", "numbuzin": "넘버즈인",
+    "abib": "아비브", "anua": "아누아", "beautyofjoseon": "조선미녀", "skin1004": "스킨천사",
+}
+
+
+def _brand_alias_key(brand: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (brand or "").lower())
+
+
+def _kr_brand(brand: str, name: str) -> str:
+    """국내몰은 한글이라, 영문 DB 브랜드(peripera/CLIO)면 한글 브랜드를 쓴다.
+    우선순위: (1) 이미 한글이면 그대로, (2) 알려진 영문→한글 별칭, (3) 한글명 첫 한글 토큰.
+    이렇게 안 하면 line_match_score의 브랜드 매칭이 영문vs한글로 실패해 정상 상품도 기각된다."""
+    if _HANGUL_RE.search(brand or ""):
+        return brand
+    alias = _BRAND_ALIAS.get(_brand_alias_key(brand))
+    if alias:
+        return alias
+    for token in (name or "").split():
+        if _HANGUL_RE.search(token):
+            return token
+    return brand
+
+
+def _line_overlap(q_brand: str, q_name: str, c_brand: str, c_name: str) -> int:
+    """브랜드 토큰을 제외한 '라인 토큰' 교집합 수. 형제라인(1토큰만 겹침) 오탐 차단용."""
+    exclude = tokens_for(q_brand) | tokens_for(c_brand)
+    ql = tokens_for(q_name) - exclude
+    il = tokens_for(c_name) - exclude
+    return len(ql & il)
+
+
+def _kr_line_score(kr_brand: str, raw_name: str, clean_query: str, r: "KRResult") -> float | None:
+    """국내몰 후보 채점: 원본명(노이즈 많음)과 정제쿼리 둘 다로 채점해 max를 쓴다.
+    네이버 보강명은 프로모/영문/'매장상품' 등 잡토큰이 많아 Jaccard가 희석되므로 정제쿼리로도
+    재본다. 단 라인토큰이 **2개 이상** 겹치는 쿼리만 인정한다(브랜드+1토큰만 겹치는 형제라인
+    오탐 방지: '잉크무드'↔'잉크더벨벳'은 '잉크' 1개만 겹쳐 기각)."""
+    best: float | None = None
+    for q_name in (raw_name, clean_query):
+        score = line_match_score(kr_brand, q_name, r.brand, r.name)
+        if score is None:
+            continue
+        if _line_overlap(kr_brand, q_name, r.brand, r.name) < 2:
+            continue
+        if best is None or score > best:
+            best = score
+    return best
+
+
 def resolve_kr_goods(brand: str, name: str) -> tuple[KRResult | None, bool]:
     """국내몰에서 이 상품에 맞는 goodsNo를 찾는다.
 
@@ -232,12 +293,18 @@ def resolve_kr_goods(brand: str, name: str) -> tuple[KRResult | None, bool]:
     로컬 KR 카탈로그(배치 크롤)에 매칭이 있으면 라이브 호출 없이 그 결과를 쓴다. 카탈로그는
     브랜드별 상위 상품만 담아(top~20/쿼리) 불완전하므로, 미매칭은 '없음'이 아니라 라이브 폴백이다.
     """
-    cataloged = match_kr_catalog(brand, name)
+    # 영문 DB 브랜드면 한글명에서 브랜드를 뽑아 국내몰(한글) 매칭이 되게 한다.
+    kr_brand = _kr_brand(brand, name)
+    cataloged = match_kr_catalog(kr_brand, name)
     if cataloged is not None:
         return cataloged, True
 
+    clean_query = oliveyoung_kr_query(kr_brand, name)
+    # 형제라인 오탐(잉크무드↔잉크더벨벳)은 _kr_line_score의 '라인토큰 2개 이상 겹침' 게이트가
+    # 막으므로, 문턱은 기본 0.5를 쓴다(0.5357짜리 정상 매칭도 통과).
+    live_min = _MATCH_MIN_SCORE
     got_response = False
-    for query in _query_candidates(brand, name):
+    for query in _query_candidates(kr_brand, name):
         sr = search_kr(query)
         if sr is None:
             continue
@@ -245,11 +312,11 @@ def resolve_kr_goods(brand: str, name: str) -> tuple[KRResult | None, bool]:
         if sr.total_count == 0:
             continue
         best: KRResult | None = None
-        best_score = _MATCH_MIN_SCORE
+        best_score = live_min
         for r in sr.results:
             if r.sold_out:
                 continue
-            score = line_match_score(brand, name, r.brand, r.name)
+            score = _kr_line_score(kr_brand, name, clean_query, r)
             if score is None or score < best_score:
                 continue
             best, best_score = r, score

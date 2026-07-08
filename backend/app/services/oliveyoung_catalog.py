@@ -22,6 +22,59 @@ from app.services.matsukiyo_matcher import normalize_key, tokens_for
 # 크롤러 산출물. FIELDNAMES는 scripts/crawl_oliveyoung_global.py 와 일치.
 _CATALOG_FILENAME = "oliveyoung_global_products.csv"
 
+# 제품종류(폼) family. 같은 브랜드/라인이라도 폼이 다르면(선크림 vs 토너) 다른 상품이다.
+# 양쪽 상품명의 폼 family가 있고 서로 겹치지 않으면 매칭을 기각한다(오탐 방지).
+#
+# ⚠️ 영문↔한글을 같은 family로 묶는 게 핵심이다. DB 상품명은 영문("Cream"), 국내몰 라이브
+# 검색 결과는 한글("크림")이라, family로 정규화하지 않으면 'cream vs 크림'이 서로 다른 폼으로
+# 취급돼 정상 매칭까지 전부 기각된다(국내몰 KR 버튼 소실 회귀, 2026-07-08). 각 그룹은 동일
+# 제품종류의 EN/KR 표기를 함께 담는다. tokens_for가 소문자+분절하므로 토큰도 소문자여야 한다.
+_FORM_FAMILY_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"sunscreen", "sunblock", "sun", "sunstick", "선크림", "선블록", "선스틱"}),
+    frozenset({"toner", "softener", "토너"}),
+    frozenset({"cream", "크림"}),
+    frozenset({"lotion", "로션"}),
+    frozenset({"emulsion", "에멀전"}),
+    frozenset({"serum", "세럼"}),
+    frozenset({"essence", "에센스"}),
+    frozenset({"ampoule", "앰플"}),
+    frozenset({"cleanser", "cleansing", "wash", "클렌저", "클렌징"}),
+    frozenset({"foam", "폼"}),
+    frozenset({"gel", "젤"}),
+    frozenset({"peeling", "필링"}),
+    frozenset({"pack", "팩"}),
+    frozenset({"mask", "마스크"}),
+    frozenset({"patch", "패치"}),
+    frozenset({"cushion", "쿠션"}),
+    frozenset({"scrub", "스크럽"}),
+    frozenset({"oil", "오일"}),
+    frozenset({"mist", "미스트"}),
+    frozenset({"pad", "패드"}),
+    frozenset({"balm", "밤"}),
+    frozenset({"powder", "파우더"}),
+    frozenset({"tint", "틴트"}),
+    frozenset({"lipstick", "립스틱"}),
+    frozenset({"gloss", "글로스"}),
+    frozenset({"blusher", "blush", "블러셔"}),
+    frozenset({"concealer", "컨실러"}),
+    frozenset({"primer", "프라이머"}),
+    frozenset({"eyeshadow", "shadow", "섀도우"}),
+    frozenset({"eyeliner", "liner", "아이라이너"}),
+    frozenset({"mascara", "마스카라"}),
+    frozenset({"foundation", "파운데이션"}),
+    frozenset({"highlighter", "하이라이터"}),
+)
+
+# 토큰 → family 인덱스. 폼 토큰이 아니면 매핑에 없다.
+_FORM_TOKEN_TO_FAMILY: dict[str, int] = {
+    token: idx for idx, group in enumerate(_FORM_FAMILY_GROUPS) for token in group
+}
+
+
+def _form_families(tokens) -> set[int]:
+    """토큰 집합에서 제품종류 family 인덱스 집합을 뽑는다(EN/KR 표기는 같은 family로 합쳐짐)."""
+    return {_FORM_TOKEN_TO_FAMILY[t] for t in tokens if t in _FORM_TOKEN_TO_FAMILY}
+
 # 재고 0은 링크 대상에서 제외한다(죽은 링크 방지). 실측상 sellStatCode="10"이 판매중이고
 # 품절 코드값은 표본에 없어(추측 시 유효 상품을 잘못 버릴 위험) stockQty를 판매 신호로 쓴다.
 # stockQty가 비었/파싱 불가면 버리지 않는다(과잉 필터 방지).
@@ -35,6 +88,7 @@ class OYMatch:
     prdt_no: str
     gds_cd: str
     score: float
+    image_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -47,6 +101,9 @@ class _OYItem:
     brand_key: str
     brand_tokens: frozenset[str]
     name_tokens: frozenset[str]
+    name_en_tokens: frozenset[str] = frozenset()
+    name_kr_tokens: frozenset[str] = frozenset()
+    image_url: str = ""
 
 
 def _catalog_path() -> Path:
@@ -94,6 +151,9 @@ def _load_items() -> tuple[_OYItem, ...]:
                     brand_key=normalize_key(brand),
                     brand_tokens=tokens_for(brand),
                     name_tokens=tokens_for(name_en, name_kr),
+                    name_en_tokens=tokens_for(name_en),
+                    name_kr_tokens=tokens_for(name_kr),
+                    image_url=str(row.get("imageUrl") or "").strip(),
                 )
             )
     return tuple(items)
@@ -131,11 +191,19 @@ def _score_tokens(q_brand_tokens, q_name_tokens, c_brand_tokens, c_name_tokens, 
     브랜드 토큰을 양쪽 상품명 토큰에서 빼고 계산해, 브랜드만 같고 라인이 다른 상품
     ('롬앤 쥬시래스팅틴트' vs '롬앤 글래스팅워터틴트')이 브랜드 이중계상으로 넘어오는
     오탐을 막는다. 라인이 다르면 구별 토큰이 안 겹쳐 낮은 점수가 된다.
+
+    또한 양쪽 상품명에 제품종류(폼) 토큰이 모두 있는데 서로 겹치지 않으면(선크림 vs 토너,
+    클렌저 vs 크림) 라인 접두사(예: '1025 독도')가 같아도 다른 제품이므로 기각한다. 한 브랜드
+    라인의 여러 변형이 카탈로그의 단일 변형으로 잘못 매칭되던 오탐을 막는다(사용자 지적).
     """
     exclude = q_brand_tokens | c_brand_tokens
     ql = q_name_tokens - exclude
     il = c_name_tokens - exclude
     if not ql or not il:
+        return None
+    q_forms = _form_families(ql)
+    c_forms = _form_families(il)
+    if q_forms and c_forms and not (q_forms & c_forms):
         return None
     overlap = len(ql & il)
     if overlap == 0:
@@ -178,11 +246,33 @@ def match_oliveyoung(brand: str, name: str, min_score: float = 0.5) -> OYMatch |
     best: OYMatch | None = None
     best_score = 0.0
     for item in _load_items():
+        # (a) 결합(영문+한글) 토큰 점수 — 기존 동작(정밀, 형제라인 오탐 방지).
         score = score_line(
             q_brand_key, q_brand_tokens, q_name_tokens,
             item.brand_key, item.brand_tokens, item.name_tokens,
         )
-        if score is None or score < min_score:
+        if score is not None and score < min_score:
+            score = None
+        # (b) 결합이 문턱 미달이면 영문/한글 토큰셋으로 '따로' 재채점한다. 영문 쿼리가 한글 토큰에
+        #     희석돼 놓치던 상품(예: espoir 'Pro Tailor'→카탈로그 'Be Velvet Foundation')을 살린다.
+        #     단 구별(비-폼) 토큰이 2개 이상 겹칠 때만 인정해 형제라인 오탐은 계속 차단한다.
+        if score is None:
+            exclude = q_brand_tokens | item.brand_tokens
+            ql = q_name_tokens - exclude
+            for cnt in (item.name_en_tokens, item.name_kr_tokens):
+                if not cnt:
+                    continue
+                s = score_line(
+                    q_brand_key, q_brand_tokens, q_name_tokens,
+                    item.brand_key, item.brand_tokens, cnt,
+                )
+                if s is None or s < min_score:
+                    continue
+                overlap = ql & (cnt - exclude)
+                if sum(1 for t in overlap if not _form_families({t})) < 2:
+                    continue
+                score = s if score is None else max(score, s)
+        if score is None:
             continue
         if best is None or score > best_score:
             best_score = score
@@ -193,5 +283,6 @@ def match_oliveyoung(brand: str, name: str, min_score: float = 0.5) -> OYMatch |
                 prdt_no=item.prdt_no,
                 gds_cd=item.gds_cd,
                 score=round(min(1.0, score), 3),
+                image_url=item.image_url,
             )
     return best

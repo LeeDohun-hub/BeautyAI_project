@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable
@@ -46,6 +47,27 @@ def _korean_brand(items: list[NaverProduct], fallback: str) -> str:
     return fallback
 
 
+def _hangul_token_count(name: str) -> int:
+    """상품명에 포함된 '한글이 든 단어' 수. 국내몰 매칭이 잘 되려면 한글 라인명이 많아야 한다."""
+    return sum(1 for token in html.unescape(name or "").split() if _HANGUL.search(token))
+
+
+def _choose_result(items: list[NaverProduct]) -> NaverProduct:
+    """상위 결과 중 '한글 토큰이 가장 많은' 결과를 고른다(동률은 sim 상위 유지).
+
+    네이버 sim 1위가 해외셀러 영문 타이틀('CLIO PRO EYE PALETTE AIR 08 …')인 경우가 잦은데,
+    같은 라인의 한글 타이틀('클리오 프로 아이 팔레트 에어 …')이 하위에 있으면 그쪽이 국내몰
+    매칭에 훨씬 유리하다. 모두 영문/코드면 그대로 1위를 쓴다(악화 없음).
+    """
+    best = items[0]
+    best_kr = _hangul_token_count(items[0].name)
+    for item in items[1:]:
+        kr = _hangul_token_count(item.name)
+        if kr > best_kr:
+            best, best_kr = item, kr
+    return best
+
+
 def _preserve_original_amazon_link(product: object, brand: str, name: str) -> None:
     query = build_search_query(brand, name)
     if not _LATIN.search(query):
@@ -62,10 +84,11 @@ def _enrich_one(product: object, client: NaverClient) -> bool:
     items = client.search(query, hits=5)
     if not items:
         return False
-    top = items[0]
+    top = _choose_result(items)
     _preserve_original_amazon_link(product, brand, name)
-    # 한글화: 이름/URL/이미지는 상위 결과, 브랜드는 결과 중 첫 유효 한글 브랜드.
-    product.name = top.name
+    # 한글화: 이름/URL/이미지는 '한글 최다' 결과, 브랜드는 결과 중 첫 유효 한글 브랜드.
+    # HTML 엔티티('rom&amp;nd')를 디코드해 국내몰 검색/표시가 깨지지 않게 한다.
+    product.name = html.unescape(top.name or "")
     product.brand = _korean_brand(items, brand)
     product.product_url = top.product_url
     product.source = "naver"

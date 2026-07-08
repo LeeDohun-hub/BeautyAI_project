@@ -33,6 +33,9 @@ _ROWS = [
     ("GA_OOS", "Cicapair Tiger Grass Cream", "Dr.Jart+", "시카페어 타이거 그라스 크림", "8801234000003", "10", "0"),
     # 같은 브랜드 + 같은 제품군어(틴트)지만 라인이 다른 상품(오탐 회귀용).
     ("GA_JT", "Juicy Liar Water Tint", "LILYBYRED", "릴리바이레드 쥬시 라이어 워터 틴트", "8801234000004", "10", "20"),
+    # 같은 브랜드/라인('1025 Dokdo')이지만 폼(토너)만 카탈로그에 존재. 선크림/클렌저 변형이
+    # 라인 접두사만 겹쳐 이 토너로 잘못 매칭되면 안 된다(폼 가드 회귀용).
+    ("GA_DTN", "1025 Dokdo Toner 200ml Set", "ROUND LAB", "라운드랩 1025 독도 토너 200ml 세트", "8801234000005", "10", "30"),
 ]
 
 
@@ -99,3 +102,14 @@ def test_same_brand_different_line_not_cross_matched(monkeypatch, tmp_path):
     # 실제로 있는 라인은 정상 매칭.
     got = oc.match_oliveyoung("릴리바이레드", "릴리바이레드 쥬시 라이어 워터 틴트")
     assert got is not None and got.prdt_no == "GA_JT"
+
+
+def test_form_guard_rejects_different_product_type(monkeypatch, tmp_path):
+    # 카탈로그엔 '1025 Dokdo Toner'만 있다. 같은 라인의 선크림/클렌저는 라인 접두사('1025 dokdo')가
+    # 겹쳐도 폼(토너)이 달라 매칭되면 안 된다(사용자 지적 오탐: Sunscreen→Toner, Cleanser→Cream).
+    _use_catalog(monkeypatch, _write_catalog(tmp_path))
+    assert oc.match_oliveyoung("ROUND LAB", "1025 Dokdo Sunscreen 50ml") is None
+    assert oc.match_oliveyoung("ROUND LAB", "1025 Dokdo Cleansing Oil 200ml") is None
+    # 같은 폼(토너)은 정상 매칭.
+    got = oc.match_oliveyoung("ROUND LAB", "1025 Dokdo Toner 200ml")
+    assert got is not None and got.prdt_no == "GA_DTN"

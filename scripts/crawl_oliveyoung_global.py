@@ -8,14 +8,21 @@ Product numbers are fetched from the public sitemap:
   https://global.oliveyoung.com/sitemapindex-product.xml
 
 Usage:
-    # First: copy cf_clearance cookie from your browser (DevTools → Application → Cookies)
+    # Refresh the whole catalog. cf_clearance is usually NOT needed — the detail-data
+    # API passes with localization cookies alone (verified 2026-07-08).
+    python scripts/crawl_oliveyoung_global.py
+
+    # Only if Cloudflare starts returning 403/empty: pass a fresh browser cookie
+    # (DevTools → Application → Cookies → cf_clearance).
     python scripts/crawl_oliveyoung_global.py --cf-clearance "YOUR_CF_CLEARANCE_VALUE"
 
-    # Optional: filter by brand keyword
-    python scripts/crawl_oliveyoung_global.py --cf-clearance "..." --brand "BIOHEAL BOH"
+    # Optional: filter by brand keyword / limit for testing
+    python scripts/crawl_oliveyoung_global.py --brand "BIOHEAL BOH"
+    python scripts/crawl_oliveyoung_global.py --limit 50
 
-    # Limit product count (for testing)
-    python scripts/crawl_oliveyoung_global.py --cf-clearance "..." --limit 50
+Note on coverage: the product/image sitemaps expose exactly ~500 curated products and
+that IS the full global shop — probing ~680 prdtNos outside the sitemap (incl. beyond
+the max) returned 0 products (verified 2026-07-08). There is no larger catalog to crawl.
 
 Output:
     data/manifests/oliveyoung_global_products.csv
@@ -81,7 +88,7 @@ MAKEUP_WORDS = (
 )
 
 
-def build_session(cf_clearance: str) -> requests.Session:
+def build_session(cf_clearance: str = "") -> requests.Session:
     session = requests.Session()
     session.headers.update({
         "accept": "application/json, text/plain, */*",
@@ -97,16 +104,19 @@ def build_session(cf_clearance: str) -> requests.Session:
             "Chrome/149.0.0.0 Safari/537.36"
         ),
     })
-    # Minimum cookies required: localization + Cloudflare clearance
-    session.cookies.update({
+    # 실측(2026-07-08): detail-data API는 로컬라이제이션 쿠키만으로 통과한다(cf_clearance 불필요).
+    # Cloudflare가 다시 조여 403/빈응답이 나올 때만 --cf-clearance 로 브라우저 쿠키를 넣으면 된다.
+    cookies = {
         "curLang": "en",
         "lang": "en",
         "currency": "USD",
         "dlvCntry": "1230",
         "acesCntry": "00",
         "awsCntryCode": "1230",
-        "cf_clearance": cf_clearance,
-    })
+    }
+    if cf_clearance:
+        cookies["cf_clearance"] = cf_clearance
+    session.cookies.update(cookies)
     return session
 
 
@@ -200,7 +210,7 @@ def is_makeup_row(row: dict) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Crawl Olive Young Global product catalog via internal API.")
-    parser.add_argument("--cf-clearance", required=True, help="Value of cf_clearance cookie from your browser session")
+    parser.add_argument("--cf-clearance", default="", help="Optional cf_clearance cookie. Usually not needed (localization cookies suffice); provide only if Cloudflare starts returning 403/empty.")
     parser.add_argument("--brand", default="", help="Filter products by brand name keyword (e.g. 'BIOHEAL BOH')")
     parser.add_argument("--makeup-only", action="store_true", help="Keep only makeup/color product rows")
     parser.add_argument("--limit", type=int, default=0, help="Max products to fetch (0 = all)")

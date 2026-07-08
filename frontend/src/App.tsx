@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   Box,
@@ -568,6 +568,27 @@ function formatItemMatchPrice(price: number, region: ItemRegion): string {
   }).format(price);
 }
 
+// 상품 대표 이미지. 죽은 URL(올리브영 403, 라쿠텐/마츠키요 404, 네트워크 오류 등)이면
+// 깨진 이미지 아이콘 대신 placeholder로 폴백한다. src가 바뀌면 오류 상태를 초기화한다.
+function ProductImage({
+  src,
+  alt,
+  fallback,
+}: {
+  src?: string | null;
+  alt: string;
+  fallback: ReactNode;
+}) {
+  const [errored, setErrored] = useState(false);
+  useEffect(() => {
+    setErrored(false);
+  }, [src]);
+  if (!src || errored) {
+    return <>{fallback}</>;
+  }
+  return <img src={src} alt={alt} loading="lazy" onError={() => setErrored(true)} />;
+}
+
 function RakutenProductCard({
   product,
   selectedPlatform = 'all',
@@ -605,11 +626,7 @@ function RakutenProductCard({
         />
       )}
       <Box className="rakuten-product-image">
-        {product.image_url ? (
-          <img src={product.image_url} alt={product.name} />
-        ) : (
-          <Sparkles size={26} />
-        )}
+        <ProductImage src={product.image_url} alt={product.name} fallback={<Sparkles size={26} />} />
       </Box>
       <Chip label={product.keyword} size="small" sx={{ width: 'fit-content' }} />
       <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
@@ -2314,11 +2331,11 @@ export default function App() {
                   {reportItems.length ? reportItems.map((product, index) => (
                     <Box className="report-product" key={`${product.id}-${product.keyword}-${index}`}>
                       <Box className="report-product-image">
-                        {product.image_url ? (
-                          <img src={product.image_url} alt={product.name} />
-                        ) : (
-                          <span>{String(index + 1).padStart(2, '0')}</span>
-                        )}
+                        <ProductImage
+                          src={product.image_url}
+                          alt={product.name}
+                          fallback={<span>{String(index + 1).padStart(2, '0')}</span>}
+                        />
                       </Box>
                       <Box className="report-product-info">
                         <span>{String(index + 1).padStart(2, '0')}</span>
@@ -2688,11 +2705,7 @@ export default function App() {
                       <Grid item xs={12} sm={6} key={product.id}>
                         <Box className="rakuten-product-card">
                           <Box className="rakuten-product-image">
-                            {product.image_url ? (
-                              <img src={product.image_url} alt={product.name} />
-                            ) : (
-                              <Sparkles size={26} />
-                            )}
+                            <ProductImage src={product.image_url} alt={product.name} fallback={<Sparkles size={26} />} />
                           </Box>
                           <Stack direction="row" justifyContent="space-between" alignItems="center">
                             <Chip label={`추천 ${index + 1} · ${product.category}`} size="small" sx={{ width: 'fit-content' }} />

@@ -164,10 +164,19 @@ class PersonalColorAnalyzer:
 
         color_vector = self._skin_color_vector(skin_pixels)
         mean_rgb = color_vector["mean_rgb"]
-        model_season_probs = self._predict_season_probs(model_rgb)
-        color_season_probs = self._color_season_probs(color_vector)
-        season_probs = self._blend_season_probs(model_season_probs, color_season_probs, color_vector)
+        # 계절 분류기: 사용자 요청으로 EfficientNet+블렌드 → SKN16 팀 분류기(LAB+RandomForest)로 전면 교체(2026-07-08).
+        skn_probs, skn_subtype = self._skn16_season(original_rgb)
+        if skn_probs is not None:
+            season_probs = skn_probs
+            model_season_probs = skn_probs
+            color_season_probs = None
+        else:
+            # SKN16 얼굴검출 실패 시에만 기존 파이프라인으로 폴백(결과 누락 방지).
+            model_season_probs = self._predict_season_probs(model_rgb)
+            color_season_probs = self._color_season_probs(color_vector)
+            season_probs = self._blend_season_probs(model_season_probs, color_season_probs, color_vector)
         return {
+            "skn_subtype": skn_subtype,
             "brightness": float(np.mean(mean_rgb) / 255),
             "chroma": float((np.max(mean_rgb) - np.min(mean_rgb)) / 255),
             "warmth": float(color_vector["warmth"]),
@@ -504,6 +513,21 @@ class PersonalColorAnalyzer:
             return classifier.predict_probs(Image.fromarray(rgb.astype(np.uint8)))
         except Exception:
             return None
+
+    def _skn16_season(self, original_rgb: np.ndarray) -> tuple[dict[str, float] | None, str]:
+        """SKN16 팀 분류기로 계절 확률 + 세부톤을 예측한다. 얼굴검출 실패 시 (None, "")."""
+        try:
+            from app.ai.skn16_classifier import get_skn16_classifier
+            clf = get_skn16_classifier()
+            if not clf.available:
+                return None, ""
+            bgr = np.clip(original_rgb, 0, 255).astype(np.uint8)[:, :, ::-1].copy()  # RGB→BGR
+            res = clf.predict(bgr)
+            if not res:
+                return None, ""
+            return res["season_probs"], res.get("subtype", "")
+        except Exception:
+            return None, ""
 
     def _capture_quality(
         self,
