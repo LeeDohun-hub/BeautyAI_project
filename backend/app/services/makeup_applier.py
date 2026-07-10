@@ -87,6 +87,21 @@ def _recolor(img_bgr: np.ndarray, mask: np.ndarray, target_bgr: np.ndarray, stre
     return cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
 
 
+def _lip_color_gate(img_bgr: np.ndarray, geom: np.ndarray) -> np.ndarray:
+    """기하 입술마스크 안에서 '입술색(붉음, LAB a* 높음)' 픽셀만 남기는 소프트 게이트.
+
+    오므린 입·측면 각도에서 랜드마크 폴리곤이 입술선을 넘어 아랫입술 아래 스킨으로
+    번지는 것을 억제한다. 영역 내에서 덜 붉은(=스킨) 하위 픽셀을 부드럽게 깎는다.
+    """
+    region = geom > 0.05
+    if int(region.sum()) < 20:
+        return np.ones_like(geom, dtype=np.float32)
+    a = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)[:, :, 1].astype(np.float32)  # a 채널: 128 중립, 클수록 붉음
+    thr = float(np.percentile(a[region], 30))
+    # a>=thr+? → 1(유지), a<<thr → 0(스킨 번짐 제거). 완만한 경사로 자연스럽게.
+    return np.clip((a - thr) / 5.0 + 0.6, 0.0, 1.0)
+
+
 def _eyeshadow_poly(pts: np.ndarray, lift: int) -> np.ndarray:
     top = pts.copy()
     top[:, 1] = np.clip(top[:, 1] - lift, 0, None)
@@ -135,13 +150,17 @@ def apply_mood(image_bytes: bytes, mood_id: str, max_size: int = 1000, crop_face
     face_right = _points(lm, [FACE_RIGHT], w, h)[0]
     face_w = max(1.0, float(np.linalg.norm(face_right - face_left)))
 
-    # 입술
+    # 입술 — 폴리곤을 살짝 깎고(erode) 입술색 게이트로 스킨 번짐을 막는다(오므린 입/측면 대응).
     lip_mask = np.zeros((h, w), dtype=np.uint8)
     cv2.fillPoly(lip_mask, [_points(lm, LIPS_OUTER, w, h)], 255)
+    erode = max(1, int(face_w * 0.010))
+    lip_mask = cv2.erode(lip_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode, erode)))
     inner = np.zeros((h, w), dtype=np.uint8)
     cv2.fillPoly(inner, [_points(lm, LIPS_INNER, w, h)], 255)
-    lip = np.clip(_feather(lip_mask, 3) - _feather(inner, 1), 0, 1)
-    img_bgr = _recolor(img_bgr, lip, _hex_to_bgr(colors["lip"]), strength=0.78, l_strength=0.38)
+    lip = np.clip(_feather(lip_mask, 2) - _feather(inner, 1), 0, 1)
+    lip = lip * _lip_color_gate(img_bgr, lip)
+    # 입술은 풀립스틱보다 은은한 '틴트'가 자연스러워 강도를 낮춰 기본값으로 둔다.
+    img_bgr = _recolor(img_bgr, lip, _hex_to_bgr(colors["lip"]), strength=0.55, l_strength=0.28)
 
     # 볼 (블러셔) — 소프트 원형 (자연스럽게 은은히)
     cheek_mask = np.zeros((h, w), dtype=np.uint8)
@@ -157,7 +176,7 @@ def apply_mood(image_bytes: bytes, mood_id: str, max_size: int = 1000, crop_face
     cv2.fillPoly(eye_mask, [_eyeshadow_poly(_points(lm, LEFT_EYE_UPPER, w, h), lift)], 255)
     cv2.fillPoly(eye_mask, [_eyeshadow_poly(_points(lm, RIGHT_EYE_UPPER, w, h), lift)], 255)
     eye = _feather(eye_mask, max(3, int(face_w * 0.015)))
-    img_bgr = _recolor(img_bgr, eye, _hex_to_bgr(colors["eye"]), strength=0.38, l_strength=0.16)
+    img_bgr = _recolor(img_bgr, eye, _hex_to_bgr(colors["eye"]), strength=0.30, l_strength=0.14)
 
     applied_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     if crop_face:

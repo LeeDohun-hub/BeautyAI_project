@@ -4,6 +4,14 @@ from urllib.parse import quote_plus
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Ingredient, Product, ProductIngredient, RecommendationHistory, SkinAnalysis, Survey
+from app.services.derma_condition_care import (
+    GUIDE_ONLY,
+    OTC_INGREDIENTS,
+    PRODUCTS,
+    REFERRAL,
+    care_for,
+    load_otc_examples,
+)
 from app.services.platform_availability import unavailable_platforms_bulk
 from app.services.skincare_ingredient_knowledge import (
     build_skincare_recommendation_hint,
@@ -932,6 +940,151 @@ def recommend_products(
             )
             for score, _platform_score, product, reason_tags, evidence_note in top_products
         ],
+        explanation=explanation,
+    )
+
+
+def recommend_derma_care(
+    db: Session,
+    body_conditions: list[BodyConditionScore],
+    survey: SurveyInput,
+    user_id: int | None,
+    analysis_id: int | None = None,
+    platform: str = "all",
+) -> RecommendationResponse:
+    """2단 모델의 질환 그룹(tier2)에 '적합한 성분' 기준으로 제품/안내를 낸다.
+
+    - 화장품으로 다룰 수 있는 병(습진·여드름·건선) → 적합 성분 함유 DB 제품 추천.
+    - 약이 필요한 병(무좀·옴·바이러스·점) → 제품 대신 성분/상담 안내(가짜 제품 X).
+    - 악성 의심 → 제품 없이 진료 안내.
+    """
+    platform = normalize_platform(platform)
+    conditions = [c.condition for c in body_conditions] or ["other"]
+    top_condition = conditions[0]
+    top_care = care_for(top_condition)
+
+    # 악성 의심만 안전상 제품 대신 진료 안내로 남긴다(제품 폴백 금지).
+    if top_care["kind"] == REFERRAL:
+        history = RecommendationHistory(
+            user_id=user_id, analysis_id=analysis_id,
+            recommended_ingredients=json.dumps([]), recommended_products=json.dumps([]),
+        )
+        db.add(history)
+        db.commit()
+        db.refresh(history)
+        return RecommendationResponse(
+            history_id=history.id, ingredients=[], products=[], explanation=top_care["guide"]
+        )
+
+    # '제품/성분으로 해결 가능한 가장 상위 병'을 고른다. 1순위가 점·지루각화처럼 제품으로
+    # 다룰 수 없으면(GUIDE_ONLY·OTC없음), 함께 감지된 하위 병(예: 습진)으로 넘어간다.
+    target_condition, target_care = top_condition, top_care
+    if top_care["kind"] != PRODUCTS and top_condition not in OTC_INGREDIENTS:
+        for cond in conditions[1:]:
+            cand = care_for(cond)
+            if cand["kind"] == PRODUCTS or cond in OTC_INGREDIENTS:
+                target_condition, target_care = cond, cand
+                break
+
+    want_names: list[str] = list(target_care.get("ingredients", []))
+    ingredients = (
+        db.query(Ingredient).filter(Ingredient.name.in_(want_names)).all() if want_names else []
+    )
+    order = {name: index for index, name in enumerate(want_names)}
+    ingredients.sort(key=lambda ing: order.get(ing.name, 99))
+
+    top: list[tuple[float, Product, list[str]]] = []
+    if target_care["kind"] == PRODUCTS and want_names:
+        want, avoid = set(want_names), set(target_care.get("avoid", []))
+        candidates = db.query(Product).options(
+            selectinload(Product.brand),
+            selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
+        ).all()
+        scored: list[tuple[float, Product, list[str]]] = []
+        for product in candidates:
+            names = {pi.ingredient.name for pi in product.ingredients}
+            if avoid & names or not (want & names):
+                continue
+            match = len(want & names)
+            skin_type_match = 8 if survey.skin_type in product.skin_types or "all" in product.skin_types else 0
+            rating_score = rating_score_for(product)
+            total = round(
+                min(99.0, 30 + match * 15 + skin_type_match
+                    + min(6.0, rating_score * 0.6)
+                    + min(4.0, platform_fit_score(product, platform) * 0.5)),
+                1,
+            )
+            reason = [target_care["label"]] + [f"{name} 함유" for name in want_names if name in names][:3]
+            scored.append((total, product, reason))
+        top = sorted(scored, key=lambda item: (item[0], item[1].avg_rating or 0.0), reverse=True)[:5]
+
+    # 1순위가 제품 불가라 하위 병으로 넘어갔으면 그 사실을 먼저 알린다.
+    lead = ""
+    if target_condition != top_condition:
+        lead = f"{top_care['label']}은(는) 제품으로 해결하기 어렵습니다. 함께 감지된 {target_care['label']} 기준으로 제품을 추천합니다. "
+
+    if target_care["kind"] == PRODUCTS:
+        ing_text = ", ".join(ing.name for ing in ingredients[:3])
+        prod_text = ", ".join(product.name for _s, product, _r in top[:3])
+        body = f"{target_care['label']}에 적합한 {ing_text} 성분 중심으로 골랐습니다. {target_care['guide']}"
+        if prod_text:
+            body += f" 추천 제품: {prod_text}."
+    else:
+        body = target_care["guide"]
+    explanation = lead + body
+
+    # OTC 의약품 예시(무좀·사마귀 등 약이 필요한 병). 지식파일 없으면 라이브 OpenFDA로 폴백.
+    otc_examples = load_otc_examples(target_condition)
+    shown = ", ".join(
+        f"{item['brand']}({item['ingredient']})"
+        for item in otc_examples if item.get("brand")
+    )
+    if shown:
+        explanation += f" 약국 OTC 예시(미국 FDA 기준): {shown}. 사용 전 약사와 상담하세요."
+
+    history = RecommendationHistory(
+        user_id=user_id,
+        analysis_id=analysis_id,
+        recommended_ingredients=json.dumps([ing.name for ing in ingredients]),
+        recommended_products=json.dumps([product.name for _s, product, _r in top]),
+    )
+    db.add(history)
+    db.commit()
+    db.refresh(history)
+
+    matched_map = {product.id: matched_platforms(product) for _s, product, _r in top}
+    hidden_map = unavailable_platforms_bulk(
+        (product.id, product.brand.name, product.name, set(matched_map[product.id]))
+        for _s, product, _r in top
+    )
+    products_out = [
+        ProductOut(
+            id=product.id,
+            brand=product.brand.name,
+            name=product.name,
+            category=product.category,
+            price=product.price,
+            score=score,
+            description=product.description,
+            ingredients=[item.ingredient.name for item in product.ingredients],
+            product_url=product.product_url,
+            platform_links=build_platform_links(product),
+            matched_platforms=[p for p in matched_map[product.id] if p not in hidden_map.get(product.id, set())],
+            image_url=product.image_url,
+            avg_rating=product.avg_rating or None,
+            review_count=product.review_count or None,
+            reason_tags=reason,
+            evidence_note=None,
+        )
+        for score, product, reason in top
+    ]
+    return RecommendationResponse(
+        history_id=history.id,
+        ingredients=[
+            IngredientOut(id=ing.id, name=ing.name, benefit=ing.benefit, targets=ing.targets.split(","))
+            for ing in ingredients
+        ],
+        products=products_out,
         explanation=explanation,
     )
 

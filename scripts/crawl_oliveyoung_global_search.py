@@ -28,13 +28,16 @@ SEARCH_API = f"{BASE}/display/search/product-list"
 DETAIL_API = f"{BASE}/product/detail-data"
 IMAGE_CDN = "https://image.oliveyoung.com/"
 COOKIE = "curLang=en; lang=en; currency=USD; dlvCntry=1230; acesCntry=00; awsCntryCode=1230"
+# detail은 JP 로케일로 받는다: 한 번 호출로 한글(korPrdtName)·영문(prdtNameEn) 고정필드 + 일본어
+# (prdtName/brandName)까지 모두 얻는다. JP 지역 카드가 일본어 상품명을 쓰도록 jpPrdtName 저장.
+COOKIE_JP = "curLang=jp; lang=jp; currency=JPY; dlvCntry=1392; acesCntry=00; awsCntryCode=1392"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/149.0.0.0 Safari/537.36")
 
 FIELDNAMES = [
     "prdtNo", "prdtNameEn", "brandName", "category", "subCategory", "nrmlAmt", "saleAmt",
     "currency", "gdsCd", "imagePath", "sellStatCode", "stockQty", "bestYn", "newYn",
-    "trendingYn", "korPrdtName", "productUrl", "imageUrl",
+    "trendingYn", "korPrdtName", "productUrl", "imageUrl", "jpPrdtName", "jpBrandName",
 ]
 
 # 크롤 대상: K뷰티 브랜드(recommender.KBEAUTY_BRANDS) + 색조 브랜드.
@@ -50,11 +53,11 @@ BRANDS = [
 ]
 
 
-def _post(url: str, payload: dict, timeout: float = 15.0):
+def _post(url: str, payload: dict, timeout: float = 15.0, cookie: str = COOKIE):
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(), method="POST",
         headers={"content-type": "application/json", "origin": BASE,
-                 "referer": f"{BASE}/", "cookie": COOKIE, "user-agent": UA},
+                 "referer": f"{BASE}/", "cookie": cookie, "user-agent": UA},
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         raw = r.read().decode("utf-8", "ignore")
@@ -91,7 +94,9 @@ def search_prdtnos(query: str, delay: float = 0.2) -> set[str]:
 
 def fetch_product(prdt_no: str) -> dict | None:
     try:
-        d = _post(DETAIL_API, {"prdtNo": prdt_no}, timeout=12)
+        # JP 로케일로 받아 일본어명(prdtName/brandName)까지 확보. 한글(korPrdtName)·영문
+        # (prdtNameEn/brandNameEn)은 로케일 무관 고정필드라 함께 온다.
+        d = _post(DETAIL_API, {"prdtNo": prdt_no}, timeout=12, cookie=COOKIE_JP)
     except Exception:
         return None
     if not d:
@@ -103,9 +108,11 @@ def fetch_product(prdt_no: str) -> dict | None:
     stock_qty = option_list[0].get("buyStockQty") if option_list else None
     cats = (p.get("allPathCtgrNameEn") or "").replace("&gt;", ">").split(">")
     image_path = p.get("imagePath") or ""
+    # brandName/prdtName은 JP 쿠키라 일본어. 영문 브랜드는 brandNameEn 고정필드에서 취한다
+    # (brandName 컬럼은 매칭 키라 반드시 영문 유지 — 여기서 일본어로 바꾸면 KR 매칭이 깨진다).
     return {
         "prdtNo": prdt_no,
-        "prdtNameEn": p.get("prdtNameEn") or p.get("prdtName", ""),
+        "prdtNameEn": p.get("prdtNameEn", ""),
         "brandName": p.get("brandNameEn") or p.get("brandName", ""),
         "category": cats[1].strip() if len(cats) > 1 else "",
         "subCategory": cats[2].strip() if len(cats) > 2 else "",
@@ -122,6 +129,9 @@ def fetch_product(prdt_no: str) -> dict | None:
         "korPrdtName": p.get("korPrdtName", ""),
         "productUrl": f"{BASE}/product/detail?prdtNo={prdt_no}",
         "imageUrl": f"{IMAGE_CDN}{image_path}" if image_path else "",
+        # 일본어명(JP 지역 카드용). prdtName/brandName이 JP 로케일이라 일본어.
+        "jpPrdtName": p.get("prdtName", ""),
+        "jpBrandName": p.get("brandName", ""),
     }
 
 

@@ -31,7 +31,7 @@ except Exception:  # pragma: no cover
 
 from app.core.config import get_settings
 from app.services.matsukiyo_matcher import normalize_key, tokens_for
-from app.services.oliveyoung_catalog import line_match_score, score_line
+from app.services.oliveyoung_catalog import _brands_match, _form_families, line_match_score, score_line
 from app.services.platform_resolver import build_search_query, oliveyoung_kr_query
 
 _KR_CATALOG_FILENAME = "oliveyoung_kr_products.csv"
@@ -47,6 +47,31 @@ _MATCH_MIN_SCORE = 0.5
 _MISS = object()
 _cache: dict[str, object] = {}
 _cache_lock = threading.Lock()
+
+# 레이트리밋(429) 서킷 브레이커: 국내몰이 429를 주면 일정 시간 라이브 호출을 전면 중단한다.
+# 백오프가 없으면 429가 떠도 같은 강도로 계속 두들겨 밴이 안 풀리고 오히려 심화된다(실측:
+# 하루 누적 호출로 아침엔 되던 버튼이 전부 사라짐). 쿨다운 동안에도 로컬 카탈로그 매칭
+# 버튼은 정상 노출되므로, 인기 상품 링크는 유지된다.
+_RATE_LIMIT_COOLDOWN = 15 * 60  # 초
+_rate_limited_until = 0.0
+_rate_limit_lock = threading.Lock()
+
+
+def _is_rate_limited() -> bool:
+    with _rate_limit_lock:
+        return time.time() < _rate_limited_until
+
+
+def _trip_rate_limit() -> None:
+    global _rate_limited_until
+    with _rate_limit_lock:
+        _rate_limited_until = time.time() + _RATE_LIMIT_COOLDOWN
+
+
+def kr_rate_limited_until() -> float:
+    """진단용: 쿨다운 해제 예정 epoch(0=정상)."""
+    with _rate_limit_lock:
+        return _rate_limited_until
 
 
 @dataclass(frozen=True)
@@ -120,26 +145,84 @@ def kr_catalog_available() -> bool:
     return bool(_load_kr_catalog())
 
 
+# 용량/수량 노이즈.
+_KR_NOISE_RE = re.compile(r"^\d+(\.\d+)?(ml|g|kg|호|색|colors?|개|개입|매|종|매입|팩|세트|매)?$|^\d+$", re.I)
+# 프로모/마케팅 토큰(카탈로그명에 '[올영단독/더블기획]' 등으로 붙어 containment를 희석시킨다).
+# 라인 정체성이 아니라 판촉 문구라 라인 매칭에서 제외한다. 라인 구별어(이지/쉐이핑/납작 등)는 유지.
+_KR_STOP = frozenset({
+    "올영단독", "올리브영", "단독", "단독기획", "더블기획", "한정기획", "기획", "기획세트", "포켓뷰티",
+    "new", "증정", "사은품", "본품", "특가", "반값", "신상", "더블", "한정", "리필", "택", "택1",
+    "구성", "혜택", "할인", "세일", "정품", "공식", "무료배송", "colors", "color", "colour",
+})
+
+
+def _kr_line(tokens: frozenset[str], exclude: frozenset[str]) -> set[str]:
+    return {t for t in (tokens - exclude) if not _KR_NOISE_RE.match(t) and t not in _KR_STOP}
+
+
+def _kr_line_quality(q_brand_tokens: frozenset[str], q_name_tokens: frozenset[str], item: "_KRItem") -> tuple[float, int]:
+    """(점수, 구별토큰 겹침수). 네이버 상품명은 '남자/잡티/커버' 등 잡토큰이 많아 Jaccard가 희석되므로,
+    Jaccard와 **카탈로그명 커버리지(containment)**의 max를 쓴다. 폼(제품종류)이 서로 있으면서 안 겹치면
+    기각(선크림 vs 컨실러). 겹침 없으면 (0,0)."""
+    exclude = q_brand_tokens | item.brand_tokens
+    ql = _kr_line(q_name_tokens, exclude)
+    il = _kr_line(item.name_tokens, exclude)
+    if not ql or not il:
+        return 0.0, 0
+    qf, cf = _form_families(ql), _form_families(il)
+    if qf and cf and not (qf & cf):
+        return 0.0, 0  # 폼 불일치 → 기각
+    overlap = ql & il
+    if not overlap:
+        return 0.0, 0
+    jaccard = len(overlap) / len(ql | il)
+    containment = len(overlap) / len(il)  # 카탈로그 라인이 쿼리에 얼마나 담겼나(잡토큰에 강건)
+    return max(jaccard, containment), len(overlap)
+
+
 def match_kr_catalog(brand: str, name: str, min_score: float = _MATCH_MIN_SCORE) -> KRResult | None:
-    """로컬 KR 카탈로그에서 최적 매칭(재고 있는 상품)을 찾는다. 없으면 None."""
+    """로컬 KR 카탈로그에서 최적 매칭(재고 있는 상품)을 찾는다. 없으면 None.
+
+    국내몰은 브랜드가 확실하다(한글 브랜드). 카탈로그는 여러 브랜드가 섞여 있으므로 **브랜드가
+    실제로 일치하는 후보만** 받는다(교차브랜드 오탐 차단, 예: 바비브라운→3CE). 그 안에서:
+    1) 토큰 유사도(Jaccard/containment≥문턱, 구별토큰 2개↑) 매칭.
+    2) 없으면 '폼 유니크' 폴백 — 브랜드가 확실하고 쿼리 제품종류(컨실러/쿠션 등)와 같은 폼의 후보가
+       카탈로그에 **정확히 1개**면 그걸로 본다(네이버명 '무칸 남자 컨실러' vs 올영 '무칸 옴므 퍼펙트
+       스팟 컨실러'처럼 이름이 크게 달라도, 무칸의 컨실러가 하나뿐이면 그 상품이 확실하기 때문).
+    """
     q_brand_key = normalize_key(brand)
     q_brand_tokens = tokens_for(brand)
     q_name_tokens = tokens_for(name)
     if not q_name_tokens:
         return None
+    cands = [
+        item for item in _load_kr_catalog()
+        if not item.result.sold_out
+        and _brands_match(q_brand_key, q_brand_tokens, item.brand_key, item.name_tokens)
+    ]
+    # 1) 토큰 유사도 매칭. 동점이면 구별토큰 겹침이 많은 쪽(형제라인 오탐 방지: '이지 쉐이핑 펜슬'이
+    #    '밸런스 펜슬'로 새지 않게 — 둘 다 containment 0.667 동점이라도 겹침수로 정답을 고른다).
     best: KRResult | None = None
-    best_score = min_score
-    for item in _load_kr_catalog():
-        if item.result.sold_out:
+    best_key: tuple[float, int] | None = None
+    for item in cands:
+        score, overlap = _kr_line_quality(q_brand_tokens, q_name_tokens, item)
+        if overlap < 2 or score < min_score:
             continue
-        score = score_line(
-            q_brand_key, q_brand_tokens, q_name_tokens,
-            item.brand_key, item.brand_tokens, item.name_tokens,
-        )
-        if score is None or score < best_score:
-            continue
-        best, best_score = item.result, score
-    return best
+        key = (score, overlap)
+        if best_key is None or key > best_key:
+            best, best_key = item.result, key
+    if best is not None:
+        return best
+    # 2) 폼 유니크 폴백.
+    q_forms = _form_families(_kr_line(q_name_tokens, q_brand_tokens))
+    if q_forms:
+        form_matches = [
+            item for item in cands
+            if _form_families(_kr_line(item.name_tokens, item.brand_tokens)) & q_forms
+        ]
+        if len(form_matches) == 1:
+            return form_matches[0].result
+    return None
 
 
 def _cache_get(key: str):
@@ -194,6 +277,9 @@ def search_kr(query: str) -> KRSearch | None:
     cached = _cache_get(query)
     if cached is not _MISS:
         return cached  # type: ignore[return-value]
+    # 쿨다운 중이면 라이브 호출을 아예 하지 않는다(밴 심화 방지). 카탈로그 매칭은 별개로 동작.
+    if _is_rate_limited():
+        return None
     try:
         response = _creq.get(
             f"{_SEARCH_API}?query={quote_plus(query)}&pageIdx=1&rowsPerPage=24",
@@ -201,6 +287,10 @@ def search_kr(query: str) -> KRSearch | None:
             headers={"x-requested-with": "XMLHttpRequest", "referer": _SEARCH_REFERER},
             timeout=_REQUEST_TIMEOUT,
         )
+        if response.status_code == 429:
+            # 레이트리밋: 서킷을 열어 이후 호출을 중단한다(같은 요청 배치의 나머지도 즉시 스킵).
+            _trip_rate_limit()
+            return None
         if response.status_code != 200:
             return None
         result = _parse(response.json())
@@ -326,13 +416,18 @@ def resolve_kr_goods(brand: str, name: str) -> tuple[KRResult | None, bool]:
 
 
 def prune_kr_oliveyoung(products: Iterable[object]) -> None:
-    """국내몰 실시간 검색으로 olive young 버튼을 goodsNo 직링크로 교체/제거한다(제자리 수정).
+    """국내몰 매칭으로 olive young 버튼을 goodsNo 직링크로 교체하거나 제거한다(제자리 수정).
 
-    - 매칭됨   : oliveyoung 링크를 goodsNo 상세 URL(직링크)로 교체.
-    - 그 외    : oliveyoung 버튼 제거. 0건(미취급 확정)뿐 아니라 네트워크 오류/429(검증 불가)도
-                 제거한다 — 잠정 검색 링크를 남기면 '올리브영에 실제로는 없는데 버튼이 붙는'
-                 오탐이 생기기 때문(사용자 지적). 확실히 매칭된 상품(카탈로그/라이브)만 노출한다.
-                 인기 상품은 로컬 KR 카탈로그(배치 크롤) 직링크로 429와 무관하게 계속 노출된다.
+    **정책: 카탈로그/라이브 매칭만 버튼을 낸다(카탈로그 정답지).**
+    - 매칭됨  : oliveyoung 링크를 goodsNo 상세 URL(직링크)로 교체.
+    - 무매칭  : oliveyoung 버튼 **제거**. 검증 확정 0건(미취급)이든, 403(Cloudflare 챌린지)으로
+               검증 불가든 마찬가지로 지운다. 검색 링크 폴백을 남기면 '올리브영에 실제로는 없는
+               상품에도 버튼이 붙는' 오탐이 생기기 때문(사용자가 스킨케어에서 이 오탐을 지적).
+
+    한때 403 검증 불가 시 검색 링크를 유지하는 폴백을 뒀으나(버튼 전멸 방지), 그게 미취급 상품에
+    버튼을 붙이는 오탐을 만들어 폐기했다. 커버리지는 검색 링크가 아니라 **fat 카탈로그**로 확보한다
+    (scripts/crawl_oliveyoung_kr.py --browser --expand — 헤드풀 Chrome 으로 CF 통과해 메이크업/
+    스킨케어/네일까지 크롤). 카탈로그가 두꺼울수록 취급 상품 누락이 준다.
     """
     items = [
         p for p in products
@@ -353,8 +448,8 @@ def prune_kr_oliveyoung(products: Iterable[object]) -> None:
                 match = None
             links = dict(product.platform_links or {})
             if match is not None:
-                links["oliveyoung"] = kr_goods_url(match.goods_no)
+                links["oliveyoung"] = kr_goods_url(match.goods_no)  # 직링크 승격
             else:
-                links.pop("oliveyoung", None)
+                links.pop("oliveyoung", None)                       # 무매칭(미취급/검증불가) → 제거
             product.platform_links = links
             product.matched_platforms = sorted(links.keys())

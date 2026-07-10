@@ -397,8 +397,8 @@ body {
 }
 
 .print-report-card {
-  width: min(100%, 860px);
-  aspect-ratio: 1.62 / 1;
+  width: min(100%, 920px);
+  aspect-ratio: 1.34 / 1;
   overflow: hidden;
   border: 1px solid #cfd6dd;
   background: #fbfcfd;
@@ -455,12 +455,12 @@ body {
 }
 
 .report-left {
-  padding: 18px;
+  padding: 14px;
   border-right: 1px solid #d8dde3;
 }
 
 .report-main {
-  padding: 18px 20px;
+  padding: 14px 18px;
 }
 
 .report-photo {
@@ -470,11 +470,18 @@ body {
   overflow: hidden;
   margin-bottom: 14px;
   border: 1px solid #d8dde3;
-  background: #eef2f5;
+  background: #f3f6f8;
   color: #87919c;
 }
 
-.report-photo img,
+.report-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center center;
+  display: block;
+}
+
 .report-mood-thumb img {
   width: 100%;
   height: 100%;
@@ -485,8 +492,8 @@ body {
 .report-copy {
   margin-top: 6px !important;
   color: #3f4751;
-  font-size: 0.72rem !important;
-  line-height: 1.55 !important;
+  font-size: 0.7rem !important;
+  line-height: 1.45 !important;
 }
 
 .report-copy.strong {
@@ -511,7 +518,7 @@ body {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 6px;
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .report-palette > div {
@@ -562,13 +569,13 @@ body {
 
 .product-title {
   display: block;
-  margin-top: 16px !important;
+  margin-top: 12px !important;
 }
 
 .report-product-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px 12px;
+  gap: 8px 12px;
   margin-top: 8px;
 }
 

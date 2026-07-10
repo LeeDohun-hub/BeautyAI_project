@@ -20,6 +20,8 @@ def _no_catalog(monkeypatch):
     # 레거시(검색 링크) 동작 테스트는 실제 카탈로그 CSV 유무와 무관하게 '카탈로그 없음'을
     # 가정한다. 카탈로그 분기 테스트는 본문에서 catalog_available 을 True로 덮어쓴다.
     monkeypatch.setattr(pr, "catalog_available", lambda: False)
+    # 아마존 Beauty 카탈로그도 끈다(레거시 테스트는 amazon 매칭 무관 — 실제 52k 매니페스트에 의존 X).
+    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda: False)
 
 
 def _expected_oliveyoung_kr(brand: str, name: str) -> str:
@@ -37,6 +39,39 @@ def _product(source: str, product_url: str = "https://item.rakuten.co.jp/shop/ex
     )
 
 
+def test_oliveyoung_global_source_keeps_only_oy_direct_when_unmatched() -> None:
+    # JP 남성 주입 상품: OY prdtNo 직링크만 유지(언어 무관 보존). 라쿠텐/아마존은 직링크 없으면
+    # 안 붙는다(검색 폴백 폐기 — 직링크 있으면 버튼, 없으면 미출력). 라쿠텐 직링크는 API 검증 시
+    # routes._verify_rakuten_for_global 이 별도로 붙인다.
+    direct = OLIVEYOUNG_GLOBAL_DETAIL + quote_plus("GA240925619")
+    product = SimpleNamespace(
+        brand="ダシュ",
+        name="DASHU メンズアクアトーンアップBBローション40ml",
+        product_url=direct,
+        source="oliveyoung_global",
+        platform_links={"oliveyoung": direct},
+        matched_platforms=["oliveyoung"],
+    )
+    resolve_product_platforms(product, "jp")
+    assert product.platform_links == {"oliveyoung": direct}
+    assert "rakuten" not in product.platform_links
+
+
+def test_jp_existing_oliveyoung_direct_link_survives_resolve() -> None:
+    # dedup으로 라쿠텐 상품에 병합된 prdtNo 직링크도 유지된다(일본어 재매칭 실패로 버려지지 않게).
+    direct = OLIVEYOUNG_GLOBAL_DETAIL + quote_plus("GA111")
+    product = SimpleNamespace(
+        brand="DASHU",
+        name="ダシュ メンズ クッション",
+        product_url="https://item.rakuten.co.jp/x/",
+        source="rakuten",
+        platform_links={"rakuten": "https://item.rakuten.co.jp/x/", "oliveyoung": direct},
+        matched_platforms=["rakuten", "oliveyoung"],
+    )
+    resolve_product_platforms(product, "jp")
+    assert product.platform_links.get("oliveyoung") == direct
+
+
 def test_naver_junk_brand_is_excluded_from_oliveyoung_query() -> None:
     assert oliveyoung_kr_query("네이버쇼핑", "하우스랩스 페어 파운데이션") == "하우스랩스 페어 파운데이션"
     assert "네이버쇼핑" not in build_search_query("네이버쇼핑", "하우스랩스 페어 파운데이션")
@@ -46,7 +81,7 @@ def test_naver_junk_brand_is_excluded_from_oliveyoung_query() -> None:
     ).startswith("라로슈포제")
 
 
-def test_rakuten_source_keeps_only_verified_rakuten_button_for_jp() -> None:
+def test_rakuten_source_keeps_only_rakuten_when_amazon_unmatched() -> None:
     product = _product("rakuten")
 
     resolve_product_platforms(product, "jp")
@@ -55,7 +90,23 @@ def test_rakuten_source_keeps_only_verified_rakuten_button_for_jp() -> None:
     assert product.matched_platforms == ["rakuten"]
 
 
-def test_merged_product_with_direct_rakuten_link_does_not_add_unverified_buttons() -> None:
+def test_rakuten_source_adds_amazon_jp_only_when_asin_matched(monkeypatch) -> None:
+    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda: True)
+    monkeypatch.setattr(
+        pr.amazon_catalog,
+        "match_amazon",
+        lambda brand, query: SimpleNamespace(asin="B0MATCHJP"),
+    )
+    product = _product("rakuten")
+
+    resolve_product_platforms(product, "jp")
+
+    assert product.platform_links["rakuten"] == "https://item.rakuten.co.jp/shop/example/"
+    assert product.platform_links["amazon_jp"] == "https://www.amazon.co.jp/dp/B0MATCHJP"
+    assert product.matched_platforms == ["amazon_jp", "rakuten"]
+
+
+def test_merged_product_with_direct_rakuten_link_does_not_add_unmatched_amazon() -> None:
     product = _product("database", "")
     product.platform_links = {"rakuten": "https://item.rakuten.co.jp/shop/example/"}
     product.matched_platforms = ["rakuten"]
@@ -63,60 +114,49 @@ def test_merged_product_with_direct_rakuten_link_does_not_add_unverified_buttons
     resolve_product_platforms(product, "jp")
 
     assert product.platform_links == {"rakuten": "https://item.rakuten.co.jp/shop/example/"}
-    assert product.matched_platforms == ["rakuten"]
 
 
-def test_naver_source_adds_oliveyoung_kr_search_button_for_kr() -> None:
+def test_naver_source_adds_oliveyoung_kr_without_unmatched_amazon() -> None:
     product = _product("naver", "https://search.shopping.naver.com/catalog/123")
 
     resolve_product_platforms(product, "kr")
 
     assert product.platform_links["naver"] == "https://search.shopping.naver.com/catalog/123"
     assert product.platform_links["oliveyoung"] == _expected_oliveyoung_kr(product.brand, product.name)
+    assert "amazon_us" not in product.platform_links
     assert product.matched_platforms == ["naver", "oliveyoung"]
 
 
-def test_naver_source_preserves_existing_english_amazon_search_for_kr() -> None:
+def test_naver_source_adds_amazon_us_only_when_asin_matched(monkeypatch) -> None:
+    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda: True)
+    monkeypatch.setattr(
+        pr.amazon_catalog,
+        "match_amazon",
+        lambda brand, query: SimpleNamespace(asin="B0MATCHUS"),
+    )
     product = _product("naver", "https://search.shopping.naver.com/catalog/123")
-    product.platform_links = {
-        "amazon_us": "https://www.amazon.com/s?k=The+Ordinary+AHA+30%25+BHA+2%25+Peeling+Solution",
-    }
 
     resolve_product_platforms(product, "kr")
 
-    assert product.platform_links == {
-        "amazon_us": "https://www.amazon.com/s?k=The+Ordinary+AHA+30%25+BHA+2%25+Peeling+Solution",
-        "naver": "https://search.shopping.naver.com/catalog/123",
-        "oliveyoung": _expected_oliveyoung_kr(product.brand, product.name),
-    }
+    assert product.platform_links["naver"] == "https://search.shopping.naver.com/catalog/123"
+    assert product.platform_links["amazon_us"] == "https://www.amazon.com/dp/B0MATCHUS"
     assert product.matched_platforms == ["amazon_us", "naver", "oliveyoung"]
 
 
-def test_naver_source_uses_preserved_english_amazon_query_for_korean_only_name() -> None:
+def test_naver_source_drops_stale_amazon_when_unmatched(monkeypatch) -> None:
     product = _product("naver", "https://search.shopping.naver.com/catalog/123")
-    product.brand = "올레이"
-    product.name = "올레이 리제너리스트 레티놀 24 나이트 페이스 크림 모이스처라이저 무향 50g"
-    product.platform_links = {
-        "amazon_us": "https://www.amazon.com/s?k=Olay+Regenerist+Retinol+24+Night+Face+Moisturizer",
-    }
+    product.platform_links = {"amazon_us": "https://www.amazon.com/s?k=stale"}
 
     resolve_product_platforms(product, "kr")
 
-    assert product.platform_links == {
-        "amazon_us": "https://www.amazon.com/s?k=Olay+Regenerist+Retinol+24+Night+Face+Moisturizer",
-        "naver": "https://search.shopping.naver.com/catalog/123",
-        "oliveyoung": _expected_oliveyoung_kr(product.brand, product.name),
-    }
-    assert product.matched_platforms == ["amazon_us", "naver", "oliveyoung"]
+    assert "amazon_us" not in product.platform_links
+    assert product.platform_links["naver"] == "https://search.shopping.naver.com/catalog/123"
 
 
 def test_naver_source_uses_korean_search_link_for_oliveyoung_kr() -> None:
     product = _product("naver", "https://search.shopping.naver.com/catalog/123")
     product.brand = "라로슈포제"
     product.name = "La Roche Posay Cicaplast Baume B5 Soothing Repairing Balm 라로슈포제 시카플라스트 밤 B5+ 100ml 기획"
-    product.platform_links = {
-        "amazon_us": "https://www.amazon.com/s?k=La+Roche+Posay+Cicaplast+Baume+B5",
-    }
 
     resolve_product_platforms(product, "kr")
 
@@ -124,26 +164,11 @@ def test_naver_source_uses_korean_search_link_for_oliveyoung_kr() -> None:
         OLIVEYOUNG_KR_SEARCH + quote_plus("라로슈포제 시카플라스트 밤")
     )
     assert product.platform_links["naver"] == "https://search.shopping.naver.com/catalog/123"
-    assert product.platform_links["amazon_us"] == "https://www.amazon.com/s?k=La+Roche+Posay+Cicaplast+Baume+B5"
-    assert product.matched_platforms == ["amazon_us", "naver", "oliveyoung"]
+    assert "amazon_us" not in product.platform_links
+    assert product.matched_platforms == ["naver", "oliveyoung"]
 
 
-def test_naver_source_prefers_english_alias_for_amazon_search() -> None:
-    product = _product("naver", "https://search.shopping.naver.com/catalog/123")
-    product.brand = "코스알엑스"
-    product.name = "코스알엑스 바하 블랙헤드 피지 100ml / COSRX, BHA Blackhead Power Liquid"
-    product.platform_links = {
-        "amazon_us": "https://www.amazon.com/s?k=COSRX+AHA+BHA+Clarifying+Treatment+Toner",
-    }
-
-    resolve_product_platforms(product, "kr")
-
-    assert product.platform_links["amazon_us"] == "https://www.amazon.com/s?k=COSRX+BHA+Blackhead+Power+Liquid"
-    assert product.platform_links["naver"] == "https://search.shopping.naver.com/catalog/123"
-    assert product.platform_links["oliveyoung"] == _expected_oliveyoung_kr(product.brand, product.name)
-
-
-def test_merged_product_with_direct_naver_link_adds_only_oliveyoung_kr_search_button() -> None:
+def test_merged_product_with_direct_naver_link_adds_only_oliveyoung_when_amazon_unmatched() -> None:
     product = _product("database", "")
     product.platform_links = {"naver": "https://search.shopping.naver.com/catalog/123"}
     product.matched_platforms = ["naver"]
@@ -154,7 +179,6 @@ def test_merged_product_with_direct_naver_link_adds_only_oliveyoung_kr_search_bu
         "naver": "https://search.shopping.naver.com/catalog/123",
         "oliveyoung": _expected_oliveyoung_kr(product.brand, product.name),
     }
-    assert product.matched_platforms == ["naver", "oliveyoung"]
 
 
 def test_hide_oliveyoung_removes_kr_button_but_keeps_others() -> None:
@@ -166,13 +190,13 @@ def test_hide_oliveyoung_removes_kr_button_but_keeps_others() -> None:
     assert "oliveyoung" not in product.platform_links
 
 
-def test_non_rakuten_jp_product_can_expose_search_platform_buttons() -> None:
+def test_non_rakuten_jp_product_no_rakuten_or_unmatched_amazon() -> None:
     product = _product("database", "")
 
     resolve_product_platforms(product, "jp")
 
-    assert {"rakuten", "amazon_jp"}.issubset(product.platform_links)
-    assert {"rakuten", "amazon_jp"}.issubset(product.matched_platforms)
+    assert "rakuten" not in product.platform_links
+    assert "amazon_jp" not in product.platform_links
 
 
 def test_search_query_keeps_compound_slash_in_product_identity() -> None:
@@ -217,13 +241,13 @@ def test_jp_catalog_miss_hides_oliveyoung_button(monkeypatch) -> None:
 
     resolve_product_platforms(product, "jp")
 
-    assert "oliveyoung" not in product.platform_links
-    assert "amazon_jp" in product.platform_links  # 다른 버튼은 유지
+    assert "oliveyoung" not in product.platform_links  # 미취급 확정 → OY 버튼 없음
+    assert "rakuten" not in product.platform_links
+    assert "amazon_jp" not in product.platform_links
 
 
 def test_jp_rakuten_source_still_gets_verified_catalog_oliveyoung(monkeypatch) -> None:
     # 라쿠텐 실상품이라도 올리브영 글로벌 카탈로그에 매칭되면 '검증된 prdtNo 직링크'를 함께 붙인다.
-    # (예전엔 라쿠텐 직링크면 올리브영 매칭 자체를 건너뛰어 JP에 버튼이 안 붙었다.)
     monkeypatch.setattr(pr, "catalog_available", lambda: True)
     monkeypatch.setattr(pr, "match_oliveyoung", lambda brand, name: _match("GA210000009"))
     product = _product("rakuten")
@@ -235,8 +259,7 @@ def test_jp_rakuten_source_still_gets_verified_catalog_oliveyoung(monkeypatch) -
     assert product.matched_platforms == ["oliveyoung", "rakuten"]
 
 
-def test_jp_rakuten_source_no_speculative_search_button_without_catalog(monkeypatch) -> None:
-    # 카탈로그가 없으면(검색 링크는 미검증) 라쿠텐 직링크 상품엔 올리브영을 붙이지 않는다.
+def test_jp_rakuten_source_no_oliveyoung_or_unmatched_amazon_without_catalog(monkeypatch) -> None:
     monkeypatch.setattr(pr, "catalog_available", lambda: False)
     product = _product("rakuten")
 

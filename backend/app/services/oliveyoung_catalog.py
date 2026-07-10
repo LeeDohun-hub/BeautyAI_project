@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -104,6 +105,32 @@ class _OYItem:
     name_en_tokens: frozenset[str] = frozenset()
     name_kr_tokens: frozenset[str] = frozenset()
     image_url: str = ""
+    sale_amt: str = ""  # 글로벌몰 판매가(USD 원문). JP 남성 소스에서 카드 가격으로 변환해 쓴다.
+    name_jp: str = ""   # 일본어 상품명(JP 지역 카드용). 크롤이 curLang=jp로 받아 채운다.
+    brand_jp: str = ""  # 일본어 브랜드명(JP 지역 카드용).
+
+
+@dataclass(frozen=True)
+class OYMaleItem:
+    """JP 남성 아이템매칭용 글로벌몰 남성 상품(카드 소스). 지역별 표기를 호출부가 고른다."""
+    brand: str          # 영문/기본 브랜드(매칭·폴백용)
+    brand_jp: str       # 일본어 브랜드
+    name_kr: str
+    name_en: str
+    name_jp: str
+    prdt_no: str
+    image_url: str
+    price_usd: float
+
+    def localized_name(self, region: str) -> str:
+        if region == "jp":
+            return self.name_jp or self.name_en or self.name_kr
+        return self.name_kr or self.name_en
+
+    def localized_brand(self, region: str) -> str:
+        if region == "jp":
+            return self.brand_jp or self.brand
+        return self.brand
 
 
 def _catalog_path() -> Path:
@@ -154,6 +181,9 @@ def _load_items() -> tuple[_OYItem, ...]:
                     name_en_tokens=tokens_for(name_en),
                     name_kr_tokens=tokens_for(name_kr),
                     image_url=str(row.get("imageUrl") or "").strip(),
+                    sale_amt=str(row.get("saleAmt") or row.get("nrmlAmt") or "").strip(),
+                    name_jp=str(row.get("jpPrdtName") or "").strip(),
+                    brand_jp=str(row.get("jpBrandName") or "").strip(),
                 )
             )
     return tuple(items)
@@ -286,3 +316,39 @@ def match_oliveyoung(brand: str, name: str, min_score: float = 0.5) -> OYMatch |
                 image_url=item.image_url,
             )
     return best
+
+
+# ── JP 남성 아이템매칭 소스 ─────────────────────────────────────────────────
+# JP 남성은 상품 소스가 라쿠텐(일본 브랜드)뿐이라 올리브영 글로벌 버튼이 안 붙는다(J뷰티 제외 +
+# 라쿠텐이 한국 남성 브랜드를 안 줌). 그래서 글로벌몰 카탈로그에서 '남성' 상품을 직접 뽑아
+# 상품 카드로 노출한다(올리브영 JP 남성 고객 확보). 남성 판별: 전량 남성 브랜드 + 상품명 남성 신호.
+_MEN_CATALOG_BRAND_KEYS = {
+    normalize_key(b) for b in ("dashu", "grafen", "ideal for men", "briall homme")
+}
+_MEN_NAME_RE = re.compile(r"homme|맨즈|옴므|포\s?맨|for\s?men|\bmen'?s?\b|남성|남자", re.I)
+
+
+def _parse_usd(raw: str) -> float:
+    m = re.search(r"\d+(?:\.\d+)?", (raw or "").replace(",", ""))
+    return float(m.group()) if m else 0.0
+
+
+def male_catalog_items() -> list[OYMaleItem]:
+    """글로벌몰 카탈로그의 '남성' 상품 목록(JP 남성 소스). 카탈로그 없으면 빈 리스트."""
+    out: list[OYMaleItem] = []
+    for item in _load_items():
+        blob = f"{item.brand} {item.name_en} {item.name_kr}"
+        if item.brand_key in _MEN_CATALOG_BRAND_KEYS or _MEN_NAME_RE.search(blob):
+            out.append(
+                OYMaleItem(
+                    brand=item.brand,
+                    brand_jp=item.brand_jp,
+                    name_kr=item.name_kr,
+                    name_en=item.name_en,
+                    name_jp=item.name_jp,
+                    prdt_no=item.prdt_no,
+                    image_url=item.image_url,
+                    price_usd=_parse_usd(item.sale_amt),
+                )
+            )
+    return out

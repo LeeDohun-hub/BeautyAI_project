@@ -13,9 +13,14 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     skin_model_path: str = "./data/models/skin_efficientnet_b0.pt"
     body_skin_model_path: str = "./data/models/body_skin_mobilenet_v3.pt"
+    # 2단 피부질환 선별 모델(Tier1 게이트 + Tier2 케어 분류).
+    derma_tier1_model_path: str = "./data/models/derma_tier1_gate.pt"
+    derma_tier2_model_path: str = "./data/models/derma_tier2_classifier.pt"
     personal_color_model_path: str = "./data/models/personal_color_efficientnet.pt"
     problem_skin_knowledge_path: str = "./data/rag/problem_skin_knowledge.jsonl"
     skincare_ingredient_knowledge_path: str = "./data/rag/skincare_ingredient_knowledge.jsonl"
+    # 병별 OTC 의약품 예시(OpenFDA OTC 라벨 기반). build_otc_drug_knowledge.py로 생성.
+    otc_drug_knowledge_path: str = "./data/rag/otc_drug_knowledge.jsonl"
     naver_client_id: str | None = None
     naver_client_secret: str | None = None
     rakuten_app_id: str | None = None
@@ -52,6 +57,18 @@ class Settings(BaseSettings):
         if path.is_absolute():
             return str(path)
         return str(self.project_root / path)
+
+    def _resolved(self, value: str) -> str:
+        path = Path(value)
+        return str(path) if path.is_absolute() else str(self.project_root / path)
+
+    @property
+    def resolved_derma_tier1_model_path(self) -> str:
+        return self._resolved(self.derma_tier1_model_path)
+
+    @property
+    def resolved_derma_tier2_model_path(self) -> str:
+        return self._resolved(self.derma_tier2_model_path)
 
 
 @lru_cache

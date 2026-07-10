@@ -666,28 +666,51 @@ function RakutenProductCard({
   );
 }
 
-type ItemMatchColumnKey = 'lip' | 'blush' | 'eye' | 'base';
+// 여성=립/블러셔/아이/베이스/네일, 남성(Level 2)=베이스/브로우/컨실러/립밤(그루밍 중심).
+// 실제 컬럼 구성/헤더는 renderPersonalColorPage의 itemMatchGroups가 성별에 맞춰 정한다.
+type ItemMatchColumnKey = 'lip' | 'blush' | 'eye' | 'base' | 'nail' | 'brow' | 'concealer' | 'lipbalm';
 
-const ITEM_MATCH_COLUMN_KEYS: ItemMatchColumnKey[] = ['lip', 'blush', 'eye', 'base'];
+// 비화장품 배제: '남자 쿠션' 검색이 쿠션 신발/양말/방석 같은 잡화를 물어와 base로 오분류되는
+// 문제를 막는다. 이 토큰이 있으면 어느 컬럼에도 넣지 않는다(백엔드 _NON_COSMETIC_RE와 동일).
+const NON_COSMETIC_RE = /(운동화|신발|슬리퍼|샌들|부츠|구두|로퍼|스니커|깔창|양말|방석|베개|매트|의자|소파|침대|러그|쿠션커버|커버지|스카프|장갑|모자|가방|지갑|벨트|시계|이어폰|충전|케이블|거치|ソックス|靴下|スニーカー|サンダル|スリッパ|ブーツ|クッションカバー|座布団|まくら|枕|マット|椅子|ソファ|寝具)/i;
 
-function itemMatchColumnFor(product: RakutenProduct): ItemMatchColumnKey | null {
+function itemMatchColumnFor(product: RakutenProduct, isMale = false): ItemMatchColumnKey | null {
   // 상품명/키워드로 카테고리를 판별한다. 상품명(name)은 브랜드명 등 노이즈가 섞여
   // 오분류를 유발하므로, DB 상품이 넘겨주는 카테고리 키워드(keyword)를 우선 신뢰한다.
   const primary = (product.keyword || '').toLowerCase();
   const text = [product.keyword, product.name].join(' ').toLowerCase();
+  if (NON_COSMETIC_RE.test(text)) return null;  // 신발/양말 등 잡화 제외
 
   const isBlush = (t: string) => /(blush|blusher|cheek|チーク|블러셔|치크|볼터치)/i.test(t);
   const isEye = (t: string) => /(eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ|아이|섀도|쉐도)/i.test(t);
   const isBase = (t: string) => /(base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스)/i.test(t);
   const isLip = (t: string) => /(lip|lipstick|tint|rouge|gloss|balm|リップ|ルージュ|ティント|립|틴트)/i.test(t);
+  const isNail = (t: string) => /(nail|pedi|polish|lacquer|manicure|ネイル|ペディ|マニキュア|네일|페디|매니큐어|젤네일)/i.test(t);
+  // 남성 전용: 브로우/컨실러는 base/eye 보다 먼저 판정(눈썹칼이 eye로, 컨실러가 base로 새지 않게).
+  const isBrow = (t: string) => /(brow|eyebrow|アイブロウ|眉|아이브로우|브로우|눈썹)/i.test(t);
+  const isConcealer = (t: string) => /(concealer|コンシーラー|컨실러|잡티|다크서클)/i.test(t);
+  const isMaleBase = (t: string) => /(base|foundation|cushion|primer|powder|bb|톤업|파운데이션|쿠션|베이스|비비)/i.test(t);
 
-  // 1순위: 카테고리 키워드 필드로 판정.
+  if (isMale) {
+    // 남성 세트: concealer → brow → base → lipbalm(립 전반). 키워드 필드 우선, 없으면 상품명까지.
+    for (const t of [primary, text]) {
+      if (isConcealer(t)) return 'concealer';
+      if (isBrow(t)) return 'brow';
+      if (isMaleBase(t)) return 'base';
+      if (isLip(t)) return 'lipbalm';
+    }
+    return null;
+  }
+
+  // 여성 세트(기존). 1순위: 카테고리 키워드 필드로 판정.
+  if (isNail(primary)) return 'nail';
   if (isBlush(primary)) return 'blush';
   if (isEye(primary)) return 'eye';
   if (isBase(primary)) return 'base';
   if (isLip(primary)) return 'lip';
 
   // 2순위: 상품명 포함 전체 텍스트로 판정.
+  if (isNail(text)) return 'nail';
   if (isBlush(text)) return 'blush';
   if (isEye(text)) return 'eye';
   if (isBase(text)) return 'base';
@@ -697,14 +720,14 @@ function itemMatchColumnFor(product: RakutenProduct): ItemMatchColumnKey | null 
   return null;
 }
 
-function groupItemMatchProducts(products: RakutenProduct[]): Record<ItemMatchColumnKey, RakutenProduct[]> {
+function groupItemMatchProducts(products: RakutenProduct[], isMale = false): Record<ItemMatchColumnKey, RakutenProduct[]> {
   return products.reduce<Record<ItemMatchColumnKey, RakutenProduct[]>>(
     (groups, product) => {
-      const key = itemMatchColumnFor(product);
+      const key = itemMatchColumnFor(product, isMale);
       if (key) groups[key].push(product);
       return groups;
     },
-    { lip: [], blush: [], eye: [], base: [] },
+    { lip: [], blush: [], eye: [], base: [], nail: [], brow: [], concealer: [], lipbalm: [] },
   );
 }
 
@@ -813,6 +836,7 @@ const PC_COLOR_ATOMS_JA: Record<string, string> = {
   올리브: 'オリーブ', 차콜: 'チャコール', 딥: 'ディープ', 네이비: 'ネイビー', 블랙: 'ブラック',
   실버: 'シルバー', 그레이: 'グレー', 아이보리: 'アイボリー', 옐로우: 'イエロー',
   내추럴: 'ナチュラル', 뉴트럴: 'ニュートラル', 샌드: 'サンド', 베이스: 'ベース',
+  푸시아: 'フクシア',
 };
 
 function localizeColorToJa(koPhrase: string): string {
@@ -834,6 +858,7 @@ const PC_COLOR_ATOMS_EN: Record<string, string> = {
   올리브: 'olive', 차콜: 'charcoal', 딥: 'deep', 네이비: 'navy', 블랙: 'black',
   실버: 'silver', 그레이: 'gray', 아이보리: 'ivory', 옐로우: 'yellow',
   내추럴: 'natural', 뉴트럴: 'neutral', 샌드: 'sand', 베이스: 'base',
+  푸시아: 'fuchsia',
 };
 
 function localizeColorToEn(koPhrase: string): string {
@@ -1157,9 +1182,40 @@ export default function App() {
   function personalColorItemKeywords(region: ItemRegion = itemRegion) {
     if (!personalColorResult) return [];
     const makeup = personalColorResult.makeup;
+
+    // 남성(Level 2): 색조(블러셔/아이/네일) 대신 베이스/브로우/컨실러/립밤 그루밍 중심으로 검색.
+    // 퍼스널컬러(톤)는 베이스·브로우·립밤 색상 힌트로만 반영한다(색조 제품은 검색하지 않음).
+    if (personalColorProfile.gender === 'male') {
+      const warm = /웜|warm|가을|봄|autumn|spring/i.test(`${personalColorResult.tone} ${personalColorResult.label}`);
+      const browTone = warm ? '소프트 브라운' : '그레이 브라운';
+      const baseColor = makeup.base?.[0] ?? '';
+      const lipColor = makeup.lip?.[0] ?? '';
+      if (region === 'jp') {
+        return [
+          'メンズ クッション', 'メンズ BBクリーム', 'メンズ 化粧下地',
+          'メンズ アイブロウ', 'メンズ 眉ペンシル',
+          'メンズ コンシーラー',
+          'メンズ リップバーム', 'メンズ リップ',
+        ].slice(0, 16);
+      }
+      return [
+        // 베이스: 화장품 특화어로(‘남자 쿠션’ 단독은 쿠션 신발/양말을 물어와 제외).
+        '남성 쿠션 팩트', '남성 비비크림', '남성 톤업크림', '남성 파운데이션',
+        ...(baseColor ? [`${baseColor} 남성 쿠션 팩트`] : []),
+        // 브로우: 남성 아이브로우 (+ 톤에 맞는 브로우 컬러)
+        '남자 아이브로우', '남성 눈썹 펜슬', `${browTone} 아이브로우`,
+        // 컨실러: 잡티/다크서클
+        '남자 컨실러', '남성 잡티 컨실러',
+        // 립밤: 자연 립밤/틴트 (+ 톤 힌트)
+        '남자 립밤', '남성 틴트 립밤',
+        ...(lipColor ? [`${lipColor} 립밤`] : []),
+      ].slice(0, 16);
+    }
+
     if (region === 'jp') {
       // JP: 라쿠텐 = 일본어 색상어 + 일본어 카테고리어.
-      const cat = { lip: 'リップ', blush: 'チーク', eye: 'アイシャドウ', base: 'ファンデーション' } as const;
+      // 네일은 실제 검색어인 'ジェルネイル'(젤네일)로, 립·블러셔와 달리 전 색상을 검색한다(색이 다 동등하게 중요).
+      const cat = { lip: 'リップ', blush: 'チーク', eye: 'アイシャドウ', base: 'ファンデーション', nail: 'ジェルネイル' } as const;
       const build = (values: string[], key: keyof typeof cat) =>
         values.map((item) => `${localizeColorToJa(item)} ${cat[key]}`);
       return [
@@ -1167,19 +1223,26 @@ export default function App() {
         ...build(makeup.blush, 'blush'),
         ...build(makeup.eye, 'eye'),
         ...build(makeup.base, 'base'),
-      ].slice(0, 10);
+        ...build(makeup.nail ?? [], 'nail'),
+      ].slice(0, 16);
     }
     // KR: 네이버에 한국어(K뷰티)와 영어(수입/럭셔리)를 함께 검색해 커버리지를 넓힌다.
-    const koCat = { lip: '립', blush: '블러셔', eye: '아이섀도우', base: '파운데이션' } as const;
-    const enCat = { lip: 'lipstick', blush: 'blush', eye: 'eyeshadow', base: 'foundation' } as const;
+    // 네일 카테고리는 한국인 실제 검색어인 '젤네일'을 쓴다.
+    const koCat = { lip: '립', blush: '블러셔', eye: '아이섀도우', base: '파운데이션', nail: '젤네일' } as const;
+    const enCat = { lip: 'lipstick', blush: 'blush', eye: 'eyeshadow', base: 'foundation', nail: 'nail polish' } as const;
     const bilingual = (values: string[], key: keyof typeof koCat) =>
       values[0] ? [`${values[0]} ${koCat[key]}`, `${localizeColorToEn(values[0])} ${enCat[key]}`] : [];
+    // 네일은 대표색 하나가 아니라 시즌 팔레트 전 색을 검색한다(립/블러셔는 대표색 1개로 충분하지만
+    // 네일은 3색이 다 동등하게 쓰여, 네이버 커버리지를 색 수만큼 넓힌다).
+    const bilingualAll = (values: string[], key: keyof typeof koCat) =>
+      values.flatMap((value) => [`${value} ${koCat[key]}`, `${localizeColorToEn(value)} ${enCat[key]}`]);
     return [
       ...bilingual(makeup.lip, 'lip'),
       ...bilingual(makeup.blush, 'blush'),
       ...bilingual(makeup.eye, 'eye'),
       ...bilingual(makeup.base, 'base'),
-    ].slice(0, 10);
+      ...bilingualAll(makeup.nail ?? [], 'nail'),
+    ].slice(0, 16);
   }
 
   function combinedPersonalColorMoodKeywords(mood: StyleMood, region: ItemRegion = itemRegion) {
@@ -1204,7 +1267,7 @@ export default function App() {
     if (!keywords.length) return;
     setLoading('personal-color-items');
     try {
-      setPersonalColorItems(await matchPersonalColorItems(keywords, region, platform));
+      setPersonalColorItems(await matchPersonalColorItems(keywords, region, platform, personalColorProfile.gender === 'male' ? 'male' : 'female'));
     } catch {
       setPersonalColorItems({
         provider: 'recommender',
@@ -1222,7 +1285,7 @@ export default function App() {
     setMoodItems(null);
     setLoading('style-mood-items');
     try {
-      setMoodItems(await matchPersonalColorItems(combinedPersonalColorMoodKeywords(mood, region), region, platform));
+      setMoodItems(await matchPersonalColorItems(combinedPersonalColorMoodKeywords(mood, region), region, platform, personalColorProfile.gender === 'male' ? 'male' : 'female'));
     } catch {
       setMoodItems({
         provider: 'recommender',
@@ -1310,9 +1373,9 @@ export default function App() {
             ...(bodyResults[0] ?? results[0]),
             analysis_mode: 'body',
             body_conditions: averageBodyConditions(bodyResults.length ? bodyResults : results),
-            summary: bodyResults.every((item) => item.model_available)
-              ? `${bodyResults.length || results.length}장의 피부 케어 사진을 바디 피부로 평균 분석했습니다.`
-              : (bodyResults[0] ?? results[0]).summary,
+            // 여러 장 중 하나라도 악성 의심이면 경고를 유지(안전 방향). 선별 요약도 보존.
+            urgent: (bodyResults.length ? bodyResults : results).some((item) => item.urgent),
+            summary: (bodyResults[0] ?? results[0]).summary,
           };
       setAnalysis(result);
       setRecommendation(await recommend(
@@ -1534,14 +1597,50 @@ export default function App() {
   }
 
   function renderPersonalColorPage() {
+    // 퍼스널컬러 결과 메이크업 카드(성별 분기). 남성=베이스/아이브로우/컨실러/립밤(그루밍),
+    // 여성=립/블러셔/아이/베이스/네일. 아이템매칭 컬럼과 같은 카테고리 세트를 따른다.
     const makeupGroups = personalColorResult
-      ? [
-          { label: '립', values: personalColorResult.makeup.lip },
-          { label: '블러셔', values: personalColorResult.makeup.blush },
-          { label: '아이', values: personalColorResult.makeup.eye },
-          { label: '베이스', values: personalColorResult.makeup.base },
-        ]
+      ? personalColorProfile.gender === 'male'
+        ? (() => {
+            const warm = /웜|warm|가을|봄|autumn|spring/i.test(`${personalColorResult.tone} ${personalColorResult.label}`);
+            return [
+              { label: '베이스', values: personalColorResult.makeup.base },
+              { label: '아이브로우', values: [warm ? '소프트 브라운' : '그레이 브라운'] },
+              { label: '컨실러', values: ['잡티·다크서클 커버'] },
+              { label: '립밤', values: personalColorResult.makeup.lip },
+            ];
+          })()
+        : [
+            { label: '립', values: personalColorResult.makeup.lip },
+            { label: '블러셔', values: personalColorResult.makeup.blush },
+            { label: '아이', values: personalColorResult.makeup.eye },
+            { label: '베이스', values: personalColorResult.makeup.base },
+            { label: '네일', values: personalColorResult.makeup.nail ?? [] },
+          ]
       : [];
+    // 아이템매칭 컬럼(성별 분기). 남성=베이스/브로우/컨실러/립밤(그루밍), 여성=기존 5컬럼.
+    // key로 groupedProducts를 조회하고, showColor로 헤더에 'color' 표기 여부를 정한다.
+    const isMaleItems = personalColorProfile.gender === 'male';
+    const itemMatchGroups: { key: ItemMatchColumnKey; label: string; values: string[]; showColor: boolean }[] =
+      personalColorResult
+        ? isMaleItems
+          ? (() => {
+              const warm = /웜|warm|가을|봄|autumn|spring/i.test(`${personalColorResult.tone} ${personalColorResult.label}`);
+              return [
+                { key: 'base', label: '베이스', values: personalColorResult.makeup.base, showColor: true },
+                { key: 'brow', label: '아이브로우', values: [warm ? '소프트 브라운' : '그레이 브라운'], showColor: true },
+                { key: 'concealer', label: '컨실러', values: ['잡티·다크서클 커버'], showColor: false },
+                { key: 'lipbalm', label: '립밤', values: personalColorResult.makeup.lip, showColor: true },
+              ];
+            })()
+          : [
+              { key: 'lip', label: '립', values: personalColorResult.makeup.lip, showColor: true },
+              { key: 'blush', label: '블러셔', values: personalColorResult.makeup.blush, showColor: true },
+              { key: 'eye', label: '아이', values: personalColorResult.makeup.eye, showColor: true },
+              { key: 'base', label: '베이스', values: personalColorResult.makeup.base, showColor: true },
+              { key: 'nail', label: '네일', values: personalColorResult.makeup.nail ?? [], showColor: true },
+            ]
+        : [];
     const itemPlatformFilter = (
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
         <FormControl size="small" sx={{ minWidth: 140 }}>
@@ -2157,7 +2256,7 @@ export default function App() {
         const itemsLoading = loading === (activeMood ? 'style-mood-items' : 'personal-color-items');
         const refreshItems = () => (activeMood ? selectStyleMood(activeMood) : loadPersonalColorItems());
         const isJapanRegion = itemRegion === 'jp';
-        const groupedProducts = groupItemMatchProducts(items?.products ?? []);
+        const groupedProducts = groupItemMatchProducts(items?.products ?? [], isMaleItems);
         return (
           <Box>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
@@ -2196,15 +2295,15 @@ export default function App() {
             </Alert>
 
             <Grid container spacing={1.5} className="item-match-columns" sx={{ mt: 2 }}>
-              {makeupGroups.map((group, groupIndex) => (
-                <Grid item xs={12} md={3} key={group.label}>
+              {itemMatchGroups.map((group) => (
+                <Grid item xs={12} sm={6} md={12 / itemMatchGroups.length} key={group.key}>
                   <Box className="item-match-column">
                     <Box className="kiosk-match-card compact">
-                      <Typography fontWeight={900}>{group.label} color</Typography>
+                      <Typography fontWeight={900}>{group.label}{group.showColor ? ' color' : ''}</Typography>
                       <Typography color="text.secondary" sx={{ mt: 1 }}>{group.values.join(', ')}</Typography>
                     </Box>
                     <Stack spacing={2} className="item-match-product-stack">
-                      {groupedProducts[ITEM_MATCH_COLUMN_KEYS[groupIndex]].map((product) => (
+                      {groupedProducts[group.key].map((product) => (
                         <RakutenProductCard
                           key={`${product.id}-${product.keyword}`}
                           product={product}
@@ -2248,6 +2347,7 @@ export default function App() {
         { label: '립 메이크업', values: personalColorResult?.makeup.lip ?? ['와인 로즈', '말린 장미', '뮤트 플럼'] },
         { label: '블러셔', values: personalColorResult?.makeup.blush ?? ['페일 체리', '푸시아 로즈', '로즈 핑크'] },
         { label: '아이 메이크업', values: personalColorResult?.makeup.eye ?? ['뮤트 플럼', '베리 로즈', '말린 라일락'] },
+        { label: '네일', values: personalColorResult?.makeup.nail ?? ['버건디', '체리 레드', '딥 플럼'] },
       ];
 
       return (
@@ -2628,7 +2728,10 @@ export default function App() {
                 <Typography variant="body2" textAlign="right">{item.probability}%</Typography>
               </Box>
             ))}
-            <Alert severity={analysis.model_available ? 'info' : 'warning'}>{analysis.summary}</Alert>
+            <Alert severity={analysis.urgent ? 'error' : analysis.model_available ? 'info' : 'warning'}>{analysis.summary}</Alert>
+            {analysis.confidence_note && (
+              <Typography variant="caption" color="text.secondary">{analysis.confidence_note}</Typography>
+            )}
           </Stack>
         ) : !loading ? (
           <Alert severity="info" sx={{ mt: 3 }}>피부 사진을 등록한 뒤 분석을 실행해 주세요.</Alert>
@@ -2676,17 +2779,20 @@ export default function App() {
             {loading === 'recommend' && <LinearProgress sx={{ mt: 2 }} />}
             {recommendation ? (
               <Stack spacing={2} sx={{ mt: 2 }}>
-                <Alert severity="success">{recommendation.explanation}</Alert>
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>추천 성분</Typography>
-                  <Stack direction="row" flexWrap="wrap" gap={1}>
-                    {recommendation.ingredients.map((ingredient) => (
-                      <Chip key={ingredient.id} label={ingredient.name} color="primary" variant="outlined" />
-                    ))}
-                  </Stack>
-                </Box>
+                <Alert severity={analysis?.urgent ? 'error' : analysis?.analysis_mode === 'body' && !recommendation.products.length ? 'warning' : 'success'}>{recommendation.explanation}</Alert>
+                {recommendation.ingredients.length > 0 && (
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom>추천 성분</Typography>
+                    <Stack direction="row" flexWrap="wrap" gap={1}>
+                      {recommendation.ingredients.map((ingredient) => (
+                        <Chip key={ingredient.id} label={ingredient.name} color="primary" variant="outlined" />
+                      ))}
+                    </Stack>
+                  </Box>
+                )}
                 <Divider />
-                {!recommendation.products.length && (
+                {/* body(피부질환) 안내형은 의도적으로 상품이 없으므로 '카탈로그 부족' 문구를 띄우지 않는다. */}
+                {!recommendation.products.length && analysis?.analysis_mode !== 'body' && (
                   <Alert severity="info">선택한 플랫폼에 맞는 추천 후보가 아직 부족합니다. 모든 플랫폼으로 넓혀 보거나 상품 카탈로그를 보강해 주세요.</Alert>
                 )}
                 <Grid container spacing={1.5}>

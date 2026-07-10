@@ -26,12 +26,15 @@ export async function matchPersonalColorItems(
   keywords: string[],
   region = 'jp',
   platform: ItemPlatform = 'all',
+  gender: 'female' | 'male' = 'female',
 ): Promise<PersonalColorItemMatchResponse> {
   const { data } = await api.post<PersonalColorItemMatchResponse>('/api/personal-color/item-match', {
     keywords,
-    hits_per_keyword: 4,
+    // 네일이 검색어 수가 많아졌고(전 색상), 색상당 상품 풀도 넓히려 4→6으로 상향(백엔드 상한 8).
+    hits_per_keyword: 6,
     region,
     platform,
+    gender,   // 남성이면 백엔드가 베이스/브로우/컨실러/립밤으로 밸런싱한다.
   });
   return data;
 }

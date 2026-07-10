@@ -1,5 +1,7 @@
 import json
 import re
+from types import SimpleNamespace
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import func
@@ -27,14 +29,15 @@ from app.schemas.api import (
 )
 from app.services.chatbot import answer_skin_question
 from app.services.body_skin_analyzer import BodySkinAnalyzer
+from app.services.dermatology_analyzer import DermatologyAnalyzer, SCREENING_NOTE
 from app.services.image_router import get_skin_image_router
 from app.services.naver_client import NaverClient
 from app.services.naver_kr_enricher import enrich_products_with_naver_kr
 from app.services.oliveyoung_availability import prune_global_oliveyoung
-from app.services.oliveyoung_catalog import catalog_available
+from app.services.oliveyoung_catalog import catalog_available, male_catalog_items
 from app.services.oliveyoung_kr_search import prune_kr_oliveyoung
 from app.services.personal_color_analyzer import PersonalColorAnalyzer
-from app.services.platform_resolver import dedup_by_line, resolve_product_platforms
+from app.services.platform_resolver import OLIVEYOUNG_GLOBAL_DETAIL, dedup_by_line, resolve_product_platforms
 from app.services.product_image_provider import fill_missing_images
 from app.services.rakuten_client import RakutenClient
 from app.services.recommender import (
@@ -42,6 +45,7 @@ from app.services.recommender import (
     get_scores_from_analysis,
     matched_platforms,
     personal_color_fit_score_for_text,
+    recommend_derma_care,
     recommend_personal_color_products,
     recommend_products,
 )
@@ -69,52 +73,180 @@ def _resolve_region(raw_region: str | None, request: Request, fallback: str) -> 
 
 
 # 아이템 매칭 카테고리 분류(프론트 itemMatchColumnFor와 동일 규칙). 한/영/일 토큰 모두 인식.
+# 브로우/컨실러 패턴은 base/eye 보다 '먼저' 봐야 한다(눈썹칼이 eye로, 컨실러가 base로 새지 않게).
+_BROW_PAT = re.compile(r"brow|eyebrow|アイブロウ|眉|아이브로우|브로우|눈썹", re.I)
+_CONCEALER_PAT = re.compile(r"concealer|コンシーラー|컨실러|잡티|다크서클", re.I)
+_LIPBALM_PAT = re.compile(r"lip\s*balm|balm|リップバーム|립밤|립 밤", re.I)
+
+# 여성(기본): 립/블러셔/아이/베이스/네일 5개.
 _ITEM_CATEGORY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # nail을 가장 먼저 판정한다: 'Cat Eye Gel Nail Polish'처럼 이름에 eye/base가 섞인
+    # 네일 상품이 makeup 카테고리로 새지 않게 한다(프론트 itemMatchColumnFor와 동일 우선순위).
+    ("nail", re.compile(r"nail|pedi|polish|lacquer|manicure|ネイル|ペディ|マニキュア|네일|페디|매니큐어|젤네일", re.I)),
     ("blush", re.compile(r"blush|blusher|cheek|チーク|블러셔|치크|볼터치", re.I)),
     ("eye", re.compile(r"eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ|아이|섀도|쉐도", re.I)),
     ("base", re.compile(r"base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스", re.I)),
     ("lip", re.compile(r"lip|lipstick|tint|rouge|gloss|balm|リップ|ルージュ|ティント|립|틴트", re.I)),
 ]
 
+# 남성(Level 2): 베이스/브로우/컨실러/립밤 4개. 색조(블러셔/아이/네일) 대신 그루밍 중심.
+# 컨실러·브로우를 base/eye 보다 먼저 판정해야 정확히 분류된다(base 정규식이 concealer 포함).
+_ITEM_CATEGORY_PATTERNS_MALE: list[tuple[str, re.Pattern[str]]] = [
+    ("concealer", _CONCEALER_PAT),
+    ("brow", _BROW_PAT),
+    ("lipbalm", _LIPBALM_PAT),
+    ("base", re.compile(r"base|foundation|cushion|primer|powder|bb|톤업|파운데이션|쿠션|베이스|비비", re.I)),
+    ("lipbalm", re.compile(r"lip|틴트|립", re.I)),  # 립밤 외 자연 립/틴트도 립밤 컬럼으로
+]
 
-def _item_match_category(product) -> str | None:
+
+def _item_category_patterns(gender: str) -> list[tuple[str, re.Pattern[str]]]:
+    return _ITEM_CATEGORY_PATTERNS_MALE if (gender or "").lower() == "male" else _ITEM_CATEGORY_PATTERNS
+
+
+# 비화장품 배제: '남자 쿠션' 검색이 쿠션 신발/양말/방석 같은 잡화를 물어와 base로 오분류되는
+# 문제를 막는다(사용자 지적). 상품명에 이 토큰이 있으면 어느 카테고리도 아님(제외)으로 본다.
+_NON_COSMETIC_RE = re.compile(
+    r"운동화|신발|슬리퍼|샌들|부츠|구두|로퍼|스니커|깔창|양말|방석|베개|매트|의자|소파|침대|러그"
+    r"|쿠션커버|커버지|스카프|장갑|모자|가방|지갑|벨트|시계|이어폰|충전|케이블|거치"
+    # 일본어 잡화(‘メンズ クッション’이 쿠션 양말/신발을 물어옴): 양말/신발/방석/베개/의자 등.
+    r"|ソックス|靴下|スニーカー|サンダル|スリッパ|ブーツ|クッションカバー|座布団|まくら|枕|マット|椅子|ソファ|寝具",
+    re.I,
+)
+
+
+def _item_match_category(product, gender: str = "female") -> str | None:
+    text = f"{product.keyword or ''} {product.name or ''}"
+    if _NON_COSMETIC_RE.search(text):
+        return None  # 신발/양말 등 잡화 → 화장품 컬럼에서 제외
+    patterns = _item_category_patterns(gender)
     # 카테고리 키워드 필드를 우선 신뢰하고, 없으면 상품명까지 포함해 판정한다.
     primary = (product.keyword or "").lower()
-    for category, pattern in _ITEM_CATEGORY_PATTERNS:
+    for category, pattern in patterns:
         if pattern.search(primary):
             return category
-    text = f"{product.keyword or ''} {product.name or ''}".lower()
-    for category, pattern in _ITEM_CATEGORY_PATTERNS:
+    text = text.lower()
+    for category, pattern in patterns:
         if pattern.search(text):
             return category
     return None
 
 
-def _balance_item_categories(items: list, limit: int = 8, per_category: int = 2) -> list:
-    """점수순 상품을 립/블러셔/아이/베이스 4개 카테고리에 고르게 배분한다.
+_ITEM_CATEGORIES_FEMALE = ("lip", "blush", "eye", "base", "nail")
+_ITEM_CATEGORIES_MALE = ("base", "brow", "concealer", "lipbalm")
 
-    '모든 플랫폼'에서 라쿠텐(립/아이)이 상위를 독식해 베이스/블러셔 컬럼이 비는 문제를
-    막는다. 각 카테고리 상위 per_category개를 먼저 확보하고 남은 칸은 점수순으로 채운다.
+
+def _balance_item_categories(items: list, limit: int = 10, per_category: int = 2, gender: str = "female") -> list:
+    """점수순 상품을 성별 카테고리 세트에 고르게 배분한다.
+
+    여성=립/블러셔/아이/베이스/네일, 남성=베이스/브로우/컨실러/립밤. '모든 플랫폼'에서 특정
+    소스가 상위를 독식해 일부 컬럼이 비는 문제를 막는다. 각 카테고리 상위 per_category개를
+    먼저 확보하고 남은 칸은 점수순으로 채운다. 단 남성 세트에선 여성 전용 카테고리(블러셔/아이/
+    네일) 상품은 '남은 칸 채우기'에서도 제외한다(색조가 남성 결과에 새는 것 방지).
     """
-    buckets: dict[str, list] = {"lip": [], "blush": [], "eye": [], "base": []}
+    categories = _ITEM_CATEGORIES_MALE if (gender or "").lower() == "male" else _ITEM_CATEGORIES_FEMALE
+    buckets: dict[str, list] = {c: [] for c in categories}
     for item in items:  # items는 점수 내림차순 정렬 상태
-        category = _item_match_category(item)
-        if category:
+        category = _item_match_category(item, gender)
+        if category in buckets:
             buckets[category].append(item)
 
+    male = (gender or "").lower() == "male"
     selected: list = []
     seen: set[int] = set()
-    for category in ("lip", "blush", "eye", "base"):
+    for category in categories:
         for item in buckets[category][:per_category]:
             selected.append(item)
             seen.add(id(item))
+    # 남은 칸 채우기. 여성은 기존대로 점수순 아무 상품이나(프론트가 미분류를 렌더에서 거른다).
+    # 남성은 남성 카테고리(base/brow/concealer/lipbalm)에 속한 상품만 채운다 — 블러셔/아이/네일
+    # 같은 색조가 '남은 칸'으로 남성 결과에 새지 않게 한다.
+    in_scope = {id(item) for bucket in buckets.values() for item in bucket}
     for item in items:
         if len(selected) >= limit:
             break
-        if id(item) not in seen:
-            selected.append(item)
-            seen.add(id(item))
+        if id(item) in seen:
+            continue
+        if male and id(item) not in in_scope:
+            continue
+        selected.append(item)
+        seen.add(id(item))
     return selected[:limit]
+
+
+# JP 남성 아이템매칭: 글로벌몰 남성 상품을 카드로 주입한다(라쿠텐엔 한국 남성 브랜드가 안 떠서
+# 이 소스가 없으면 남성 컬럼이 빈다). 카테고리→키워드로 분류를 고정하고, resolve_product_platforms가
+# 이후 올리브영 글로벌 직링크 버튼을 붙인다(카탈로그 매칭). 색조 아닌 4개 카테고리만 노출.
+_MALE_CAT_KEYWORD = {"base": "쿠션", "brow": "아이브로우", "concealer": "컨실러", "lipbalm": "립밤"}
+_USD_TO_JPY = 150  # 글로벌몰 USD → JP 카드 표시가 근사(정밀 환율 아님).
+
+
+def _inject_male_global_products(products: list, region: str = "jp", limit_per_cat: int = 6) -> None:
+    seen = {(p.brand, p.name) for p in products}
+    counts: dict[str, int] = {}
+    for m in male_catalog_items():
+        # 분류는 한글명으로(카테고리어 쿠션/아이브로우/컨실러/립밤이 한글이라 정확히 잡힌다).
+        # 표기는 지역별(JP=일본어명/브랜드). keyword를 카테고리어로 고정해 분류를 안정화한다.
+        cat = _item_match_category(SimpleNamespace(keyword="", name=m.name_kr or m.name_en), "male")
+        name = m.localized_name(region)
+        brand = m.localized_brand(region)
+        if cat not in _MALE_CAT_KEYWORD or (brand, name) in seen:
+            continue
+        if counts.get(cat, 0) >= limit_per_cat:
+            continue
+        seen.add((brand, name))
+        counts[cat] = counts.get(cat, 0) + 1
+        url = OLIVEYOUNG_GLOBAL_DETAIL + quote_plus(m.prdt_no)
+        products.append(
+            RakutenProductOut(
+                id=f"oyg-{m.prdt_no}",
+                brand=brand,
+                name=name,
+                price=int(round(m.price_usd * _USD_TO_JPY)),
+                image_url=m.image_url or None,
+                product_url=url,
+                keyword=_MALE_CAT_KEYWORD[cat],
+                source="oliveyoung_global",
+                # 큐레이션된 OY 남성상품이 컬럼을 우선 차지하도록 라쿠텐(여성/잡화 노이즈 포함)보다
+                # 확실히 높게. JP 남성 목표는 OY 남성고객 확보라, 라쿠텐은 OY가 모자랄 때만 채운다.
+                score=100.0,
+                platform_links={"oliveyoung": url},
+                matched_platforms=["oliveyoung"],
+            )
+        )
+
+
+def _verify_rakuten_for_global(products: list, client) -> None:
+    """OY 글로벌 주입(JP 남성) 상품에 라쿠텐 '검증된 직링크'를 붙인다(검색 폴백 없음).
+
+    라쿠텐 API로 브랜드 일치 실제 리스팅을 찾으면 그 상품 URL(직링크)을 붙이고, 못 찾으면
+    라쿠텐 버튼을 붙이지 않는다(사용자 원칙: 직링크 있으면 버튼, 없으면 미출력). 재현율을 위해
+    전체 상품명(너무 구체적)뿐 아니라 '브랜드+핵심어'로도 재검색한다.
+    """
+    if not client.configured:
+        return
+    for p in products:
+        if getattr(p, "source", "") != "oliveyoung_global":
+            continue
+        name = p.name or ""
+        latin = re.match(r"[A-Za-z][A-Za-z0-9.&'-]+", name)
+        latin_brand = latin.group() if latin else ""
+        brand_keys = [k.lower() for k in (latin_brand, p.brand or "") if k]
+        # 쿼리 후보: (1) 전체명(정확도) (2) 브랜드+앞 2토큰(재현율). 첫 브랜드매칭 히트를 채택.
+        core = " ".join(name.split()[:3])
+        match = None
+        for query in (name, core, f"{latin_brand} {p.brand}".strip()):
+            if not query.strip():
+                continue
+            hits = client.search(query, hits=3)
+            match = next((h for h in hits if any(k in f"{h.brand} {h.name}".lower() for k in brand_keys)), None)
+            if match and match.product_url:
+                break
+        if match and match.product_url:
+            links = dict(p.platform_links or {})
+            links["rakuten"] = match.product_url  # 검증된 실제 라쿠텐 상품 페이지(직링크)로 승격
+            p.platform_links = links
+            p.matched_platforms = sorted(links.keys())
 
 
 @router.post("/analyze-skin", response_model=AnalyzeSkinResponse)
@@ -130,17 +262,23 @@ async def analyze_skin(
     if analysis_mode == "auto":
         analysis_mode = get_skin_image_router().route(image_bytes).analysis_mode
     if analysis_mode == "body":
-        conditions, model_available, summary = BodySkinAnalyzer().analyze(image_bytes)
+        # 기존 6종 피부염 분류를 2단 선별(정상/양성/악성의심 + 케어그룹)로 대체.
+        # 악성(피부암) 조기발견 경고가 추가되는 상위호환. 진단이 아니라 선별/안내.
+        result = DermatologyAnalyzer().analyze(image_bytes)
         return AnalyzeSkinResponse(
             analysis_mode="body",
-            body_conditions=conditions,
-            model_available=model_available,
-            summary=summary,
+            body_conditions=result["conditions"],
+            model_available=result["model_available"],
+            summary=result["summary"],
+            confidence_note=SCREENING_NOTE if result["model_available"] else "",
+            tier1_label=result["tier1_label"],
+            tier1_confidence=result["tier1_confidence"],
+            urgent=result["urgent"],
         )
     if analysis_mode != "face":
         raise HTTPException(status_code=400, detail="analysis_mode must be 'auto', 'face', or 'body'.")
 
-    scores = SkinAnalyzer().analyze(image_bytes)
+    scores, confidence_note = SkinAnalyzer().analyze(image_bytes)
     analysis = SkinAnalysis(user_id=user_id, image_name=image.filename, **scores.model_dump())
     db.add(analysis)
     db.commit()
@@ -150,6 +288,7 @@ async def analyze_skin(
         analysis_mode="face",
         scores=scores,
         summary=summarize_scores(scores),
+        confidence_note=confidence_note,
     )
 
 
@@ -193,17 +332,15 @@ def recommend(
     # 스킨케어 상품은 글로벌 카탈로그라 지역/플랫폼과 무관하게 피부적합도로 고른다("all").
     # 지역·플랫폼 구분은 아래 입점 리졸버(버튼)와 프론트 필터에서 처리한다.
     if payload.analysis_mode == "body":
-        response = recommend_products(
+        # 2단 모델이 판정한 질환 그룹에 '적합한 성분' 기준으로 추천/안내한다.
+        # (약이 필요한 병·악성 의심은 제품 대신 상담/진료 안내)
+        response = recommend_derma_care(
             db,
-            payload.scores or SkinScores(
-                acne=0, pore=0, wrinkle=0, redness=0, pigmentation=0, oiliness=0
-            ),
+            payload.body_conditions,
             payload.survey,
-            None,
             payload.user_id,
+            None,
             "all",
-            analysis_mode="body",
-            body_conditions=payload.body_conditions,
         )
     else:
         try:
@@ -246,6 +383,7 @@ def personal_color_item_match(
     keywords = [keyword.strip() for keyword in payload.keywords if keyword.strip()]
     region = _resolve_region(payload.region, request, "jp")
     platform = (payload.platform or "all").strip().lower()
+    gender = (payload.gender or "female").strip().lower()
     db_products = recommend_personal_color_products(
         db,
         keywords,
@@ -345,6 +483,11 @@ def personal_color_item_match(
             for item in naver_products
         )
 
+    # JP 남성: 라쿠텐엔 한국 남성 브랜드가 안 떠서 올리브영 남성 상품을 글로벌몰 카탈로그에서
+    # 직접 주입한다(올리브영 JP 남성 고객 확보). catalog_available일 때만.
+    if region == "jp" and gender == "male" and catalog_available():
+        _inject_male_global_products(products, region)
+
     # 같은 상품(브랜드+라인명)으로 흩어진 소스별 카드를 하나로 병합한다(product-centric).
     products = dedup_by_line(products)
 
@@ -355,7 +498,7 @@ def personal_color_item_match(
     )
     # 립/블러셔/아이/베이스 4개 컬럼에 고르게 배분한다. 이렇게 하면 '모든 플랫폼'에서도
     # 베이스/블러셔 컬럼이 비지 않고, 각 컬럼은 카테고리 내 점수순으로 채워진다.
-    products = _balance_item_categories(ranked, limit=8, per_category=2)
+    products = _balance_item_categories(ranked, limit=10, per_category=2, gender=gender)
 
     # KR: 국내몰 라이브 검색은 한글로 이뤄지므로, 입점 검증 '전에' 네이버 한글 데이터로 보강한다.
     # 영문 DB 상품명('TIRTIR Mask Fit Red Cushion')은 국내몰 검색 0건이지만, 한글 정체성
@@ -367,6 +510,10 @@ def personal_color_item_match(
     # 아마존/올리브영 라인 검색링크)을 채운다. 네트워크 호출은 top N에만 한정한다.
     for product in products:
         resolve_product_platforms(product, region)
+    # JP 남성 OY 주입 상품: 라쿠텐 API로 검증해 실제 있으면 직링크 부착(미취급이면 버튼 없음).
+    # 아마존은 검증 API가 없어 붙이지 않는다(올리브영 직링크 기준으로 통일 — 오탐 방지).
+    if region == "jp" and gender == "male":
+        _verify_rakuten_for_global(products, client)
     # 올리브영 입점 검증: JP=글로벌 카탈로그(없을 때만 라이브 prune), KR=국내몰 라이브 검색으로
     # goodsNo 직링크 교체/미취급 버튼 제거.
     if region == "jp":

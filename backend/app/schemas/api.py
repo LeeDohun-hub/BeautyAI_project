@@ -40,6 +40,12 @@ class AnalyzeSkinResponse(BaseModel):
     body_conditions: list[BodyConditionScore] = Field(default_factory=list)
     model_available: bool = True
     summary: str
+    # 점수 신뢰도 안내(참고용 추정치·홍조 색상측정·얼굴 미검출 등). 프론트에서 노출.
+    confidence_note: str = ""
+    # body(피부질환 선별) 결과: Tier1 게이트 라벨·확신도·악성의심 플래그.
+    tier1_label: str = ""            # normal | benign_concern | urgent_referral
+    tier1_confidence: float = 0.0
+    urgent: bool = False
 
 
 class PersonalColorMakeup(BaseModel):
@@ -47,6 +53,7 @@ class PersonalColorMakeup(BaseModel):
     blush: list[str]
     eye: list[str]
     base: list[str]
+    nail: list[str] = Field(default_factory=list)
 
 
 class PersonalColorResponse(BaseModel):
@@ -86,6 +93,7 @@ class PersonalColorItemMatchRequest(BaseModel):
     hits_per_keyword: int = Field(default=4, ge=1, le=8)
     region: str = Field(default="jp")
     platform: str = Field(default="all")
+    gender: str = Field(default="female")          # "female" | "male" — 카테고리/밸런싱 분기
 
 
 class PersonalColorItemMatchResponse(BaseModel):

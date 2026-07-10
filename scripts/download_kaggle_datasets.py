@@ -23,6 +23,14 @@ DATASETS = [
     "shivamb/makeup-shades-dataset",
     "rama87/lip-cream-dataset",
     "satrapankti/amazon-beauty-product-recommendation",
+    # 코스메틱 상품 카탈로그 확장(스킨케어/메이크업 상품 추천 풀 보강, 2026-07-09).
+    "guriya79/cosmetics-dataset2025",
+    # 피부질환 2단(Tier1 선별 + Tier2 케어) 신규 모델용 데이터셋(2026-07-09).
+    "mahdavi1202/skin-cancer",          # PAD-UFES-20: 스마트폰 병변 6종(암 조직검사 확진)
+    "shubhamgoel27/dermnet",            # DermNet: 임상사진 23종(케어 breadth)
+    "nazmussadat013/fitzpatrick17k",    # Fitzpatrick17k: 다인종 톤 + three_partition 라벨
+    # 병별 OTC 의약품 추천용(OpenFDA Human OTC Drug Labels, 2026-07-09).
+    "cahyaasrini/openfda-human-otc-drug-labels",
 ]
 
 

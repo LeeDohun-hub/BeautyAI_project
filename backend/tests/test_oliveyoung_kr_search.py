@@ -105,8 +105,9 @@ def test_prune_removes_button_when_verifiable_absent(monkeypatch):
 
 
 def test_prune_removes_button_when_unverifiable(monkeypatch):
-    # 정책: 네트워크 오류/429로 검증 불가면 버튼을 '유지'가 아니라 '제거'한다.
-    # 잠정 검색 링크를 남기면 실제로 미취급인 상품에도 버튼이 붙는 오탐이 생기기 때문.
+    # 정책(카탈로그 정답지): 검증 불가(403 Cloudflare 챌린지/네트워크 오류)여도 버튼을 제거한다.
+    # 검색 링크 폴백을 남기면 미취급 상품에도 버튼이 붙는 오탐이 생기기 때문(사용자 지적). 취급
+    # 상품 커버리지는 검색 링크가 아니라 fat 카탈로그(--browser 크롤)로 확보한다.
     monkeypatch.setattr(ks, "search_kr", lambda query: None)
     p = _product("오휘", "오휘 더퍼스트 립스틱", {"oliveyoung": "old", "naver": "n"})
     ks.prune_kr_oliveyoung([p])
@@ -151,6 +152,45 @@ def test_kr_catalog_skips_soldout(monkeypatch, tmp_path):
     assert ks.match_kr_catalog("롬앤", "롬앤 제로 매트 립스틱") is None
 
 
+# 네이버 상품명이 올영 카탈로그명과 크게 달라도(잡토큰/프로모/띄어쓰기) 매칭돼야 한다(사용자 지적).
+_CAT_ROWS_HARD = [
+    ("A_MUKAN_CO", "무칸", "무칸 옴므 퍼펙트 스팟 컨실러 2ml", "N"),
+    ("A_MUKAN_PR", "무칸", "무칸 옴므 포어커버 프라이머 30ml", "N"),
+    ("A_MUKAN_WAX", "무칸", "무칸 초강력 헤어왁스 100g", "N"),
+    ("A_ESP_BAL", "에스쁘아", "[올영단독/더블기획] 에스쁘아 더브로우 밸런스 펜슬 0.1g 4colors 2개입", "N"),
+    ("A_ESP_EASY", "에스쁘아", "[납작브로우] 에스쁘아 더브로우 이지 쉐이핑 펜슬 5 colors", "N"),
+]
+
+
+def test_kr_catalog_matches_via_form_unique_fallback(monkeypatch, tmp_path):
+    # 네이버명 '무칸 남자 컨실러 잡티 다크써클 커버'는 올영 '무칸 옴므 퍼펙트 스팟 컨실러'와 토큰이
+    # 거의 안 겹치지만, 무칸의 컨실러가 카탈로그에 하나뿐이라 '브랜드+폼 유니크'로 매칭돼야 한다.
+    _use_kr_catalog(monkeypatch, tmp_path, _CAT_ROWS_HARD)
+    m = ks.match_kr_catalog("무칸", "무칸 남자 컨실러 2ml 잡티 다크써클 커버 남성 메이크업 화장품")
+    assert m is not None and m.goods_no == "A_MUKAN_CO"
+    # 무칸엔 파운데이션이 없으니(폼 유니크 아님) 매칭 없어야 한다.
+    assert ks.match_kr_catalog("무칸", "무칸 남자 파운데이션") is None
+
+
+def test_kr_catalog_containment_and_sibling_distinction(monkeypatch, tmp_path):
+    # 프로모/띄어쓰기 차이를 뚫고 매칭(containment)하되, 형제라인은 겹침수로 정확히 구별.
+    _use_kr_catalog(monkeypatch, tmp_path, _CAT_ROWS_HARD)
+    bal = ks.match_kr_catalog("에스쁘아", "에스쁘아 더 브로우 밸런스 펜슬 0.1g 3호 소프트 브라운 1개")
+    assert bal is not None and bal.goods_no == "A_ESP_BAL"
+    easy = ks.match_kr_catalog("에스쁘아", "에스쁘아 더브로우 이지 쉐이핑 펜슬 5 colors")
+    assert easy is not None and easy.goods_no == "A_ESP_EASY"  # 밸런스로 새지 않는다
+
+
+def test_kr_catalog_rejects_cross_brand_line_match(monkeypatch, tmp_path):
+    # 교차브랜드 오탐 방지: 라인 토큰('아이섀도우 팔레트')이 겹쳐도 브랜드가 다르면 기각한다.
+    # 카탈로그엔 3CE 팔레트만 있고 바비브라운은 미취급 → 바비브라운 질의는 매칭 없어야 한다
+    # (그러지 않으면 바비브라운 버튼이 3CE 상품 직링크로 새는 실제 버그).
+    rows = [("A_3CE", "3CE", "3CE 뉴 테이크 아이섀도우 팔레트", "N")]
+    _use_kr_catalog(monkeypatch, tmp_path, rows)
+    assert ks.match_kr_catalog("3CE", "3CE 뉴 테이크 아이섀도우 팔레트") is not None  # 같은 브랜드는 매칭
+    assert ks.match_kr_catalog("바비브라운", "바비브라운 아이섀도우 팔레트") is None  # 다른 브랜드는 기각
+
+
 def test_resolve_prefers_catalog_without_live_call(monkeypatch, tmp_path):
     _use_kr_catalog(monkeypatch, tmp_path, _CAT_ROWS)
     called = {"n": 0}
@@ -171,3 +211,4 @@ def test_resolve_falls_back_to_live_on_catalog_miss(monkeypatch, tmp_path):
     monkeypatch.setattr(ks, "search_kr", _fixed(KRSearch(1, live)))
     match, verifiable = ks.resolve_kr_goods("클리오", "클리오 킬커버 파운데이션")
     assert match is not None and match.goods_no == "A_LIVE"
+

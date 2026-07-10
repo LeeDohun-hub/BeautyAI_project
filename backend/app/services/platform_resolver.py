@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from urllib.parse import quote_plus
 
+from app.services import amazon_catalog
 from app.services.matsukiyo_matcher import normalize_key
 from app.services.oliveyoung_catalog import catalog_available, match_oliveyoung
 from app.services.recommender import JBEAUTY_BRANDS, KBEAUTY_BRANDS
@@ -262,6 +263,20 @@ def _search_url(base: str, brand: str, name: str, suffix: str = "") -> str:
     return f"{base}{quote_plus(build_search_query(brand, name))}{suffix}"
 
 
+def _amazon_link(brand: str, name: str, region: str) -> str:
+    """아마존 링크. ASIN 직링크가 확인된 상품만 버튼을 낸다.
+
+    한글/일본어 상품명은 amazon_search_query로 영문화해 Beauty 카탈로그와 매칭한다. 매칭되면
+    KR=amazon.com/dp/{asin}, JP=amazon.co.jp/dp/{asin}. 매칭이 없으면 미취급으로 보고 버튼 없음."""
+    en_query = amazon_catalog.amazon_search_query(brand, name)
+    if not en_query or not amazon_catalog.catalog_available():
+        return ""
+    match = amazon_catalog.match_amazon(brand, en_query)
+    if not match:
+        return ""
+    return amazon_catalog.amazon_jp_url(match.asin) if region == "jp" else amazon_catalog.amazon_com_url(match.asin)
+
+
 def _sync_platform_buttons(product, links: dict[str, str]) -> None:
     cleaned = {platform: url for platform, url in links.items() if url}
     product.platform_links = cleaned
@@ -280,6 +295,7 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
     brand, name = product.brand or "", product.name or ""
     source = getattr(product, "source", "") or ""
     existing_links = dict(getattr(product, "platform_links", None) or {})
+
     direct_rakuten_url = product.product_url if source == "rakuten" and product.product_url else existing_links.get("rakuten", "")
     has_direct_rakuten = bool(direct_rakuten_url)
     direct_naver_url = product.product_url if source == "naver" and product.product_url else existing_links.get("naver", "")
@@ -287,19 +303,27 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
     links: dict[str, str] = {}
 
     if region == "jp":
-        # 라쿠텐: 라쿠텐 소스면 실 상품 URL, 아니면 라인명 검색 링크(카탈로그 상품도 라쿠텐 버튼).
+        # 라쿠텐: 라쿠텐 소스면 실 상품 URL(직링크). 아니면 붙이지 않는다 — 검색 폴백은 미검증이라
+        # 폐기(사용자 원칙: 직링크 있으면 버튼, 없으면 미출력). JP 남성 주입상품은 routes의
+        # _verify_rakuten_for_global 이 라쿠텐 API로 검증된 직링크만 붙인다.
         if has_direct_rakuten:
             links["rakuten"] = direct_rakuten_url
-        else:
-            links["rakuten"] = _search_url(RAKUTEN_SEARCH, brand, name, suffix="/")
         # 마츠키요: 드롭(banned.md 참고 — 색조 크롤 데이터 없음 + 안티봇으로 검증 불가).
-        # 아마존 JP: 라인명 검색 링크.
-        if not has_direct_rakuten:
-            links["amazon_jp"] = _search_url(AMAZON_JP_SEARCH, brand, name)
+        # 아마존 JP: 아마존 Beauty 카탈로그(Kaggle US) 매칭 → 검증된 amazon.co.jp/dp/{asin} 직링크.
+        # 글로벌 브랜드는 US/JP가 ASIN을 공유하는 경우가 많아, US ASIN으로 일본 상품 페이지에 연결한다.
+        # 매칭 없으면 붙이지 않는다(검색 링크 투기 방지 — 올리브영 직링크 기준으로 통일).
+        amazon_jp = _amazon_link(brand, name, "jp")
+        if amazon_jp:
+            links["amazon_jp"] = amazon_jp
         # 올리브영: 일본 지역은 글로벌몰. 글로벌몰은 K뷰티+글로벌 브랜드(The Ordinary 등)를
         # 취급하므로, 일본 드럭스토어(J-뷰티) 브랜드만 제외하고 붙인다.
         if not _is_jbeauty_brand(brand):
-            if catalog_available():
+            existing_oy = existing_links.get("oliveyoung", "")
+            if "product/detail" in existing_oy:
+                # 이미 붙은 prdtNo 직링크(주입 상품이 dedup으로 병합된 경우 등)는 권위있으므로
+                # 언어 무관 그대로 유지한다(일본어 명으로 재매칭하다 버튼을 잃지 않게).
+                links["oliveyoung"] = existing_oy
+            elif catalog_available():
                 # 카탈로그 매칭은 prdtNo '직링크'(검증됨)라 오탐 위험이 없다. 따라서 라쿠텐
                 # 실상품(has_direct_rakuten)에도 붙인다 — 라쿠텐에서 찾은 K뷰티 상품이 올리브영
                 # 글로벌에도 있으면 두 버튼을 함께 노출해야 하기 때문(예전엔 라쿠텐 상품이면
@@ -319,13 +343,11 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
             links["naver"] = direct_naver_url
         else:
             links["naver"] = _search_url(NAVER_SEARCH, brand, name)
-        english_alias = _english_alias_query(name) if has_direct_naver else ""
-        if english_alias:
-            links["amazon_us"] = f"{AMAZON_US_SEARCH}{quote_plus(english_alias)}"
-        elif has_direct_naver and existing_links.get("amazon_us"):
-            links["amazon_us"] = existing_links["amazon_us"]
-        elif not has_direct_naver:
-            links["amazon_us"] = _search_url(AMAZON_US_SEARCH, brand, name)
+        # 아마존닷컴: Beauty 카탈로그 매칭되면 검증된 amazon.com/dp/{asin} 직링크, 없으면 버튼 없음
+        # (검색 폴백은 'No results'/엉뚱한 상품 오탐이라 폐기 — 사용자 지적).
+        amazon_us = _amazon_link(brand, name, "kr")
+        if amazon_us:
+            links["amazon_us"] = amazon_us
         # 국내몰(oliveyoung.co.kr)은 Cloudflare 403으로 직접 검증이 불가하다. 대신 글로벌몰
         # 조회를 KR 입점 대리 신호로 써서(routes에서 보강 전 영문 정체성으로 판정) 조회되는
         # 상품만 '한글 우선 쿼리' 검색 링크로 노출한다(한국 플랫폼은 한글 검색이 안전).

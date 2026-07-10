@@ -37,6 +37,10 @@ export type AnalyzeSkinResponse = {
   body_conditions: BodyConditionScore[];
   model_available: boolean;
   summary: string;
+  confidence_note?: string;
+  tier1_label?: string;
+  tier1_confidence?: number;
+  urgent?: boolean;
 };
 
 export type PersonalColorMakeup = {
@@ -44,6 +48,7 @@ export type PersonalColorMakeup = {
   blush: string[];
   eye: string[];
   base: string[];
+  nail: string[];
 };
 
 export type PersonalColorResponse = {
