@@ -1,0 +1,651 @@
+diff --git a/backend/app/api/routes.py b/backend/app/api/routes.py
+index 038867d..ed8b8ec 100644
+--- a/backend/app/api/routes.py
++++ b/backend/app/api/routes.py
+@@ -37,6 +37,7 @@ from app.services.oliveyoung_availability import prune_global_oliveyoung
+ from app.services.oliveyoung_catalog import catalog_available, male_catalog_items
+ from app.services.oliveyoung_kr_search import prune_kr_oliveyoung
+ from app.services.personal_color_analyzer import PersonalColorAnalyzer
++from app.services import amazon_catalog
+ from app.services.platform_resolver import OLIVEYOUNG_GLOBAL_DETAIL, dedup_by_line, resolve_product_platforms
+ from app.services.product_image_provider import fill_missing_images
+ from app.services.rakuten_client import RakutenClient
+@@ -216,37 +217,132 @@ def _inject_male_global_products(products: list, region: str = "jp", limit_per_c
+         )
+ 
+ 
+-def _verify_rakuten_for_global(products: list, client) -> None:
+-    """OY 글로벌 주입(JP 남성) 상품에 라쿠텐 '검증된 직링크'를 붙인다(검색 폴백 없음).
++def _verified_rakuten_url(client, brand: str, name: str) -> str:
++    """라쿠텐 API로 '브랜드 일치' 실제 리스팅을 찾아 검증된 상품 직링크를 반환한다(없으면 "").
++
++    사용자 원칙: 직링크 있으면 버튼, 없으면 미출력(검색 폴백 없음). 재현율을 위해 전체 상품명
++    (너무 구체적)뿐 아니라 '브랜드+핵심어'로도 재검색한다. 히트 중 브랜드 문자열(라틴 브랜드
++    또는 DB 브랜드)이 실제로 담긴 리스팅만 채택해 엉뚱한 상품 링크를 막는다."""
++    name = name or ""
++    latin = re.match(r"[A-Za-z][A-Za-z0-9.&'-]+", name)
++    latin_brand = latin.group() if latin else ""
++    brand_keys = [k.lower() for k in (latin_brand, brand or "") if k]
++    if not brand_keys:
++        return ""
++    # 쿼리 후보: (1) 전체명(정확도) (2) 앞 3토큰 (3) 브랜드+핵심어(재현율). 첫 브랜드매칭 히트 채택.
++    core = " ".join(name.split()[:3])
++    for query in (name, core, f"{latin_brand} {brand}".strip()):
++        if not query.strip():
++            continue
++        hits = client.search(query, hits=3)
++        match = next((h for h in hits if any(k in f"{h.brand} {h.name}".lower() for k in brand_keys)), None)
++        if match and match.product_url:
++            return match.product_url
++    return ""
+ 
+-    라쿠텐 API로 브랜드 일치 실제 리스팅을 찾으면 그 상품 URL(직링크)을 붙이고, 못 찾으면
+-    라쿠텐 버튼을 붙이지 않는다(사용자 원칙: 직링크 있으면 버튼, 없으면 미출력). 재현율을 위해
+-    전체 상품명(너무 구체적)뿐 아니라 '브랜드+핵심어'로도 재검색한다.
+-    """
++
++def _attach_rakuten(p, url: str) -> None:
++    links = dict(getattr(p, "platform_links", None) or {})
++    links["rakuten"] = url  # 검증된 실제 라쿠텐 상품 페이지(직링크)
++    p.platform_links = links
++    p.matched_platforms = sorted(links.keys())
++
++
++def _filter_by_requested_platform(products: list, platform: str) -> list:
++    if platform == "all":
++        return products
++    return [
++        product
++        for product in products
++        if (getattr(product, "platform_links", None) or {}).get(platform)
++    ]
++
++
++def _keyword_brand(keyword: str) -> str:
++    match = re.match(r"\s*([A-Za-z][A-Za-z0-9.&'-]*(?:\s+[A-Za-z][A-Za-z0-9.&'-]*)?)", keyword or "")
++    if match:
++        return match.group(1).strip()
++    return (keyword or "").strip().split(" ", 1)[0]
++
++
++def _amazon_match_for_platform(brand: str, keyword: str, platform: str):
++    if platform == "amazon_jp":
++        match = amazon_catalog.match_amazon(brand, keyword, region="jp")
++        if match:
++            return match, amazon_catalog.amazon_jp_url(match.asin)
++    elif platform == "amazon_us":
++        query = amazon_catalog.amazon_search_query(brand, keyword)
++        match = amazon_catalog.match_amazon(brand, query)
++        if match:
++            return match, amazon_catalog.amazon_com_url(match.asin)
++    return None, ""
++
++
++def _inject_requested_amazon_products(products: list, keywords: list[str], platform: str) -> None:
++    if platform not in {"amazon_jp", "amazon_us"}:
++        return
++    seen = {
++        url
++        for product in products
++        for url in (getattr(product, "platform_links", None) or {}).values()
++    }
++    for keyword in keywords:
++        brand = _keyword_brand(keyword)
++        if not brand:
++            continue
++        match, url = _amazon_match_for_platform(brand, keyword, platform)
++        if not match or not url or url in seen:
++            continue
++        seen.add(url)
++        products.append(
++            RakutenProductOut(
++                id=f"{platform}-{match.asin}",
++                brand=brand,
++                name=match.title,
++                price=0,
++                image_url=match.image_url or None,
++                product_url=url,
++                keyword=keyword,
++                source="amazon_catalog",
++                score=101.0,
++                platform_links={platform: url},
++                matched_platforms=[platform],
++            )
++        )
++
++
++def _verify_rakuten_for_global(products: list, client) -> None:
++    """OY 글로벌 주입(JP 남성 아이템매칭) 상품에 라쿠텐 검증 직링크를 붙인다."""
+     if not client.configured:
+         return
+     for p in products:
+         if getattr(p, "source", "") != "oliveyoung_global":
+             continue
+-        name = p.name or ""
+-        latin = re.match(r"[A-Za-z][A-Za-z0-9.&'-]+", name)
+-        latin_brand = latin.group() if latin else ""
+-        brand_keys = [k.lower() for k in (latin_brand, p.brand or "") if k]
+-        # 쿼리 후보: (1) 전체명(정확도) (2) 브랜드+앞 2토큰(재현율). 첫 브랜드매칭 히트를 채택.
+-        core = " ".join(name.split()[:3])
+-        match = None
+-        for query in (name, core, f"{latin_brand} {p.brand}".strip()):
+-            if not query.strip():
+-                continue
+-            hits = client.search(query, hits=3)
+-            match = next((h for h in hits if any(k in f"{h.brand} {h.name}".lower() for k in brand_keys)), None)
+-            if match and match.product_url:
+-                break
+-        if match and match.product_url:
+-            links = dict(p.platform_links or {})
+-            links["rakuten"] = match.product_url  # 검증된 실제 라쿠텐 상품 페이지(직링크)로 승격
+-            p.platform_links = links
+-            p.matched_platforms = sorted(links.keys())
++        url = _verified_rakuten_url(client, p.brand or "", p.name or "")
++        if url:
++            _attach_rakuten(p, url)
++
++
++def _verify_rakuten_for_skincare(products: list, client, limit: int = 6) -> None:
++    """JP 스킨케어(피부상태) 추천 상품에 라쿠텐 검증 직링크를 붙인다.
++
++    스킨케어 `/recommend` 흐름은 resolve_product_platforms만 돌아, 라쿠텐 소스 상품이 아니면
++    라쿠텐 버튼이 절대 안 붙던 문제를 보완한다. 라쿠텐 API는 ~1req/s로 레이트리밋(429)되므로
++    상위 limit개, 라쿠텐 링크가 아직 없는 상품만 검증한다(못 찾으면 미출력)."""
++    if not client.configured:
++        return
++    processed = 0
++    for p in products:
++        if processed >= limit:
++            break
++        if (getattr(p, "platform_links", None) or {}).get("rakuten"):
++            continue  # 이미 라쿠텐 직링크 있음
++        if getattr(p, "source", "") in ("rakuten", "naver"):
++            continue
++        processed += 1
++        url = _verified_rakuten_url(client, getattr(p, "brand", "") or "", getattr(p, "name", "") or "")
++        if url:
++            _attach_rakuten(p, url)
+ 
+ 
+ @router.post("/analyze-skin", response_model=AnalyzeSkinResponse)
+@@ -363,6 +459,10 @@ def recommend(
+     # KR=네이버/Amazon.com/올리브영 국내몰, JP=라쿠텐/Amazon.co.jp/올리브영 글로벌.
+     for product in response.products:
+         resolve_product_platforms(product, region)
++    # JP 스킨케어: 라쿠텐 소스가 아니면 라쿠텐 버튼이 안 붙으므로, API로 브랜드 일치 실상품을
++    # 검증해 직링크를 부착한다(미취급이면 버튼 없음 — 아이템매칭 남성 흐름과 동일 원칙).
++    if region == "jp":
++        _verify_rakuten_for_skincare(response.products, RakutenClient())
+     # 올리브영 입점 검증: JP=글로벌 카탈로그 직링크(카탈로그 없을 때만 라이브 prune). KR=국내몰
+     # NewMainSearchApi 라이브 검색으로 goodsNo 직링크 교체/미취급 버튼 제거(curl_cffi).
+     if region == "jp" and not catalog_available():
+@@ -485,6 +585,8 @@ def personal_color_item_match(
+ 
+     # JP 남성: 라쿠텐엔 한국 남성 브랜드가 안 떠서 올리브영 남성 상품을 글로벌몰 카탈로그에서
+     # 직접 주입한다(올리브영 JP 남성 고객 확보). catalog_available일 때만.
++    _inject_requested_amazon_products(products, keywords, platform)
++
+     if region == "jp" and gender == "male" and catalog_available():
+         _inject_male_global_products(products, region)
+ 
+@@ -523,6 +625,7 @@ def personal_color_item_match(
+         prune_kr_oliveyoung(products)
+ 
+     # 이미지가 없는 상품은 지역별 실시간 검색(KR=네이버, JP=라쿠텐)으로 대표 이미지를 보강한다.
++    products = _filter_by_requested_platform(products, platform)
+     fill_missing_images(products, region)
+ 
+     if products:
+diff --git a/backend/app/services/amazon_catalog.py b/backend/app/services/amazon_catalog.py
+index ec80a33..5768084 100644
+--- a/backend/app/services/amazon_catalog.py
++++ b/backend/app/services/amazon_catalog.py
+@@ -55,6 +55,14 @@ _KO_TO_EN_BRAND = {
+     "포니이펙트": "pony effect", "힌스": "hince", "아이디얼포맨": "ideal for men",
+     "나인위시스": "ninewishes", "우르오스": "uruos", "블랙몬스터": "black monster",
+     "낫포유": "notforyou", "미닉": "minique", "보웰": "bowell", "리우젤": "reuzel",
++    # J-beauty(일본) + 추가 K-beauty 별칭(HF McAuley 카탈로그에 영문명으로 존재, 실측 미매칭 보강).
++    "캔메이크": "canmake", "아네사": "anessa", "큐렐": "curel", "스킨푸드": "skinfood",
++    "엘릭시르": "elixir", "시세이도": "shiseido", "코세": "kose", "비오레": "biore",
++    "하다라보": "hada labo", "센카": "senka", "판클": "fancl", "무인양품": "muji",
++    "도프로그램": "d program", "미논": "minon", "이프사": "ipsa", "카네보": "kanebo",
++    "소피나": "sofina", "로토": "rohto", "멜라노씨씨": "melano cc", "나튜리에": "naturie",
++    "트란시노": "transino", "굿달": "goodal", "메디큐브": "medicube", "달바": "dalba",
++    "닥터지": "dr.g",
+ }
+ 
+ # 한국어 화장품 용어 → 영문(아마존 영문 검색용). 색상/제품종류 + 흔한 음차 형용사.
+@@ -82,6 +90,17 @@ _KO_TO_EN_TERM = {
+     "스킨": "skin", "핏": "fit", "리퀴드": "liquid", "오일": "oil", "밤": "balm",
+     "크림": "cream", "세럼": "serum", "에센스": "essence", "선샤인": "sunshine", "글로이": "glowy",
+     "쥬시": "juicy", "글래스팅": "glasting", "누디": "nudie", "멜팅": "melting", "슈가": "sugar",
++    # 제품 라인/타입어 보강(실측 미매칭: 미샤 타임레볼루션, 큐렐 인텐시브 모이스처, 홀리카 알로에 젤 등).
++    "타임": "time", "리볼루션": "revolution", "타임레볼루션": "time revolution",
++    "알로에": "aloe", "젤": "gel", "마스크": "mask", "시트마스크": "sheet mask",
++    "인텐시브": "intensive", "모이스처": "moisture", "모이스처라이징": "moisturizing",
++    "모이스트": "moist", "리프트": "lift", "로션": "lotion", "퍼펙트": "perfect",
++    "선스크린": "sunscreen", "쉬어": "sheer", "립": "lip", "미네랄": "mineral",
++    "노세범": "no sebum", "앰플": "ampoule", "리페어": "repair", "나이트": "night",
++    "클렌징": "cleansing", "토너": "toner", "밀크": "milk", "수딩": "soothing",
++    "하이드라": "hydra", "히알루론": "hyaluronic", "콜라겐": "collagen",
++    "레티놀": "retinol", "비타민": "vitamin", "시카": "cica", "스네일": "snail", "뮤신": "mucin",
++    "디파잉": "defying", "모이스춰": "moisture",
+ }
+ _JP_TO_EN_TERM = {
+     # 색상
+@@ -179,22 +198,35 @@ class _AmazonItem:
+     reviews: int
+ 
+ 
++# 지역별 카탈로그 파일(같은 디렉터리). US(amazon.com/영문 타이틀) vs JP(amazon.co.jp/일본어 타이틀).
++# - US: Kaggle 베이스 + 크롤(amazon.com) + HF(McAuley). 라틴 쿼리로 매칭, KR 버튼은 amazon.com/dp.
++# - JP: amazon.co.jp 크롤(실 JP ASIN, 일본어 타이틀). '일본어 상품명'으로 매칭, JP 버튼은
++#   amazon.co.jp/dp — US ASIN 재활용의 404 위험을 없앤다(공유 안 되는 ASIN도 실 JP ASIN이라 유효).
++_CRAWL_FILENAMES = ("amazon_beauty_us.csv", "amazon_beauty_hf.csv")
++_JP_CRAWL_FILENAMES = ("amazon_beauty_jp.csv",)
++
++
+ def _manifest_path() -> Path:
+     return get_settings().project_root / "data" / "manifests" / _MANIFEST_FILENAME
+ 
+ 
+-@lru_cache(maxsize=1)
+-def _load_items() -> tuple[_AmazonItem, ...]:
+-    path = _manifest_path()
++def _region_files(region: str) -> tuple[Path, ...]:
++    base_dir = _manifest_path().parent
++    if region == "jp":
++        return tuple(base_dir / name for name in _JP_CRAWL_FILENAMES)
++    return (_manifest_path(), *(base_dir / name for name in _CRAWL_FILENAMES))
++
++
++def _read_manifest(path: Path, items: list["_AmazonItem"], seen: set[str]) -> None:
+     if not path.exists():
+-        return ()
+-    items: list[_AmazonItem] = []
++        return
+     with path.open(encoding="utf-8-sig", errors="ignore", newline="") as f:
+         for row in csv.DictReader(f):
+             asin = str(row.get("asin") or "").strip()
+             title = str(row.get("title") or "").strip()
+-            if not asin or not title:
++            if not asin or not title or asin in seen:
+                 continue
++            seen.add(asin)
+             brand = str(row.get("brand") or "").strip()
+             try:
+                 reviews = int(float(row.get("reviews") or 0))
+@@ -211,6 +243,14 @@ def _load_items() -> tuple[_AmazonItem, ...]:
+                     reviews=reviews,
+                 )
+             )
++
++
++@lru_cache(maxsize=2)
++def _load_items(region: str = "us") -> tuple[_AmazonItem, ...]:
++    items: list[_AmazonItem] = []
++    seen: set[str] = set()
++    for path in _region_files(region):
++        _read_manifest(path, items, seen)
+     return tuple(items)
+ 
+ 
+@@ -218,8 +258,8 @@ def clear_cache() -> None:
+     _load_items.cache_clear()
+ 
+ 
+-def catalog_available() -> bool:
+-    return bool(_load_items())
++def catalog_available(region: str = "us") -> bool:
++    return bool(_load_items(region))
+ 
+ 
+ def amazon_com_url(asin: str) -> str:
+@@ -235,22 +275,37 @@ def _en_brand(brand: str) -> str:
+ 
+ 
+ def _brand_ok(q_brand_key: str, q_brand_tokens: frozenset[str], item: "_AmazonItem") -> bool:
+-    """브랜드 일치. 키가 서로 포함되면 OK. 아니면 '구별력 있는' 브랜드 토큰(len>=3, 불용어 제외)이
+-    **전부** 타이틀에 있어야 한다. 'of' 같은 공용어 하나로 다른 브랜드에 오매칭되는 것 방지
+-    (예: 'Beauty of Joseon' 이 'Lily Of The Desert' 로 새던 버그)."""
+-    if q_brand_key and item.brand_key and (
+-        q_brand_key == item.brand_key or q_brand_key in item.brand_key or item.brand_key in q_brand_key
+-    ):
+-        return True
++    """브랜드 일치. 키가 같거나 '충분히 긴' 쪽이 서로 포함되면 OK. 아니면 '구별력 있는'
++    브랜드 토큰(len>=3, 불용어 제외)이 **전부** 타이틀에 있어야 한다.
++
++    부분포함은 '짧은 쪽 키가 4자 이상'일 때만 허용한다. 카탈로그에는 브랜드 컬럼이 깨져
++    1~2글자 쓰레기 키('i','in','g','by','oz' 등 428행)가 있는데, 이들이 부분문자열로 아무
++    브랜드에나 걸리기 때문이다(실측 오탐: 브랜드키 'i'가 'espoir'의 부분문자열 → 'espoir'
++    쿼리가 'i ENVY BY KISS Brow Stamp'에 매칭). 'of' 같은 공용어 하나로 새던 버그도 방지."""
++    if q_brand_key and item.brand_key:
++        if q_brand_key == item.brand_key:
++            return True
++        shorter = min(q_brand_key, item.brand_key, key=len)
++        if len(shorter) >= 4 and (q_brand_key in item.brand_key or item.brand_key in q_brand_key):
++            return True
+     distinctive = {t for t in q_brand_tokens if len(t) >= 3 and t not in _BRAND_STOPWORDS}
+     return bool(distinctive) and distinctive <= item.name_tokens
+ 
+ 
+-def match_amazon(brand: str, name: str, min_score: float = _MIN_SCORE) -> AmazonMatch | None:
++def _brand_in_title(q_brand_tokens: frozenset[str], item: "_AmazonItem") -> bool:
++    distinctive = {t for t in q_brand_tokens if len(t) >= 3 and t not in _BRAND_STOPWORDS}
++    return bool(distinctive) and distinctive <= item.name_tokens
++
++
++def match_amazon(brand: str, name: str, min_score: float = _MIN_SCORE, region: str = "us") -> AmazonMatch | None:
+     """상품을 아마존 Beauty 카탈로그와 조인해 최적 매칭(ASIN)을 반환한다. 없으면 None.
+ 
+     브랜드가 실제로 일치하는 후보만 받는다(교차브랜드 오탐 차단). 동점이면 리뷰수가 많은 상품을
+     고른다(대표 상품일 확률↑, 죽은 링크↓).
++
++    region="jp"면 JP 카탈로그(일본어 타이틀)를 쓴다. 이때 name 은 **일본어 상품명**을 넘겨야
++    라인 토큰(일본어)이 겹친다(라틴화한 amazon_search_query 결과 아님). 브랜드는 _en_brand 로
++    라틴 정규화 — JP 카탈로그 brand 컬럼도 라틴 시드라 게이트가 라틴↔라틴으로 맞는다.
+     """
+     en_brand = _en_brand(brand)
+     q_brand_key = normalize_key(en_brand)
+@@ -267,9 +322,11 @@ def match_amazon(brand: str, name: str, min_score: float = _MIN_SCORE) -> Amazon
+     best: _AmazonItem | None = None
+     best_cov = 0.0
+     best_reviews = -1
+-    for item in _load_items():
++    for item in _load_items(region):
+         if not _brand_ok(q_brand_key, q_brand_tokens, item):
+             continue
++        if region == "jp" and not _brand_in_title(q_brand_tokens, item):
++            continue
+         il = item.name_tokens - item.brand_tokens
+         overlap = q_line & il
+         if len(overlap) < 2:
+diff --git a/backend/app/services/platform_resolver.py b/backend/app/services/platform_resolver.py
+index 0c1075f..bfae88b 100644
+--- a/backend/app/services/platform_resolver.py
++++ b/backend/app/services/platform_resolver.py
+@@ -141,6 +141,39 @@ OLIVEYOUNG_GLOBAL_DETAIL = "https://global.oliveyoung.com/product/detail?prdtNo=
+ # 담당한다. 글로벌 API의 gdsCd는 EAN 바코드라 국내몰 goodsNo가 아니다(실측).
+ 
+ 
++_AMAZON_JP_DIRECT_PRDT_ASINS = {
++    "GA220113342": "B07FPW3DSB",
++    "GA220113344": "B0BR4S3WLD",
++    "GA260237877": "B07Q6PV2Y4",
++}
++
++
++def _direct_amazon_jp_url_from_oliveyoung(*urls: str) -> str:
++    for url in urls:
++        match = re.search(r"prdtNo=([^&]+)", url or "")
++        if not match:
++            continue
++        asin = _AMAZON_JP_DIRECT_PRDT_ASINS.get(match.group(1))
++        if asin:
++            return amazon_catalog.amazon_jp_url(asin)
++    return ""
++
++
++def _amazon_asin_from_url(url: str) -> str:
++    match = re.search(r"/dp/([A-Z0-9]{10})", url or "", re.IGNORECASE)
++    return match.group(1).upper() if match else ""
++
++
++def _verified_existing_amazon_jp_url(brand: str, name: str, url: str) -> str:
++    asin = _amazon_asin_from_url(url)
++    if not asin:
++        return ""
++    match = amazon_catalog.match_amazon(brand, name, region="jp")
++    if not match or match.asin.upper() != asin:
++        return ""
++    return amazon_catalog.amazon_jp_url(asin)
++
++
+ def build_search_query(brand: str, name: str) -> str:
+     """프로모/샵이름/쉐이드 노이즈를 걷어내고 '브랜드 + 핵심 라인명'만 남긴다.
+ 
+@@ -266,15 +299,20 @@ def _search_url(base: str, brand: str, name: str, suffix: str = "") -> str:
+ def _amazon_link(brand: str, name: str, region: str) -> str:
+     """아마존 링크. ASIN 직링크가 확인된 상품만 버튼을 낸다.
+ 
+-    한글/일본어 상품명은 amazon_search_query로 영문화해 Beauty 카탈로그와 매칭한다. 매칭되면
+-    KR=amazon.com/dp/{asin}, JP=amazon.co.jp/dp/{asin}. 매칭이 없으면 미취급으로 보고 버튼 없음."""
++    KR: 한글/일본어 상품명을 amazon_search_query로 영문화 → US 카탈로그 매칭 → amazon.com/dp.
++    JP: 먼저 '일본어 상품명 그대로' JP 카탈로그(amazon.co.jp 크롤, 실 JP ASIN)와 일본어 토큰
++        매칭 → amazon.co.jp/dp (404 없음). 없으면 버튼 없음. US ASIN을 amazon.co.jp로
++        재활용하지 않는다."""
++    if region == "jp":
++        jp_match = amazon_catalog.match_amazon(brand, name, region="jp")
++        if jp_match:
++            return amazon_catalog.amazon_jp_url(jp_match.asin)
++        return ""
+     en_query = amazon_catalog.amazon_search_query(brand, name)
+     if not en_query or not amazon_catalog.catalog_available():
+         return ""
+     match = amazon_catalog.match_amazon(brand, en_query)
+-    if not match:
+-        return ""
+-    return amazon_catalog.amazon_jp_url(match.asin) if region == "jp" else amazon_catalog.amazon_com_url(match.asin)
++    return amazon_catalog.amazon_com_url(match.asin) if match else ""
+ 
+ 
+ def _sync_platform_buttons(product, links: dict[str, str]) -> None:
+@@ -312,7 +350,11 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
+         # 아마존 JP: 아마존 Beauty 카탈로그(Kaggle US) 매칭 → 검증된 amazon.co.jp/dp/{asin} 직링크.
+         # 글로벌 브랜드는 US/JP가 ASIN을 공유하는 경우가 많아, US ASIN으로 일본 상품 페이지에 연결한다.
+         # 매칭 없으면 붙이지 않는다(검색 링크 투기 방지 — 올리브영 직링크 기준으로 통일).
+-        amazon_jp = _amazon_link(brand, name, "jp")
++        amazon_jp = _direct_amazon_jp_url_from_oliveyoung(existing_links.get("oliveyoung", ""), product.product_url)
++        if not amazon_jp:
++            amazon_jp = _verified_existing_amazon_jp_url(brand, name, existing_links.get("amazon_jp", ""))
++        if not amazon_jp:
++            amazon_jp = _amazon_link(brand, name, "jp")
+         if amazon_jp:
+             links["amazon_jp"] = amazon_jp
+         # 올리브영: 일본 지역은 글로벌몰. 글로벌몰은 K뷰티+글로벌 브랜드(The Ordinary 등)를
+diff --git a/backend/tests/test_amazon_catalog.py b/backend/tests/test_amazon_catalog.py
+index fbe9e2e..e43a75e 100644
+--- a/backend/tests/test_amazon_catalog.py
++++ b/backend/tests/test_amazon_catalog.py
+@@ -26,6 +26,8 @@ _ROWS = [
+     ("B03BOJ", "Beauty", "Beauty of Joseon Relief Sun Rice Probiotics SPF50 50ml", "4.7", "80000", ""),
+     ("B04LILY", "Lily", "Lily Of The Desert Aloe Vera Gelly Moisturizer 12 oz", "4.4", "3000", ""),
+     ("B05LAN", "LANEIGE", "LANEIGE Water Bank Blue Hyaluronic Cream 50ml", "4.5", "9000", ""),
++    # 브랜드 컬럼이 'i'로 깨진 행(실데이터에 428행 존재). 부분문자열('i' in 'espoir')로 새면 안 된다.
++    ("B06KISS", "i", "i ENVY BY KISS Brow Stamp Perfect Eyebrow Dark Brown KPBS01", "4.2", "500", ""),
+ ]
+ 
+ 
+@@ -83,12 +85,87 @@ def test_rejects_cross_brand_common_word(monkeypatch, tmp_path):
+     assert m is not None and m.asin == "B03BOJ"  # 올바른 브랜드로 매칭
+ 
+ 
++def test_rejects_degenerate_short_brand_key(monkeypatch, tmp_path):
++    _use_manifest(monkeypatch, tmp_path)
++    # 브랜드키 'i'(1글자, 컬럼 파싱 오류)가 'espoir'의 부분문자열이라도 매칭되면 안 된다.
++    # (실측 오탐: 에스쁘아 브로우 펜슬 → 'i ENVY BY KISS Brow Stamp' 링크)
++    m = ac.match_amazon("에스쁘아", "espoir brown brow soft pencil")
++    assert m is None
++
++
+ def test_no_match_when_product_absent(monkeypatch, tmp_path):
+     _use_manifest(monkeypatch, tmp_path)
+     # 카탈로그에 없는 상품은 매칭 없음(오탐 링크 방지).
+     assert ac.match_amazon("Innisfree", "Innisfree Green Tea Seed Serum") is None
+ 
+ 
++def test_merges_crawl_manifest(monkeypatch, tmp_path):
++    # 크롤 보강 매니페스트(amazon_beauty_us.csv)가 있으면 Kaggle 베이스와 함께 로드된다.
++    _use_manifest(monkeypatch, tmp_path)  # 베이스(amazon_beauty_products.csv)
++    crawl = tmp_path / "amazon_beauty_us.csv"
++    with crawl.open("w", encoding="utf-8", newline="") as f:
++        w = csv.writer(f)
++        w.writerow(_HEADER)
++        # 베이스에 없는 espoir 브로우 펜슬(크롤로만 확보). 타이틀에 브랜드 없어도 brand 컬럼으로 매칭.
++        w.writerow(("B0ESPOIR1", "espoir", "The Brow Balance Pencil #3 Soft Brown Eye Brow Pencil", "4.5", "300", ""))
++    ac.clear_cache()
++    m = ac.match_amazon("에스쁘아", "espoir the brow balance pencil soft brown")
++    assert m is not None and m.asin == "B0ESPOIR1"
++
++
++def test_crawl_manifest_absent_is_fine(monkeypatch, tmp_path):
++    # 크롤 파일이 없어도(베이스만) 정상 동작한다.
++    _use_manifest(monkeypatch, tmp_path)
++    assert ac.catalog_available() is True
++    assert ac.match_amazon("CLIO", "Clio Kill Cover Founwear Cushion") is not None
++
++
++def test_jp_catalog_matches_japanese_title(monkeypatch, tmp_path):
++    # JP 카탈로그(amazon_beauty_jp.csv, 일본어 타이틀)를 '일본어 상품명'으로 매칭한다.
++    # 브랜드는 라틴 시드(anua)라 게이트가 라틴↔라틴으로 맞고, 라인은 일본어 토큰(ドクダミ)이 겹친다.
++    _use_manifest(monkeypatch, tmp_path)  # US 베이스(무관)
++    jp = tmp_path / "amazon_beauty_jp.csv"
++    with jp.open("w", encoding="utf-8", newline="") as f:
++        w = csv.writer(f)
++        w.writerow(_HEADER)
++        w.writerow(("B0JPANUA1", "anua", "ANUA アヌア ドクダミ77 スージングトナー 250ml", "4.6", "900", ""))
++    ac.clear_cache()
++    # 한글 브랜드 + 일본어 상품명 → JP 카탈로그 매칭
++    m = ac.match_amazon("아누아", "アヌア ドクダミ77 トナー", region="jp")
++    assert m is not None and m.asin == "B0JPANUA1"
++    # US 카탈로그(영문)에는 이 일본어 상품이 없다 → region 기본(us)이면 매칭 없음
++    assert ac.match_amazon("아누아", "アヌア ドクダミ77 トナー") is None
++
++
++def test_jp_catalog_requires_brand_in_title_even_when_brand_column_is_wrong(monkeypatch, tmp_path):
++    _use_manifest(monkeypatch, tmp_path)
++    jp = tmp_path / "amazon_beauty_jp.csv"
++    with jp.open("w", encoding="utf-8", newline="") as f:
++        w = csv.writer(f)
++        w.writerow(_HEADER)
++        w.writerow((
++            "B0WRONG2AN",
++            "wakemake",
++            "2aN Official Eyeshadow Palette BETTER ME EYE PALETTE 14 Slush Pop",
++            "4.5",
++            "420",
++            "",
++        ))
++        w.writerow((
++            "B0WAKEMAKE",
++            "wakemake",
++            "wakemake Soft Blurring Eye Palette 10 Lazy Pink Blurring",
++            "4.5",
++            "300",
++            "",
++        ))
++    ac.clear_cache()
++
++    m = ac.match_amazon("WAKEMAKE", "Soft Blurring Eye Palette", region="jp")
++
++    assert m is not None and m.asin == "B0WAKEMAKE"
++
++
+ def test_urls(monkeypatch, tmp_path):
+     assert ac.amazon_com_url("B01X").endswith("amazon.com/dp/B01X")
+     assert ac.amazon_jp_url("B01X").endswith("amazon.co.jp/dp/B01X")
+diff --git a/backend/tests/test_platform_resolver.py b/backend/tests/test_platform_resolver.py
+index e7d3d6a..5af46af 100644
+--- a/backend/tests/test_platform_resolver.py
++++ b/backend/tests/test_platform_resolver.py
+@@ -91,11 +91,11 @@ def test_rakuten_source_keeps_only_rakuten_when_amazon_unmatched() -> None:
+ 
+ 
+ def test_rakuten_source_adds_amazon_jp_only_when_asin_matched(monkeypatch) -> None:
+-    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda: True)
++    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda region="us": True)
+     monkeypatch.setattr(
+         pr.amazon_catalog,
+         "match_amazon",
+-        lambda brand, query: SimpleNamespace(asin="B0MATCHJP"),
++        lambda brand, query, region="us": SimpleNamespace(asin="B0MATCHJP"),
+     )
+     product = _product("rakuten")
+ 
+@@ -128,11 +128,11 @@ def test_naver_source_adds_oliveyoung_kr_without_unmatched_amazon() -> None:
+ 
+ 
+ def test_naver_source_adds_amazon_us_only_when_asin_matched(monkeypatch) -> None:
+-    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda: True)
++    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda region="us": True)
+     monkeypatch.setattr(
+         pr.amazon_catalog,
+         "match_amazon",
+-        lambda brand, query: SimpleNamespace(asin="B0MATCHUS"),
++        lambda brand, query, region="us": SimpleNamespace(asin="B0MATCHUS"),
+     )
+     product = _product("naver", "https://search.shopping.naver.com/catalog/123")
+ 
+@@ -199,6 +199,72 @@ def test_non_rakuten_jp_product_no_rakuten_or_unmatched_amazon() -> None:
+     assert "amazon_jp" not in product.platform_links
+ 
+ 
++def test_jp_amazon_does_not_reuse_us_catalog_asin(monkeypatch) -> None:
++    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda region="us": True)
++    monkeypatch.setattr(
++        pr.amazon_catalog,
++        "match_amazon",
++        lambda brand, query, region="us": None if region == "jp" else SimpleNamespace(asin="B07C9CPRQQ"),
++    )
++    product = _product("database", "")
++    product.brand = "peripera"
++    product.name = "Pure Blushed Sunshine Cheek"
++
++    resolve_product_platforms(product, "jp")
++
++    assert "amazon_jp" not in product.platform_links
++
++
++def test_jp_amazon_removes_existing_link_when_jp_catalog_does_not_match(monkeypatch) -> None:
++    monkeypatch.setattr(
++        pr.amazon_catalog,
++        "match_amazon",
++        lambda brand, query, region="us": None,
++    )
++    product = _product("database", "")
++    product.brand = "WAKEMAKE"
++    product.name = "Soft Blurring Eye Palette"
++    product.platform_links = {"amazon_jp": "https://www.amazon.co.jp/dp/B0FJFQLHM2"}
++
++    resolve_product_platforms(product, "jp")
++
++    assert "amazon_jp" not in product.platform_links
++
++
++@pytest.mark.parametrize(
++    ("brand", "name", "url"),
++    [
++        ("ダシュ", "DASHU メンズアクアトーンアップBBローション40ml", "https://www.amazon.co.jp/dp/B07FPW3DSB"),
++        ("ダシュ", "DASHU メンズパーフェクトカバーコンシーラー", "https://www.amazon.co.jp/dp/B0BR4S3WLD"),
++        ("グラフェン", "GRAFEN トリプルリップProハンサムリップ 4.3g", "https://www.amazon.co.jp/dp/B07Q6PV2Y4"),
++    ],
++)
++def test_verified_male_jp_items_get_amazon_direct_links(brand: str, name: str, url: str) -> None:
++    product = _product("database", "")
++    product.brand = brand
++    product.name = name
++    prdt_no_by_url = {
++        "https://www.amazon.co.jp/dp/B07FPW3DSB": "GA220113342",
++        "https://www.amazon.co.jp/dp/B0BR4S3WLD": "GA220113344",
++        "https://www.amazon.co.jp/dp/B07Q6PV2Y4": "GA260237877",
++    }
++    product.platform_links = {"oliveyoung": OLIVEYOUNG_GLOBAL_DETAIL + quote_plus(prdt_no_by_url[url])}
++
++    resolve_product_platforms(product, "jp")
++
++    assert product.platform_links["amazon_jp"] == url
++
++
++def test_unverified_male_jp_item_does_not_get_amazon_button() -> None:
++    product = _product("database", "")
++    product.brand = "ジョンセンムル"
++    product.name = "JUNGSAEMMOOL メン24Hブロービルダー 0.25g"
++
++    resolve_product_platforms(product, "jp")
++
++    assert "amazon_jp" not in product.platform_links
++
++
+ def test_search_query_keeps_compound_slash_in_product_identity() -> None:
+     query = build_search_query("COSRX", "AHA/BHA Clarifying Treatment Toner")
+     assert query == "COSRX AHA BHA Clarifying Treatment Toner"

@@ -26,6 +26,8 @@ _ROWS = [
     ("B03BOJ", "Beauty", "Beauty of Joseon Relief Sun Rice Probiotics SPF50 50ml", "4.7", "80000", ""),
     ("B04LILY", "Lily", "Lily Of The Desert Aloe Vera Gelly Moisturizer 12 oz", "4.4", "3000", ""),
     ("B05LAN", "LANEIGE", "LANEIGE Water Bank Blue Hyaluronic Cream 50ml", "4.5", "9000", ""),
+    # 브랜드 컬럼이 'i'로 깨진 행(실데이터에 428행 존재). 부분문자열('i' in 'espoir')로 새면 안 된다.
+    ("B06KISS", "i", "i ENVY BY KISS Brow Stamp Perfect Eyebrow Dark Brown KPBS01", "4.2", "500", ""),
 ]
 
 
@@ -83,10 +85,75 @@ def test_rejects_cross_brand_common_word(monkeypatch, tmp_path):
     assert m is not None and m.asin == "B03BOJ"  # 올바른 브랜드로 매칭
 
 
+def test_rejects_degenerate_short_brand_key(monkeypatch, tmp_path):
+    _use_manifest(monkeypatch, tmp_path)
+    # 브랜드키 'i'(1글자, 컬럼 파싱 오류)가 'espoir'의 부분문자열이라도 매칭되면 안 된다.
+    # (실측 오탐: 에스쁘아 브로우 펜슬 → 'i ENVY BY KISS Brow Stamp' 링크)
+    m = ac.match_amazon("에스쁘아", "espoir brown brow soft pencil")
+    assert m is None
+
+
 def test_no_match_when_product_absent(monkeypatch, tmp_path):
     _use_manifest(monkeypatch, tmp_path)
     # 카탈로그에 없는 상품은 매칭 없음(오탐 링크 방지).
     assert ac.match_amazon("Innisfree", "Innisfree Green Tea Seed Serum") is None
+
+
+def test_merges_crawl_manifest(monkeypatch, tmp_path):
+    # 크롤 보강 매니페스트(amazon_beauty_us.csv)가 있으면 Kaggle 베이스와 함께 로드된다.
+    _use_manifest(monkeypatch, tmp_path)  # 베이스(amazon_beauty_products.csv)
+    crawl = tmp_path / "amazon_beauty_us.csv"
+    with crawl.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_HEADER)
+        # 베이스에 없는 espoir 브로우 펜슬(크롤로만 확보). 타이틀에 브랜드 없어도 brand 컬럼으로 매칭.
+        w.writerow(("B0ESPOIR1", "espoir", "The Brow Balance Pencil #3 Soft Brown Eye Brow Pencil", "4.5", "300", ""))
+    ac.clear_cache()
+    m = ac.match_amazon("에스쁘아", "espoir the brow balance pencil soft brown")
+    assert m is not None and m.asin == "B0ESPOIR1"
+
+
+def test_crawl_manifest_absent_is_fine(monkeypatch, tmp_path):
+    # 크롤 파일이 없어도(베이스만) 정상 동작한다.
+    _use_manifest(monkeypatch, tmp_path)
+    assert ac.catalog_available() is True
+    assert ac.match_amazon("CLIO", "Clio Kill Cover Founwear Cushion") is not None
+
+
+def test_jp_catalog_matches_japanese_title(monkeypatch, tmp_path):
+    # JP 카탈로그(amazon_beauty_jp.csv, 일본어 타이틀)를 '일본어 상품명'으로 매칭한다.
+    # 브랜드는 라틴 시드(anua)라 게이트가 라틴↔라틴으로 맞고, 라인은 일본어 토큰(ドクダミ)이 겹친다.
+    _use_manifest(monkeypatch, tmp_path)  # US 베이스(무관)
+    jp = tmp_path / "amazon_beauty_jp.csv"
+    with jp.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_HEADER)
+        w.writerow(("B0JPANUA1", "anua", "ANUA アヌア ドクダミ77 スージングトナー 250ml", "4.6", "900", ""))
+    ac.clear_cache()
+    # 한글 브랜드 + 일본어 상품명 → JP 카탈로그 매칭
+    m = ac.match_amazon("아누아", "アヌア ドクダミ77 トナー", region="jp")
+    assert m is not None and m.asin == "B0JPANUA1"
+    # US 카탈로그(영문)에는 이 일본어 상품이 없다 → region 기본(us)이면 매칭 없음
+    assert ac.match_amazon("아누아", "アヌア ドクダミ77 トナー") is None
+
+
+def test_jp_catalog_rejects_row_with_conflicting_brand_in_title(monkeypatch, tmp_path):
+    _use_manifest(monkeypatch, tmp_path)
+    jp = tmp_path / "amazon_beauty_jp.csv"
+    with jp.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_HEADER)
+        w.writerow((
+            "B0WRONG2AN",
+            "wakemake",
+            "2aN Official Eyeshadow Palette BETTER ME EYE PALETTE 14 Slush Pop",
+            "4.5",
+            "420",
+            "",
+        ))
+    ac.clear_cache()
+
+    assert ac.match_amazon("WAKEMAKE", "Soft Blurring Eye Palette", region="jp") is None
 
 
 def test_urls(monkeypatch, tmp_path):

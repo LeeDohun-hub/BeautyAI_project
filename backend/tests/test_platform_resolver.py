@@ -43,10 +43,12 @@ def test_oliveyoung_global_source_keeps_only_oy_direct_when_unmatched() -> None:
     # JP 남성 주입 상품: OY prdtNo 직링크만 유지(언어 무관 보존). 라쿠텐/아마존은 직링크 없으면
     # 안 붙는다(검색 폴백 폐기 — 직링크 있으면 버튼, 없으면 미출력). 라쿠텐 직링크는 API 검증 시
     # routes._verify_rakuten_for_global 이 별도로 붙인다.
+    # 아마존/라쿠텐 직링크가 없는 상품(컨실러: 검증 오버라이드/카탈로그 매칭 없음)을 쓴다.
+    # (DASHU BB 40ml 은 이제 검증된 amazon.co.jp 직링크가 있어 '미매칭' 예시로 부적합.)
     direct = OLIVEYOUNG_GLOBAL_DETAIL + quote_plus("GA240925619")
     product = SimpleNamespace(
         brand="ダシュ",
-        name="DASHU メンズアクアトーンアップBBローション40ml",
+        name="DASHU メンズパーフェクトカバーコンシーラー",
         product_url=direct,
         source="oliveyoung_global",
         platform_links={"oliveyoung": direct},
@@ -91,11 +93,11 @@ def test_rakuten_source_keeps_only_rakuten_when_amazon_unmatched() -> None:
 
 
 def test_rakuten_source_adds_amazon_jp_only_when_asin_matched(monkeypatch) -> None:
-    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda: True)
+    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda region="us": True)
     monkeypatch.setattr(
         pr.amazon_catalog,
         "match_amazon",
-        lambda brand, query: SimpleNamespace(asin="B0MATCHJP"),
+        lambda brand, query, region="us": SimpleNamespace(asin="B0MATCHJP"),
     )
     product = _product("rakuten")
 
@@ -128,11 +130,11 @@ def test_naver_source_adds_oliveyoung_kr_without_unmatched_amazon() -> None:
 
 
 def test_naver_source_adds_amazon_us_only_when_asin_matched(monkeypatch) -> None:
-    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda: True)
+    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda region="us": True)
     monkeypatch.setattr(
         pr.amazon_catalog,
         "match_amazon",
-        lambda brand, query: SimpleNamespace(asin="B0MATCHUS"),
+        lambda brand, query, region="us": SimpleNamespace(asin="B0MATCHUS"),
     )
     product = _product("naver", "https://search.shopping.naver.com/catalog/123")
 
@@ -197,6 +199,41 @@ def test_non_rakuten_jp_product_no_rakuten_or_unmatched_amazon() -> None:
 
     assert "rakuten" not in product.platform_links
     assert "amazon_jp" not in product.platform_links
+
+
+def test_jp_amazon_does_not_reuse_us_catalog_asin(monkeypatch) -> None:
+    monkeypatch.setattr(pr.amazon_catalog, "catalog_available", lambda region="us": True)
+    monkeypatch.setattr(
+        pr.amazon_catalog,
+        "match_amazon",
+        lambda brand, query, region="us": None if region == "jp" else SimpleNamespace(asin="B07C9CPRQQ"),
+    )
+    product = _product("database", "")
+    product.brand = "Bobbi Brown"
+    product.name = "Eyeshadow Palette"
+
+    resolve_product_platforms(product, "jp")
+
+    assert "amazon_jp" not in product.platform_links
+
+
+@pytest.mark.parametrize(
+    ("brand", "name", "url"),
+    [
+        ("peripera", "Pure Blushed Sunshine Cheek", "https://www.amazon.co.jp/dp/B0H6D154Y7"),
+        ("WAKEMAKE", "Soft Blurring Eye Palette", "https://www.amazon.co.jp/dp/B0DHXR1ZV3"),
+        ("The Ordinary", "Niacinamide 10% + Zinc 1%", "https://www.amazon.co.jp/dp/B01MDTVZTZ"),
+        ("La Roche-Posay", "Effaclar Medicated Gel Facial Cleanser", "https://www.amazon.co.jp/dp/B003JSEGNC"),
+    ],
+)
+def test_jp_amazon_uses_verified_line_overrides(brand: str, name: str, url: str) -> None:
+    product = _product("database", "")
+    product.brand = brand
+    product.name = name
+
+    resolve_product_platforms(product, "jp")
+
+    assert product.platform_links["amazon_jp"] == url
 
 
 def test_search_query_keeps_compound_slash_in_product_identity() -> None:

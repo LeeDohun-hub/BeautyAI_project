@@ -141,6 +141,30 @@ OLIVEYOUNG_GLOBAL_DETAIL = "https://global.oliveyoung.com/product/detail?prdtNo=
 # 담당한다. 글로벌 API의 gdsCd는 EAN 바코드라 국내몰 goodsNo가 아니다(실측).
 
 
+_AMAZON_JP_VERIFIED_LINE_ASINS = [
+    (("wakemake", "soft blurring eye palette"), "B0DHXR1ZV3"),
+    (("peripera", "pure blushed sunshine cheek"), "B0H6D154Y7"),
+    (("ordinary", "niacinamide", "zinc"), "B01MDTVZTZ"),
+    (("la roche posay", "effaclar", "gel", "cleanser"), "B003JSEGNC"),
+    # DASHU メンズ トーンアップ BBローション 40ml (JP 남성, 사용자 확인 + amazon.co.jp/dp 200 실측).
+    (("dashu", "bb", "40ml"), "B07FPW3DSB"),
+]
+
+
+def _verified_amazon_jp_override(brand: str, name: str) -> str:
+    text = " ".join(
+        value for value in (
+            normalize_key(brand),
+            normalize_key(name),
+            normalize_key(amazon_catalog.amazon_search_query(brand, name)),
+        ) if value
+    )
+    for required, asin in _AMAZON_JP_VERIFIED_LINE_ASINS:
+        if all(token in text for token in required):
+            return amazon_catalog.amazon_jp_url(asin)
+    return ""
+
+
 def build_search_query(brand: str, name: str) -> str:
     """프로모/샵이름/쉐이드 노이즈를 걷어내고 '브랜드 + 핵심 라인명'만 남긴다.
 
@@ -259,6 +283,33 @@ def _is_jbeauty_brand(brand: str) -> bool:
     return any(name in b for name in JBEAUTY_BRANDS)
 
 
+# 아마존/올리브영 매칭용 실브랜드 추출. 라쿠텐/네이버 상품은 brand 컬럼이 '샵이름'
+# ('CLIO公式楽天市場店' 등)이라 브랜드 게이트가 다 실패한다. 실제 브랜드는 상품명 안에 있다
+# (예: 'ピュア サンシャイン チーク【PERIPERA（ペリペラ）公式】' → PERIPERA). 이름에서 알려진
+# 브랜드를 찾아 매칭에 쓰면 라쿠텐 소스 상품에도 아마존/올리브영 버튼이 붙는다.
+_KNOWN_BRAND_NAMES = sorted(
+    {b for b in (set(KBEAUTY_BRANDS) | set(JBEAUTY_BRANDS)) if len(b) >= 4},
+    key=len,
+    reverse=True,
+)
+_SHOP_BRAND_RE = re.compile(
+    r"楽天市場店|公式|ショップ|オンライン|市場|直営|旗艦|store|shop|official|flagship|mall", re.I
+)
+
+
+def _matching_brand(brand: str, name: str) -> str:
+    """아마존/올리브영 매칭에 쓸 브랜드. brand가 이미 실브랜드면 그대로, 샵이름/미상이면
+    상품명에서 알려진 브랜드를 뽑아 쓴다(라쿠텐/네이버 샵이름 문제 보정)."""
+    b_low = (brand or "").lower()
+    if any(k in b_low for k in _KNOWN_BRAND_NAMES) and not _SHOP_BRAND_RE.search(brand or ""):
+        return brand
+    low = (name or "").lower()
+    for known in _KNOWN_BRAND_NAMES:
+        if known in low:
+            return known
+    return brand
+
+
 def _search_url(base: str, brand: str, name: str, suffix: str = "") -> str:
     return f"{base}{quote_plus(build_search_query(brand, name))}{suffix}"
 
@@ -266,15 +317,22 @@ def _search_url(base: str, brand: str, name: str, suffix: str = "") -> str:
 def _amazon_link(brand: str, name: str, region: str) -> str:
     """아마존 링크. ASIN 직링크가 확인된 상품만 버튼을 낸다.
 
-    한글/일본어 상품명은 amazon_search_query로 영문화해 Beauty 카탈로그와 매칭한다. 매칭되면
-    KR=amazon.com/dp/{asin}, JP=amazon.co.jp/dp/{asin}. 매칭이 없으면 미취급으로 보고 버튼 없음."""
+    KR: 한글/일본어 상품명을 amazon_search_query로 영문화 → US 카탈로그 매칭 → amazon.com/dp.
+    JP: 먼저 '일본어 상품명 그대로' JP 카탈로그(amazon.co.jp 크롤, 실 JP ASIN)와 일본어 토큰
+        매칭 → amazon.co.jp/dp (404 없음). 없으면 버튼 없음. US/HF ASIN은 재활용하지 않는다."""
+    if region == "jp":
+        override = _verified_amazon_jp_override(brand, name)
+        if override:
+            return override
+        jp_match = amazon_catalog.match_amazon(brand, name, region="jp")
+        if jp_match:
+            return amazon_catalog.amazon_jp_url(jp_match.asin)
+        return ""
     en_query = amazon_catalog.amazon_search_query(brand, name)
     if not en_query or not amazon_catalog.catalog_available():
         return ""
     match = amazon_catalog.match_amazon(brand, en_query)
-    if not match:
-        return ""
-    return amazon_catalog.amazon_jp_url(match.asin) if region == "jp" else amazon_catalog.amazon_com_url(match.asin)
+    return amazon_catalog.amazon_com_url(match.asin) if match else ""
 
 
 def _sync_platform_buttons(product, links: dict[str, str]) -> None:
@@ -294,6 +352,8 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
     """
     brand, name = product.brand or "", product.name or ""
     source = getattr(product, "source", "") or ""
+    # 아마존/올리브영 매칭용 브랜드(라쿠텐/네이버 샵이름 → 상품명 속 실브랜드로 보정).
+    match_brand = _matching_brand(brand, name)
     existing_links = dict(getattr(product, "platform_links", None) or {})
 
     direct_rakuten_url = product.product_url if source == "rakuten" and product.product_url else existing_links.get("rakuten", "")
@@ -312,12 +372,12 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
         # 아마존 JP: 아마존 Beauty 카탈로그(Kaggle US) 매칭 → 검증된 amazon.co.jp/dp/{asin} 직링크.
         # 글로벌 브랜드는 US/JP가 ASIN을 공유하는 경우가 많아, US ASIN으로 일본 상품 페이지에 연결한다.
         # 매칭 없으면 붙이지 않는다(검색 링크 투기 방지 — 올리브영 직링크 기준으로 통일).
-        amazon_jp = _amazon_link(brand, name, "jp")
+        amazon_jp = _amazon_link(match_brand, name, "jp")
         if amazon_jp:
             links["amazon_jp"] = amazon_jp
         # 올리브영: 일본 지역은 글로벌몰. 글로벌몰은 K뷰티+글로벌 브랜드(The Ordinary 등)를
         # 취급하므로, 일본 드럭스토어(J-뷰티) 브랜드만 제외하고 붙인다.
-        if not _is_jbeauty_brand(brand):
+        if not _is_jbeauty_brand(match_brand):
             existing_oy = existing_links.get("oliveyoung", "")
             if "product/detail" in existing_oy:
                 # 이미 붙은 prdtNo 직링크(주입 상품이 dedup으로 병합된 경우 등)는 권위있으므로
@@ -328,7 +388,7 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
                 # 실상품(has_direct_rakuten)에도 붙인다 — 라쿠텐에서 찾은 K뷰티 상품이 올리브영
                 # 글로벌에도 있으면 두 버튼을 함께 노출해야 하기 때문(예전엔 라쿠텐 상품이면
                 # 올리브영 매칭 자체를 건너뛰어 'JP에 아예 안 붙는' 문제가 있었다).
-                match = match_oliveyoung(brand, name)
+                match = match_oliveyoung(match_brand, name)
                 if match:
                     links["oliveyoung"] = OLIVEYOUNG_GLOBAL_DETAIL + quote_plus(match.prdt_no)
             elif not has_direct_rakuten:
@@ -345,7 +405,7 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
             links["naver"] = _search_url(NAVER_SEARCH, brand, name)
         # 아마존닷컴: Beauty 카탈로그 매칭되면 검증된 amazon.com/dp/{asin} 직링크, 없으면 버튼 없음
         # (검색 폴백은 'No results'/엉뚱한 상품 오탐이라 폐기 — 사용자 지적).
-        amazon_us = _amazon_link(brand, name, "kr")
+        amazon_us = _amazon_link(match_brand, name, "kr")
         if amazon_us:
             links["amazon_us"] = amazon_us
         # 국내몰(oliveyoung.co.kr)은 Cloudflare 403으로 직접 검증이 불가하다. 대신 글로벌몰

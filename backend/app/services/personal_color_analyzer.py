@@ -171,17 +171,14 @@ class PersonalColorAnalyzer:
 
         color_vector = self._skin_color_vector(skin_pixels)
         mean_rgb = color_vector["mean_rgb"]
-        # 계절 분류기: 사용자 요청으로 EfficientNet+블렌드 → SKN16 팀 분류기(LAB+RandomForest)로 전면 교체(2026-07-08).
-        skn_probs, skn_subtype = self._skn16_season(original_rgb)
-        if skn_probs is not None:
-            season_probs = skn_probs
-            model_season_probs = skn_probs
-            color_season_probs = None
-        else:
-            # SKN16 얼굴검출 실패 시에만 기존 파이프라인으로 폴백(결과 누락 방지).
-            model_season_probs = self._predict_season_probs(model_rgb)
-            color_season_probs = self._color_season_probs(color_vector)
-            season_probs = self._blend_season_probs(model_season_probs, color_season_probs, color_vector)
+        # 계절 분류기: 2026-07-08에 EfficientNet+블렌드 → SKN16(LAB+RandomForest)으로 교체했으나,
+        # 라벨 예제셋(28장) 실측에서 SKN16이 '가을웜'으로 붕괴(정확도 28%, 25/28을 autumn)하고
+        # 얼굴검출 실패도 잦아, 2026-07-13에 EfficientNet+블렌드(try2_smooth, 43% + 4계절 균형)로
+        # 복귀했다. SKN16 subtype은 라벨 산출에 쓰이지 않아(subtype은 밝기/채도 지표로 계산) 제거.
+        skn_subtype = ""
+        model_season_probs = self._predict_season_probs(model_rgb)
+        color_season_probs = self._color_season_probs(color_vector)
+        season_probs = self._blend_season_probs(model_season_probs, color_season_probs, color_vector)
         return {
             "skn_subtype": skn_subtype,
             "brightness": float(np.mean(mean_rgb) / 255),

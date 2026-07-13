@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # 2단 피부질환 선별 모델(Tier1 게이트 + Tier2 케어 분류).
     derma_tier1_model_path: str = "./data/models/derma_tier1_gate.pt"
     derma_tier2_model_path: str = "./data/models/derma_tier2_classifier.pt"
-    personal_color_model_path: str = "./data/models/personal_color_efficientnet.pt"
+    personal_color_model_path: str = "./data/models/personal_color_retrain_try2_smooth005.pt"
     problem_skin_knowledge_path: str = "./data/rag/problem_skin_knowledge.jsonl"
     skincare_ingredient_knowledge_path: str = "./data/rag/skincare_ingredient_knowledge.jsonl"
     # 병별 OTC 의약품 예시(OpenFDA OTC 라벨 기반). build_otc_drug_knowledge.py로 생성.

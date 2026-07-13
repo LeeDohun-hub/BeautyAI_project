@@ -44,6 +44,7 @@ from app.services.recommender import (
     build_platform_links,
     get_scores_from_analysis,
     matched_platforms,
+    normalize_platform,
     personal_color_fit_score_for_text,
     recommend_derma_care,
     recommend_personal_color_products,
@@ -216,37 +217,80 @@ def _inject_male_global_products(products: list, region: str = "jp", limit_per_c
         )
 
 
-def _verify_rakuten_for_global(products: list, client) -> None:
-    """OY 글로벌 주입(JP 남성) 상품에 라쿠텐 '검증된 직링크'를 붙인다(검색 폴백 없음).
+def _verified_rakuten_url(client, brand: str, name: str) -> str:
+    """라쿠텐 API로 '브랜드 일치' 실제 리스팅을 찾아 검증된 상품 직링크를 반환한다(없으면 "").
 
-    라쿠텐 API로 브랜드 일치 실제 리스팅을 찾으면 그 상품 URL(직링크)을 붙이고, 못 찾으면
-    라쿠텐 버튼을 붙이지 않는다(사용자 원칙: 직링크 있으면 버튼, 없으면 미출력). 재현율을 위해
-    전체 상품명(너무 구체적)뿐 아니라 '브랜드+핵심어'로도 재검색한다.
-    """
+    사용자 원칙: 직링크 있으면 버튼, 없으면 미출력(검색 폴백 없음). 재현율을 위해 전체 상품명
+    (너무 구체적)뿐 아니라 '브랜드+핵심어'로도 재검색한다. 히트 중 브랜드 문자열(라틴 브랜드
+    또는 DB 브랜드)이 실제로 담긴 리스팅만 채택해 엉뚱한 상품 링크를 막는다."""
+    name = name or ""
+    latin = re.match(r"[A-Za-z][A-Za-z0-9.&'-]+", name)
+    latin_brand = latin.group() if latin else ""
+    brand_keys = [k.lower() for k in (latin_brand, brand or "") if k]
+    if not brand_keys:
+        return ""
+    # 쿼리 후보: (1) 전체명(정확도) (2) 앞 3토큰 (3) 브랜드+핵심어(재현율). 첫 브랜드매칭 히트 채택.
+    core = " ".join(name.split()[:3])
+    for query in (name, core, f"{latin_brand} {brand}".strip()):
+        if not query.strip():
+            continue
+        hits = client.search(query, hits=3)
+        match = next((h for h in hits if any(k in f"{h.brand} {h.name}".lower() for k in brand_keys)), None)
+        if match and match.product_url:
+            return match.product_url
+    return ""
+
+
+def _attach_rakuten(p, url: str) -> None:
+    links = dict(getattr(p, "platform_links", None) or {})
+    links["rakuten"] = url  # 검증된 실제 라쿠텐 상품 페이지(직링크)
+    p.platform_links = links
+    p.matched_platforms = sorted(links.keys())
+
+
+def _filter_by_requested_platform(products: list, platform: str) -> list:
+    platform = normalize_platform(platform)
+    if platform == "all":
+        return products
+    return [
+        product
+        for product in products
+        if (getattr(product, "platform_links", None) or {}).get(platform)
+    ]
+
+
+def _verify_rakuten_for_global(products: list, client) -> None:
+    """OY 글로벌 주입(JP 남성 아이템매칭) 상품에 라쿠텐 검증 직링크를 붙인다."""
     if not client.configured:
         return
     for p in products:
         if getattr(p, "source", "") != "oliveyoung_global":
             continue
-        name = p.name or ""
-        latin = re.match(r"[A-Za-z][A-Za-z0-9.&'-]+", name)
-        latin_brand = latin.group() if latin else ""
-        brand_keys = [k.lower() for k in (latin_brand, p.brand or "") if k]
-        # 쿼리 후보: (1) 전체명(정확도) (2) 브랜드+앞 2토큰(재현율). 첫 브랜드매칭 히트를 채택.
-        core = " ".join(name.split()[:3])
-        match = None
-        for query in (name, core, f"{latin_brand} {p.brand}".strip()):
-            if not query.strip():
-                continue
-            hits = client.search(query, hits=3)
-            match = next((h for h in hits if any(k in f"{h.brand} {h.name}".lower() for k in brand_keys)), None)
-            if match and match.product_url:
-                break
-        if match and match.product_url:
-            links = dict(p.platform_links or {})
-            links["rakuten"] = match.product_url  # 검증된 실제 라쿠텐 상품 페이지(직링크)로 승격
-            p.platform_links = links
-            p.matched_platforms = sorted(links.keys())
+        url = _verified_rakuten_url(client, p.brand or "", p.name or "")
+        if url:
+            _attach_rakuten(p, url)
+
+
+def _verify_rakuten_for_skincare(products: list, client, limit: int = 6) -> None:
+    """JP 스킨케어(피부상태) 추천 상품에 라쿠텐 검증 직링크를 붙인다.
+
+    스킨케어 `/recommend` 흐름은 resolve_product_platforms만 돌아, 라쿠텐 소스 상품이 아니면
+    라쿠텐 버튼이 절대 안 붙던 문제를 보완한다. 라쿠텐 API는 ~1req/s로 레이트리밋(429)되므로
+    상위 limit개, 라쿠텐 링크가 아직 없는 상품만 검증한다(못 찾으면 미출력)."""
+    if not client.configured:
+        return
+    processed = 0
+    for p in products:
+        if processed >= limit:
+            break
+        if (getattr(p, "platform_links", None) or {}).get("rakuten"):
+            continue  # 이미 라쿠텐 직링크 있음
+        if getattr(p, "source", "") in ("rakuten", "naver"):
+            continue
+        processed += 1
+        url = _verified_rakuten_url(client, getattr(p, "brand", "") or "", getattr(p, "name", "") or "")
+        if url:
+            _attach_rakuten(p, url)
 
 
 @router.post("/analyze-skin", response_model=AnalyzeSkinResponse)
@@ -329,6 +373,7 @@ def recommend(
     db: Session = Depends(get_db),
 ) -> RecommendationResponse:
     region = _resolve_region(payload.region, request, "kr")
+    platform = normalize_platform(payload.platform)
     # 스킨케어 상품은 글로벌 카탈로그라 지역/플랫폼과 무관하게 피부적합도로 고른다("all").
     # 지역·플랫폼 구분은 아래 입점 리졸버(버튼)와 프론트 필터에서 처리한다.
     if payload.analysis_mode == "body":
@@ -363,6 +408,10 @@ def recommend(
     # KR=네이버/Amazon.com/올리브영 국내몰, JP=라쿠텐/Amazon.co.jp/올리브영 글로벌.
     for product in response.products:
         resolve_product_platforms(product, region)
+    # JP 스킨케어: 라쿠텐 소스가 아니면 라쿠텐 버튼이 안 붙으므로, API로 브랜드 일치 실상품을
+    # 검증해 직링크를 부착한다(미취급이면 버튼 없음 — 아이템매칭 남성 흐름과 동일 원칙).
+    if region == "jp":
+        _verify_rakuten_for_skincare(response.products, RakutenClient())
     # 올리브영 입점 검증: JP=글로벌 카탈로그 직링크(카탈로그 없을 때만 라이브 prune). KR=국내몰
     # NewMainSearchApi 라이브 검색으로 goodsNo 직링크 교체/미취급 버튼 제거(curl_cffi).
     if region == "jp" and not catalog_available():
@@ -370,6 +419,7 @@ def recommend(
     elif region == "kr":
         prune_kr_oliveyoung(response.products)
     # 카드 이미지 보강(KR=네이버, JP=라쿠텐 검색 이미지, 이미 있으면 유지).
+    response.products = _filter_by_requested_platform(response.products, platform)
     fill_missing_images(response.products, region)
     return response
 
@@ -523,6 +573,7 @@ def personal_color_item_match(
         prune_kr_oliveyoung(products)
 
     # 이미지가 없는 상품은 지역별 실시간 검색(KR=네이버, JP=라쿠텐)으로 대표 이미지를 보강한다.
+    products = _filter_by_requested_platform(products, platform)
     fill_missing_images(products, region)
 
     if products:
