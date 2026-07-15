@@ -1955,6 +1955,47 @@ export default function App() {
                         {personalColorResult.decision_note}
                       </Typography>
                     )}
+                    {(() => {
+                      // 단일 라벨은 여름쿨↔겨울쿨 등에서 흔들려, 가능성 높은 2개 타입을 확률과 함께 노출한다.
+                      const pct = (s?: string | null) =>
+                        s ? Math.round((personalColorResult.metrics[`prob_${s}`] ?? 0) * 100) : null;
+                      const p1 = pct(personalColorResult.season);
+                      if (p1 == null) return null;
+                      const p2 = pct(personalColorResult.alternate_season);
+                      const isClose = (personalColorResult.metrics.season_margin ?? 1) < 0.16;
+                      return (
+                        <Box sx={{ mt: 1.5 }}>
+                          <Typography sx={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', mb: 0.5 }}>
+                            가장 가까운 타입
+                          </Typography>
+                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+                            <Chip
+                              size="small"
+                              label={`${personalColorResult.label} · ${p1}%`}
+                              sx={{ bgcolor: 'rgba(255,255,255,0.18)', color: 'common.white', fontWeight: 700 }}
+                            />
+                            {personalColorResult.alternate_label && (
+                              <>
+                                <Typography component="span" sx={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>
+                                  {isClose ? '또는' : '다음'}
+                                </Typography>
+                                <Chip
+                                  size="small"
+                                  variant="outlined"
+                                  label={`${personalColorResult.alternate_label}${p2 != null ? ` · ${p2}%` : ''}`}
+                                  sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
+                                />
+                              </>
+                            )}
+                          </Stack>
+                          {isClose && personalColorResult.alternate_label && (
+                            <Typography sx={{ mt: 0.75, fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>
+                              두 타입이 근소한 차이예요 — 둘 다 대보고 더 어울리는 쪽을 고르세요.
+                            </Typography>
+                          )}
+                        </Box>
+                      );
+                    })()}
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
                       <Chip
                         size="small"
@@ -1979,14 +2020,6 @@ export default function App() {
                         variant="outlined"
                         sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
                       />
-                      {personalColorResult.alternate_label && (personalColorResult.metrics.season_margin ?? 1) < 0.16 && (
-                        <Chip
-                          size="small"
-                          label={`인접 타입 ${personalColorResult.alternate_label}`}
-                          variant="outlined"
-                          sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
-                        />
-                      )}
                     </Stack>
                   </Box>
 

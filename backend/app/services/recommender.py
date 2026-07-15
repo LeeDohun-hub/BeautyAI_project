@@ -288,6 +288,11 @@ PERSONAL_COLOR_COLOR_TERMS = {
     "coral", "peach", "pink", "rose", "mauve", "berry", "red", "brick",
     "terracotta", "orange", "beige", "brown", "ivory", "nude", "plum",
     "wine", "lavender", "cherry", "chocolate", "caramel", "mocha",
+    "burgundy", "olive", "khaki", "camel", "charcoal", "navy", "silver",
+    "gray", "grey", "fuchsia", "cinnamon", "champagne", "apricot", "sand",
+    "dusty", "amber", "clear",
+    "버건디", "올리브", "카키", "카멜", "차콜", "네이비", "실버", "그레이",
+    "푸시아", "시나몬", "샴페인", "살구", "샌드", "브릭", "테라코타", "모브", "장미",
     "코랄", "피치", "핑크", "로즈", "브라운", "베이지", "아이보리", "레드",
     "체리", "초콜릿", "카라멜", "모카", "플럼", "와인", "라벤더",
     "コーラル", "ピーチ", "ピンク", "ローズ", "ブラウン", "ベージュ",
@@ -322,6 +327,26 @@ TOKEN_ALIASES = {
     "브라운": "brown",
     "베이지": "beige",
     "레드": "red",
+    "버건디": "burgundy",
+    "올리브": "olive",
+    "카키": "khaki",
+    "카멜": "camel",
+    "차콜": "charcoal",
+    "네이비": "navy",
+    "실버": "silver",
+    "그레이": "gray",
+    "푸시아": "fuchsia",
+    "시나몬": "cinnamon",
+    "샴페인": "champagne",
+    "살구": "apricot",
+    "샌드": "sand",
+    "브릭": "brick",
+    "테라코타": "terracotta",
+    "모브": "mauve",
+    "장미": "rose",
+    "플럼": "plum",
+    "와인": "wine",
+    "라벤더": "lavender",
 }
 
 PERSONAL_COLOR_CATALOG = [
@@ -421,6 +446,87 @@ PERSONAL_COLOR_CATALOG = [
         "keywords": {"base", "shading", "brown", "beige", "powder"},
         "platforms": {"amazon_jp", "matsukiyo"},
     },
+    # --- 딥/뮤트/브라이트 색 보강 (타입별 다양성) ---
+    {
+        "brand": "rom&nd",
+        "name": "Zero Velvet Tint Burgundy",
+        "category": "lip",
+        "price": 1180,
+        "keywords": {"lip", "tint", "burgundy", "wine", "plum", "cool", "deep", "リップ"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "MERZY",
+        "name": "The First Velvet Tint Brick",
+        "category": "lip",
+        "price": 990,
+        "keywords": {"lip", "tint", "brick", "terracotta", "orange", "warm", "deep", "リップ"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "rom&nd",
+        "name": "Blur Fudge Tint Mauve Nude",
+        "category": "lip",
+        "price": 1210,
+        "keywords": {"lip", "tint", "mauve", "rose", "nude", "muted", "soft", "リップ"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "3CE",
+        "name": "Velvet Lip Tint Fuchsia",
+        "category": "lip",
+        "price": 1650,
+        "keywords": {"lip", "tint", "fuchsia", "cherry", "red", "bright", "clear", "cool", "リップ"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "ETUDE",
+        "name": "Lovely Cookie Blusher Mauve",
+        "category": "blush",
+        "price": 880,
+        "keywords": {"blush", "cheek", "mauve", "rose", "dusty", "muted", "cool", "チーク"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "CLIO",
+        "name": "Prism Air Blusher Plum",
+        "category": "blush",
+        "price": 1690,
+        "keywords": {"blush", "cheek", "plum", "berry", "rose", "cool", "deep", "チーク"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "DASIQUE",
+        "name": "Shadow Palette Olive Khaki",
+        "category": "eye",
+        "price": 2490,
+        "keywords": {"eye", "eyeshadow", "palette", "olive", "khaki", "camel", "brown", "warm", "deep", "アイシャドウ"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "DASIQUE",
+        "name": "Shadow Palette Mauve Gray",
+        "category": "eye",
+        "price": 2490,
+        "keywords": {"eye", "eyeshadow", "palette", "mauve", "gray", "rose", "cool", "muted", "アイシャドウ"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "hince",
+        "name": "New Depth Eyeshadow Palette Charcoal Navy",
+        "category": "eye",
+        "price": 2790,
+        "keywords": {"eye", "eyeshadow", "palette", "charcoal", "navy", "silver", "cool", "deep", "アイシャドウ"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
+    {
+        "brand": "espoir",
+        "name": "Pro Tailor Cushion Cool Pink",
+        "category": "base",
+        "price": 3300,
+        "keywords": {"base", "cushion", "foundation", "pink", "rose", "cool", "ivory", "ファンデーション"},
+        "platforms": {"oliveyoung", "amazon_us", "amazon_jp", "matsukiyo", "naver"},
+    },
 ]
 
 
@@ -478,9 +584,41 @@ def _category_tokens(tokens: set[str]) -> set[str]:
     }
 
 
+# 톤(warm/cool=톤축, light/deep/soft/bright/muted=뎁스 부사)은 hue(색상)가 아니다.
+# 색상 오버랩에서 분리하지 않으면 "Light Reflecting Foundation"·"Deep Hydration"의
+# light/deep가 퍼스널컬러 색상 매칭으로 오인돼, 웜/쿨 정반대인 봄·여름 추천이 겹친다.
+PERSONAL_COLOR_TONE_TERMS = {"warm", "cool", "light", "bright", "soft", "muted", "deep"}
+PERSONAL_COLOR_WARMCOOL_TERMS = {"warm", "cool"}
+# 웜/쿨 상반 감점용 hue 그룹(중립색 beige/brown/pink/red 등은 어느 쪽도 아님 → 제외).
+PERSONAL_COLOR_WARM_HUES = {
+    "coral", "peach", "apricot", "terracotta", "brick", "camel", "caramel",
+    "cinnamon", "amber", "olive", "khaki", "orange", "sand",
+}
+PERSONAL_COLOR_COOL_HUES = {
+    "rose", "mauve", "lavender", "plum", "burgundy", "wine", "fuchsia",
+    "berry", "navy", "silver", "charcoal",
+}
+
+
 def _color_tokens(tokens: set[str]) -> set[str]:
-    normalized_colors = {term.lower() for term in PERSONAL_COLOR_COLOR_TERMS}
+    # 톤 부사는 hue가 아니므로 색상 오버랩에서 제외(제품명 'Light/Deep' 오매칭 방지).
+    normalized_colors = {term.lower() for term in PERSONAL_COLOR_COLOR_TERMS} - PERSONAL_COLOR_TONE_TERMS
     return tokens.intersection(normalized_colors)
+
+
+def _warmcool_lean(tokens: set[str]) -> str | None:
+    """토큰의 웜/쿨 성향(warm/cool 명시어 + hue 그룹)을 판정. 판단 불가 시 None."""
+    warm = len(tokens.intersection(PERSONAL_COLOR_WARM_HUES))
+    cool = len(tokens.intersection(PERSONAL_COLOR_COOL_HUES))
+    if "warm" in tokens:
+        warm += 2
+    if "cool" in tokens:
+        cool += 2
+    if warm > cool:
+        return "warm"
+    if cool > warm:
+        return "cool"
+    return None
 
 
 def personal_color_fit_score_for_text(
@@ -509,10 +647,23 @@ def personal_color_fit_score_for_text(
     category_score = 18.0 if category_overlap else 0.0
     color_score = min(28.0, len(color_overlap) * 7.0)
     token_score = min(18.0, len(overlap) * 2.4)
-    tone_score = min(10.0, len(overlap.intersection({"warm", "cool", "light", "deep", "soft", "bright", "muted"})) * 3.5)
+    # 톤축(warm/cool)과 뎁스축(light/deep/soft/bright/muted)을 각각 유의미하게 반영한다.
+    # 뎁스 부사는 hue 색상매칭에서만 제외했을 뿐(더블카운트 방지), 서브톤(라이트/뮤트/딥/브라이트)
+    # 구분에 필수라 tone_score에서는 제대로 가중한다. 크로스톤 붕괴는 아래 웜/쿨 게이트가 막는다.
+    warmcool_overlap = overlap.intersection(PERSONAL_COLOR_WARMCOOL_TERMS)
+    depth_overlap = overlap.intersection(PERSONAL_COLOR_TONE_TERMS - PERSONAL_COLOR_WARMCOOL_TERMS)
+    tone_score = min(8.0, len(warmcool_overlap) * 4.0) + min(6.0, len(depth_overlap) * 3.0)
 
-    total = 30.0 + category_score + color_score + token_score + tone_score + min(8.0, platform_score) + min(7.0, rating_score)
-    return round(min(99.0, total), 1)
+    # 웜/쿨 게이트: 쿼리와 제품의 톤 성향이 정반대면 감점(봄 추천에 쿨전용 상품이 오르는 것 방지).
+    query_lean = _warmcool_lean(query_tokens)
+    product_lean = _warmcool_lean(product_tokens)
+    opposition_penalty = 12.0 if query_lean and product_lean and query_lean != product_lean else 0.0
+
+    total = (
+        30.0 + category_score + color_score + token_score + tone_score
+        + min(8.0, platform_score) + min(7.0, rating_score) - opposition_penalty
+    )
+    return round(min(99.0, max(0.0, total)), 1)
 
 
 def _is_personal_color_makeup_product(product: Product) -> bool:

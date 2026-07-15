@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     rakuten_app_id: str | None = None
     rakuten_access_key: str | None = None
     rakuten_referer: str = "http://127.0.0.1:5173/"
+    # 퍼스널컬러 계절 블렌드 게이팅: 색상 휴리스틱(color) 가중치에 곱하는 배율.
+    # 1.0=현행(한국/일본 얼굴에 유리, 색블렌드가 도움). 유럽/글로벌 얼굴은 model 단독이 더 정확해
+    # (실측: global model 0.36 vs blended 0.29) 글로벌 마켓 요청 시 배율을 낮춰 model 쪽으로 기울인다.
+    personal_color_color_blend_scale: float = 1.0
+    personal_color_global_blend_scale: float = 0.35
+    # 조명 게이팅: 공막 화이트밸런스 실패(=따뜻한 실내광/캐스트 미보정) 시 색 신호를 낮춘다.
+    # AI Hub 분광측색계 실측 대조(2026-07-15): WB성공 시 픽셀 b*가 실측과 상관(r0.64), WB실패 시 무의미(r0.09).
+    personal_color_wb_fail_color_scale: float = 0.5
 
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore")
 

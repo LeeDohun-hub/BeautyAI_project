@@ -188,6 +188,12 @@ def main() -> int:
         help="Optional candidate .pt path. When omitted, the app settings model path is used.",
     )
     parser.add_argument("--limit", type=int, default=0, help="Optional debug limit.")
+    parser.add_argument(
+        "--color-scale",
+        type=float,
+        default=1.0,
+        help="Blend gating: color-heuristic weight multiplier (1.0=current, 0=model-only).",
+    )
     args = parser.parse_args()
 
     manifest = Path(args.manifest)
@@ -234,7 +240,7 @@ def main() -> int:
             continue
 
         try:
-            reading = analyzer._read_one(image_path.read_bytes())
+            reading = analyzer._read_one(image_path.read_bytes(), args.color_scale)
             response = analyzer._build_response(reading, samples=1)
         except Exception as exc:
             errors.append({"row": str(index), "image_path": str(image_path), "error": repr(exc)})

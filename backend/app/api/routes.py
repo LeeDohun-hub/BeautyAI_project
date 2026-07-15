@@ -337,7 +337,10 @@ async def analyze_skin(
 
 
 @router.post("/analyze-personal-color", response_model=PersonalColorResponse)
-async def analyze_personal_color(images: list[UploadFile] = File(...)) -> PersonalColorResponse:
+async def analyze_personal_color(
+    images: list[UploadFile] = File(...),
+    region: str | None = Form(default=None),
+) -> PersonalColorResponse:
     # 여러 장을 받으면 계절 확률·피부 지표를 평균해 여름쿨↔겨울쿨 흔들림을 줄인다(한 장도 허용).
     if not images:
         raise HTTPException(status_code=400, detail="An image file is required.")
@@ -346,8 +349,11 @@ async def analyze_personal_color(images: list[UploadFile] = File(...)) -> Person
         if not image.content_type or not image.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail="An image file is required.")
         image_bytes.append(await image.read())
+    # 마켓 게이팅: kr/jp(아시아 얼굴)는 현행 색블렌드 유지, 글로벌/서구 마켓은 model 쪽으로 축소.
+    # region 미지정(현행 프론트)이면 설정 기본값 1.0 → 동작 완전 보존(무회귀).
+    color_scale = PersonalColorAnalyzer.resolve_blend_scale(region)
     try:
-        return PersonalColorAnalyzer().analyze_many(image_bytes)
+        return PersonalColorAnalyzer().analyze_many(image_bytes, color_scale=color_scale)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not analyze this image.") from exc
 

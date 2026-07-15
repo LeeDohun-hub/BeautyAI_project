@@ -142,22 +142,38 @@ PROFILES: dict[tuple[str, str], PersonalColorProfile] = {
 }
 
 
-class PersonalColorAnalyzer:
-    def analyze(self, image_bytes: bytes) -> PersonalColorResponse:
-        return self._build_response(self._read_one(image_bytes), samples=1)
+# 색블렌드가 도움이 되는(아시아) 마켓. 그 외(글로벌/서구)는 model 단독 쪽으로 기울인다.
+_BLEND_FULL_MARKETS = {"kr", "jp", "kor", "jpn", "kor_kr", "asia"}
 
-    def analyze_many(self, images: list[bytes]) -> PersonalColorResponse:
+
+class PersonalColorAnalyzer:
+    @staticmethod
+    def resolve_blend_scale(region: str | None) -> float:
+        """마켓(쇼핑 로케일)별 color 블렌드 배율. kr/jp=현행(full), 글로벌=축소.
+        region 미지정 시 설정 기본값(현행 동작 보존)."""
+        settings = get_settings()
+        if region is None:
+            return float(settings.personal_color_color_blend_scale)
+        normalized = region.strip().lower()
+        if not normalized or normalized == "auto" or normalized in _BLEND_FULL_MARKETS:
+            return float(settings.personal_color_color_blend_scale)
+        return float(settings.personal_color_global_blend_scale)
+
+    def analyze(self, image_bytes: bytes, color_scale: float = 1.0) -> PersonalColorResponse:
+        return self._build_response(self._read_one(image_bytes, color_scale), samples=1)
+
+    def analyze_many(self, images: list[bytes], color_scale: float = 1.0) -> PersonalColorResponse:
         """여러 장을 각각 읽어 피부 지표·계절 확률(softmax)을 평균낸다.
         한 장의 메이크업/조명/각도 노이즈로 여름쿨↔겨울쿨이 흔들리는 문제를,
         다중 샘플 평균(앙상블)으로 눌러 안정화한다."""
-        readings = [self._read_one(b) for b in images if b]
+        readings = [self._read_one(b, color_scale) for b in images if b]
         if not readings:
             raise ValueError("no valid images")
         if len(readings) == 1:
             return self._build_response(readings[0], samples=1)
         return self._build_response(self._combine_readings(readings), samples=len(readings))
 
-    def _read_one(self, image_bytes: bytes) -> dict:
+    def _read_one(self, image_bytes: bytes, color_scale: float = 1.0) -> dict:
         """한 장에서 피부 지표 + 계절 확률(있으면)을 뽑아 dict로 반환(평균 합성용)."""
         original_rgb = self._load_rgb(image_bytes)
         model_rgb, face_detected = self._face_crop(original_rgb)
@@ -178,7 +194,14 @@ class PersonalColorAnalyzer:
         skn_subtype = ""
         model_season_probs = self._predict_season_probs(model_rgb)
         color_season_probs = self._color_season_probs(color_vector)
-        season_probs = self._blend_season_probs(model_season_probs, color_season_probs, color_vector)
+        # 조명 게이팅: WB 실패(따뜻한 실내광 등 캐스트 미보정)면 색 추정이 실측과 무의미(r0.09)해
+        # ground-truth 대조에서 확인 → 색 가중치를 낮춰 모델 쪽으로 기운다.
+        effective_scale = color_scale
+        if not white_balanced:
+            effective_scale *= float(get_settings().personal_color_wb_fail_color_scale)
+        season_probs = self._blend_season_probs(
+            model_season_probs, color_season_probs, color_vector, effective_scale
+        )
         return {
             "skn_subtype": skn_subtype,
             "brightness": float(np.mean(mean_rgb) / 255),
@@ -388,21 +411,28 @@ class PersonalColorAnalyzer:
         model_probs: dict[str, float] | None,
         color_probs: dict[str, float] | None,
         color_vector: dict,
+        color_scale: float = 1.0,
     ) -> dict[str, float] | None:
         if model_probs is None:
             return color_probs
         if color_probs is None:
             return model_probs
+        # color_scale<=0: 색 휴리스틱 완전 배제(model 단독). 글로벌 마켓 게이팅의 극단값.
+        if color_scale <= 0.0:
+            return model_probs
 
         color_quality = float(color_vector.get("quality", 0.0))
         model_top = max(model_probs, key=model_probs.get)
         color_top = max(color_probs, key=color_probs.get)
-        low_chroma_winter_shift = self._looks_like_low_chroma_winter_shift(model_top, color_top, color_vector)
-        if low_chroma_winter_shift:
-            return color_probs
-        golden_autumn_shift = self._looks_like_golden_autumn_shift(model_top, color_top, color_vector)
-        if golden_autumn_shift:
-            return color_probs
+        # 100%-color 하드 오버라이드는 색블렌드를 신뢰하는 마켓(scale이 충분히 큰 경우)에만 적용.
+        # model 쪽으로 기운(scale<0.5) 글로벌 마켓에선 색이 파이프라인을 통째로 뒤집지 못하게 막는다.
+        if color_scale >= 0.5:
+            low_chroma_winter_shift = self._looks_like_low_chroma_winter_shift(model_top, color_top, color_vector)
+            if low_chroma_winter_shift:
+                return color_probs
+            golden_autumn_shift = self._looks_like_golden_autumn_shift(model_top, color_top, color_vector)
+            if golden_autumn_shift:
+                return color_probs
         ordered = sorted(model_probs.values(), reverse=True)
         model_margin = ordered[0] - (ordered[1] if len(ordered) > 1 else 0.0)
         color_weight = 0.06 + 0.16 * min(1.0, max(0.0, color_quality))
@@ -411,6 +441,8 @@ class PersonalColorAnalyzer:
         elif model_margin > 0.24:
             color_weight -= 0.08
         color_weight = min(0.24, max(0.04, color_weight))
+        # 마켓 게이팅: 색 가중치에 배율 적용(1.0=현행, <1.0=model 쪽으로 축소).
+        color_weight = min(0.99, max(0.0, color_weight * float(color_scale)))
         model_weight = 1.0 - color_weight
         blended = {
             season: model_probs[season] * model_weight + color_probs.get(season, 0.0) * color_weight

@@ -73,6 +73,7 @@ def main() -> int:
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--label-smoothing", type=float, default=0.1, help="0 to disable.")
     parser.add_argument("--mixup-alpha", type=float, default=0.2, help="Beta alpha; 0 to disable mixup.")
+    parser.add_argument("--num-workers", type=int, default=0, help="DataLoader 워커 수(로컬 윈도우 0, RunPod 리눅스 8 권장).")
     args = parser.parse_args()
 
     frame = pd.read_csv(args.manifest)
@@ -113,8 +114,11 @@ def main() -> int:
     model = build_model().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss(weight=weights.to(device), label_smoothing=args.label_smoothing)
-    train_loader = DataLoader(SeasonDataset(train_frame, train_transform), batch_size=args.batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(SeasonDataset(val_frame, val_transform), batch_size=args.batch_size, shuffle=False, num_workers=0)
+    loader_kw = {"num_workers": args.num_workers, "pin_memory": device.type == "cuda"}
+    if args.num_workers > 0:
+        loader_kw["persistent_workers"] = True
+    train_loader = DataLoader(SeasonDataset(train_frame, train_transform), batch_size=args.batch_size, shuffle=True, **loader_kw)
+    val_loader = DataLoader(SeasonDataset(val_frame, val_transform), batch_size=args.batch_size, shuffle=False, **loader_kw)
 
     best_acc = 0.0
     for epoch in range(1, args.epochs + 1):
