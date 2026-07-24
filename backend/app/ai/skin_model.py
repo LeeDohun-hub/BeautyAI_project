@@ -54,8 +54,21 @@ class EfficientNetSkinRegressor:
     def predict(self, image: Image.Image) -> dict[str, float] | None:
         if not self.load() or self.model is None or self.transform is None or self.torch is None:
             return None
-        tensor = self.transform(image.convert("RGB")).unsqueeze(0)
+        # TTA(test-time augmentation): 원본 + 좌우반전 + 밝기(±)로 4번 채점해 평균한다.
+        # 한 장짜리 예측의 조명/프레이밍 민감도(같은 얼굴에도 점수가 흔들리는 문제)를 낮춘다.
+        # 프론트의 '여러 장 평균'과 곱해져 재현성이 더 안정된다. 라벨이 거칠어(2~3단계)
+        # 정밀도엔 한계가 있으므로 화면은 3구간(양호/보통/관리필요)으로 표시한다(프론트).
+        from PIL import ImageEnhance, ImageOps
+
+        base = image.convert("RGB")
+        variants = [
+            base,
+            ImageOps.mirror(base),
+            ImageEnhance.Brightness(base).enhance(0.9),
+            ImageEnhance.Brightness(base).enhance(1.1),
+        ]
+        batch = self.torch.stack([self.transform(v) for v in variants])
         with self.torch.no_grad():
-            raw = self.model(tensor).squeeze(0).detach().cpu().tolist()
+            raw = self.model(batch).mean(dim=0).detach().cpu().tolist()
         scores = [max(0.0, min(100.0, float(score) * self.label_scale)) for score in raw]
         return {target: round(float(score), 1) for target, score in zip(TARGETS, scores)}

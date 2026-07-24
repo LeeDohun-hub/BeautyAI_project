@@ -18,7 +18,7 @@ export type BodyConditionScore = {
 export type SurveyInput = {
   gender: string;          // "female" | "male"
   age?: string;
-  age_group: string;       // "10s" | "20s" | "30s" | "40s" | "50s"
+  age_group: string;       // "baby" | "child" | "10s" | "20s" | "30s" | "40s" | "50s"
   race_identity?: string;
   privacy_consent?: boolean;
   skin_type: string;
@@ -155,11 +155,19 @@ export type FaceShapeResponse = {
   metrics: Record<string, unknown>;
 };
 
+export type ProductColumn = {
+  key: string;           // cleanser|toner|serum|moisturizer|sunscreen
+  label: string;         // 클렌저/토너/세럼/보습/선크림
+  reason?: string;
+  products: Product[];
+};
+
 export type RecommendationResponse = {
   history_id: number;
   ingredients: Ingredient[];
   products: Product[];
   explanation: string;
+  product_columns?: ProductColumn[];
 };
 
 export type ChatResponse = {

@@ -61,16 +61,15 @@ class DermatologyAnalyzer:
         if tier1_label != "normal":
             t2 = model.predict_tier2(image) or {}
             ranked = sorted(t2.items(), key=lambda kv: kv[1], reverse=True)
-            # 게이트가 양성이면 화면에 'malignant'를 띄우지 않는다(게이트-표시 모순 방지).
-            if not urgent:
-                ranked = [(n, p) for n, p in ranked if n != "malignant"]
+            # 전체 9개 그룹을 확률 높은 순으로 표시(악성 의심 포함). 악성 '판정'은 여전히
+            # tier1 게이트로만 하고, 여기 malignant %는 tier2 분포의 참고 수치일 뿐.
             conditions = [
                 BodyConditionScore(
                     condition=name,
                     label=TIER2_LABELS.get(name, name),
                     probability=round(prob * 100, 1),
                 )
-                for name, prob in ranked[:3]
+                for name, prob in ranked
             ]
 
         if urgent:

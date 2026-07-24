@@ -12,7 +12,11 @@ from io import BytesIO
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
+
+# 얼굴 박스가 화면에서 차지해야 하는 최소 비율. image_router.SkinImageRouter 가 쓰는 기준과
+# **같은 값**이라, 라우터가 "얼굴이 너무 작다"고 판단할 박스를 여기서 크롭하지 않는다.
+_MIN_FACE_AREA_RATIO = 0.025
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,9 @@ class FaceSkinPreprocessor:
         self._cascade = cv2.CascadeClassifier(cascade_path)
 
     def process(self, image_bytes: bytes) -> FacePreprocessResult:
-        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        # 휴대폰 사진은 회전 플래그(EXIF 6/8)를 달고 저장된다. 이걸 무시하면 얼굴이 옆으로
+        # 누운 채 들어와 정면 캐스케이드가 진짜 얼굴을 못 찾는다.
+        image = ImageOps.exif_transpose(Image.open(BytesIO(image_bytes))).convert("RGB")
         rgb = np.asarray(image)  # (H, W, 3) RGB uint8
 
         box = self._largest_face(rgb)
@@ -70,9 +76,16 @@ class FaceSkinPreprocessor:
         if len(faces) == 0:
             return None
         x, y, w, h = max(faces, key=lambda box: box[2] * box[3])
+        height, width = rgb.shape[:2]
+        # ⚠️ 최소 면적 게이트. haarcascade 는 3392x2544 사진에서 98x98 짜리 **가짜 얼굴**을
+        #    자주 잡는다(실측: 검출된 박스의 대부분이 화면의 0.1~0.8%). 그 조각을 224 로
+        #    늘려 모델에 넣으면 점수가 아무 값이나 나온다 — 같은 순간 연속 촬영한 사진끼리
+        #    주름이 42점, 모공이 38점 벌어졌다. 기준 미달이면 미검출로 처리해 원본 전체를 쓴다.
+        #    실측 효과: 같은 순간 촬영본 간 점수 산포 15.3 → 8.5.
+        if (w * h) / max(1, height * width) < _MIN_FACE_AREA_RATIO:
+            return None
         # 여유 패딩을 더해 이미지 경계로 클램프.
         pad_w, pad_h = int(w * self._PAD), int(h * self._PAD)
-        height, width = rgb.shape[:2]
         x0 = max(0, x - pad_w)
         y0 = max(0, y - pad_h)
         x1 = min(width, x + w + pad_w)

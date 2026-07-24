@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 class SurveyInput(BaseModel):
     gender: str = Field(default="female")          # "female" | "male"
     age: str | None = None
-    age_group: str = Field(default="20s")          # "10s" | "20s" | "30s" | "40s" | "50s"
+    # "baby"(0~2) | "child"(3~9) | "10s" | "20s" | "30s" | "40s" | "50s"
+    # baby/child 는 바디 추천에서 안내+소아안전 큐레이션 경로로 분기한다(pediatric_care).
+    age_group: str = Field(default="20s")
     race_identity: str | None = None
     privacy_consent: bool = False
     skin_type: str = Field(default="combination")
@@ -175,11 +177,20 @@ class ProductOut(BaseModel):
     source: str = ""
 
 
+class ProductColumn(BaseModel):
+    key: str                        # cleanser|toner|serum|moisturizer|sunscreen
+    label: str                      # 클렌저/토너/세럼/보습/선크림
+    reason: str = ""                # 컬럼 설명(주로 세럼=고민 기반)
+    products: list[ProductOut] = Field(default_factory=list)   # 이 카테고리 추천 상품(여러 개)
+
+
 class RecommendationResponse(BaseModel):
     history_id: int
     ingredients: list[IngredientOut]
     products: list[ProductOut]
     explanation: str
+    # 카테고리별 추천 상품 컬럼(클렌저/토너/세럼/보습/선크림). face 모드에서만 채워진다.
+    product_columns: list[ProductColumn] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):

@@ -7,12 +7,14 @@ import colorsys
 import numpy as np
 from PIL import Image, ImageOps
 
+from app.ai.aihub_pc_model import AihubLabSeasonClassifier
 from app.ai.personal_color_model import SEASON_TONE, EfficientNetSeasonClassifier
 from app.core.config import get_settings
 from app.schemas.api import PersonalColorMakeup, PersonalColorResponse
 
 # 학습된 계절 분류기(있으면 웜/쿨을 모델로). 최초 사용 시 1회 로드해 재사용.
 _season_classifier: EfficientNetSeasonClassifier | None = None
+_aihub_classifier: AihubLabSeasonClassifier | None = None
 
 
 def _get_season_classifier() -> EfficientNetSeasonClassifier:
@@ -20,6 +22,16 @@ def _get_season_classifier() -> EfficientNetSeasonClassifier:
     if _season_classifier is None:
         _season_classifier = EfficientNetSeasonClassifier(get_settings().resolved_personal_color_model_path)
     return _season_classifier
+
+
+def _get_aihub_classifier() -> AihubLabSeasonClassifier:
+    global _aihub_classifier
+    if _aihub_classifier is None:
+        settings = get_settings()
+        _aihub_classifier = AihubLabSeasonClassifier(
+            settings.resolved_aihub_pc_ensemble_paths, tta=settings.aihub_pc_tta
+        )
+    return _aihub_classifier
 
 
 @dataclass(frozen=True)
@@ -192,12 +204,21 @@ class PersonalColorAnalyzer:
         # 얼굴검출 실패도 잦아, 2026-07-13에 EfficientNet+블렌드(try2_smooth, 43% + 4계절 균형)로
         # 복귀했다. SKN16 subtype은 라벨 산출에 쓰이지 않아(subtype은 밝기/채도 지표로 계산) 제거.
         skn_subtype = ""
-        model_season_probs = self._predict_season_probs(model_rgb)
+        # AI-Hub 다인종 분류기(사진 → 분광측색 참Lab → 계절). 조명 보정을 모델이 내장하므로
+        # 색 휴리스틱과 섞지 않는다(섞으면 서로 다른 원리가 충돌한다). 켜져 있고 로드되면 이 경로.
+        aihub_probs = None
+        if get_settings().personal_color_use_aihub:
+            aihub_probs = _get_aihub_classifier().predict_season_probs(model_rgb)
+        model_season_probs = aihub_probs if aihub_probs else self._predict_season_probs(model_rgb)
         color_season_probs = self._color_season_probs(color_vector)
         # 조명 게이팅: WB 실패(따뜻한 실내광 등 캐스트 미보정)면 색 추정이 실측과 무의미(r0.09)해
         # ground-truth 대조에서 확인 → 색 가중치를 낮춰 모델 쪽으로 기운다.
         effective_scale = color_scale
-        if not white_balanced:
+        if aihub_probs:
+            # AI-Hub 분류기는 조명 보정을 내장한다. 색 휴리스틱은 조명 캐스트에 취약해
+            # (그 문제를 풀려고 이 모델을 만들었다) 섞으면 되돌리는 셈이라 블렌드를 끈다.
+            effective_scale = 0.0
+        elif not white_balanced:
             effective_scale *= float(get_settings().personal_color_wb_fail_color_scale)
         season_probs = self._blend_season_probs(
             model_season_probs, color_season_probs, color_vector, effective_scale
@@ -320,6 +341,14 @@ class PersonalColorAnalyzer:
                 *capture_advice,
             ][:3]
 
+        # 경계선(borderline): 최상위 계절 확률이 임계값 미만이면 True.
+        # 보정 실측(AI-Hub 60명, 전체 정확도 63.3%): 임계값 0.38 에서 확신군 75.0% vs 경계군 53.1%,
+        # 0.45 로 올리면 확신군 93.3%(대신 75%가 경계). 경계군은 임계값과 무관하게 ~53%(진짜 애매).
+        # 프론트/키오스크는 borderline 이면 alternate_season 을 동등 후보로 병기하면 된다.
+        top_prob = ordered_seasons[0][1] if ordered_seasons else 0.0
+        threshold = float(get_settings().personal_color_borderline_threshold)
+        borderline = 1.0 if (season_probs is not None and top_prob < threshold) else 0.0
+
         return PersonalColorResponse(
             season=profile.season,
             tone=profile.tone,
@@ -348,6 +377,7 @@ class PersonalColorAnalyzer:
                 "sample_weight": round(float(reading.get("sample_weight", 1.0)), 3),
                 "season_consistency": round(season_consistency, 3),
                 "season_margin": round(season_margin, 3),
+                "borderline": borderline,
                 "color_vector_used": 1.0 if color_season_probs else 0.0,
                 "landmark_skin_samples": round(float(reading.get("landmark_skin_samples", 0.0)), 1),
                 **self._color_vector_metrics(color_vector),

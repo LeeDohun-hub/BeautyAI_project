@@ -33,7 +33,8 @@ from app.services.oliveyoung_kr_browser import KRBrowserSession  # noqa: E402
 from app.services.oliveyoung_kr_search import search_kr  # noqa: E402
 from app.services.recommender import KBEAUTY_BRANDS  # noqa: E402
 
-FIELDNAMES = ["goodsNo", "brandName", "goodsName", "soldOut"]
+# 검색 API 가 IMG_PATH_NM 을 같이 주므로 이미지도 추가 요청 없이 받는다.
+FIELDNAMES = ["goodsNo", "brandName", "goodsName", "soldOut", "imageUrl"]
 
 # 쿼리당 상위 ~20개만 나오므로 카테고리어를 붙여 브랜드별 커버리지를 넓힌다(색조 우선).
 CATEGORY_TERMS = [
@@ -67,6 +68,32 @@ EXTRA_MAKEUP_BRANDS = [
 ]
 
 
+# 바디/핸드/풋 시드. 남성 시드와 같은 이유로 브랜드×term 확장을 쓰지 않는다 — '바디로션'
+# 같은 카테고리 쿼리가 top~20에 올영 실제 베스트셀러를 그대로 담아준다. 바디는 스킨케어와
+# 브랜드 층이 달라(일리윤·아토팜·해피바스…) 기존 KBEAUTY_BRANDS 시드로는 거의 안 잡힌다.
+# 고민 기반 쿼리(아토피·가려움·등드름)는 질환 추천에 바로 쓰일 상품을 끌어오려는 것.
+BODY_QUERIES = [
+    # 보습
+    "바디로션", "바디크림", "바디밀크", "바디버터", "바디오일", "바디세럼", "바디에센스",
+    "바디밤", "튼살크림",
+    # 세정
+    "바디워시", "샤워젤", "바디클렌저", "샤워오일", "입욕제", "바디비누",
+    # 각질·기능
+    "바디스크럽", "바디필링", "바디미스트", "데오드란트", "바디선크림", "제모크림",
+    # 고민 기반(질환 추천 직결)
+    "아토피 바디로션", "건성 바디로션", "가려움 바디로션", "저자극 바디워시",
+    "세라마이드 바디로션", "등드름 바디워시", "바디 각질 제거",
+    # 핸드·풋(매니페디큐어 기능이 가져갈 그룹)
+    "핸드크림", "핸드워시", "핸드마스크", "풋크림", "발각질 제거", "발 냄새 제거",
+]
+# 실측 확인된 올영 취급 바디 브랜드. 색조/스킨케어 시드와 겹치지 않는 층이라 따로 둔다.
+BODY_BRANDS = [
+    "일리윤", "아토팜", "세타필", "유세린", "해피바스", "온더바디", "존슨즈",
+    "니베아", "도브", "샤워메이트", "아비브", "라운드랩", "셀리맥스", "낫포유",
+    "포맨트", "미구하라", "피지오겔", "큐렐", "사봉",
+]
+
+
 def _brand_seed() -> list[str]:
     # 대표 표기만 남긴다(같은 브랜드의 영/한 변형은 검색 결과가 겹쳐 어차피 dedup 된다).
     return sorted(set(KBEAUTY_BRANDS) | set(EXTRA_MAKEUP_BRANDS) | set(MEN_BRANDS))
@@ -96,11 +123,17 @@ def main() -> int:
     parser.add_argument("--only", default="", help="이 브랜드들만 크롤(쉼표 구분). 예: '정샘물,헤라,3CE'")
     # --men: 남성 아이템매칭용. MEN_QUERIES('남자 쿠션'…)+MEN_BRANDS를 단독 쿼리로 크롤(term 확장 없음).
     parser.add_argument("--men", action="store_true", help="남성 카테고리/브랜드 시드로 크롤(베이스/브로우/컨실러/립밤)")
+    # --body: 바디/핸드/풋 시드. 성분 보강(enrich_ingredients_oliveyoung.py)이 쓸 goodsNo도 여기서 나온다.
+    parser.add_argument("--body", action="store_true", help="바디/핸드/풋 카테고리·브랜드 시드로 크롤")
     parser.add_argument("--merge", action="store_true", help="기존 out CSV를 먼저 읽어 누적(덮어쓰기 방지)")
     parser.add_argument("--out", default=str(_ROOT / "data" / "manifests" / "oliveyoung_kr_products.csv"))
     args = parser.parse_args()
 
-    if args.men:
+    if args.body:
+        # 바디도 남성 시드와 같은 이유로 확장 없이 카테고리 쿼리 + 바디 브랜드 단독으로 간다.
+        queries = list(dict.fromkeys(BODY_QUERIES + BODY_BRANDS))
+        brands = queries
+    elif args.men:
         # 남성 시드는 '남자 쿠션' 같은 카테고리 쿼리 자체가 핵심이라 브랜드×term 확장을 쓰지 않는다.
         queries = list(dict.fromkeys(MEN_QUERIES + MEN_BRANDS))
         brands = queries
@@ -150,13 +183,20 @@ def main() -> int:
                 continue
             errors = 0
             for r in sr.results:
-                if r.goods_no and r.goods_no not in by_goods:
+                existing = by_goods.get(r.goods_no)
+                if not r.goods_no:
+                    continue
+                if existing is None:
                     by_goods[r.goods_no] = {
                         "goodsNo": r.goods_no,
                         "brandName": r.brand,
                         "goodsName": r.name,
                         "soldOut": "Y" if r.sold_out else "N",
+                        "imageUrl": r.image_url,
                     }
+                elif not existing.get("imageUrl") and r.image_url:
+                    # --merge 로 읽어온 옛 행(이미지 컬럼 없던 시절)을 채워준다.
+                    existing["imageUrl"] = r.image_url
             if i % 20 == 0:
                 print(f"  {i}/{len(queries)} queries -> {len(by_goods)} unique goods")
             time.sleep(args.delay + random.uniform(0, args.delay))  # 지터로 봇 패턴 완화

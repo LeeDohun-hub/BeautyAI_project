@@ -20,28 +20,46 @@ CONDITION_CARE: dict[str, dict] = {
         "kind": PRODUCTS,
         "label": "습진·피부염",
         # 장벽 진정·회복. 자극성 액티브는 피한다.
-        "ingredients": ["Centella Asiatica", "Panthenol", "Ceramide", "Hyaluronic Acid"],
+        # 에몰리언트·오클루시브(페트롤라툼·글리세린·콜로이달오트밀)를 함께 둔다 — 아토피
+        # 피부염 관리의 1차는 보습제이고, 얼굴용 액티브 4종만 보면 실제 바디 제품의 68%가
+        # '성분 미상'으로 빠진다(실측).
+        "ingredients": [
+            "Ceramide", "Panthenol", "Centella Asiatica", "Hyaluronic Acid",
+            "Petrolatum", "Glycerin", "Colloidal Oatmeal", "Shea Butter",
+            "Squalane", "Allantoin", "Dimethicone",
+        ],
         "avoid": ["Retinol", "Salicylic Acid", "Glycolic Acid", "Lactic Acid", "Vitamin C", "Azelaic Acid"],
         "guide": "습진·피부염엔 자극 성분을 피하고 세라마이드·판테놀·센텔라로 장벽을 진정·회복하는 제품이 도움이 됩니다. 증상이 심하거나 지속되면 스테로이드 등은 피부과 상담이 필요합니다.",
     },
     "acne_rosacea": {
         "kind": PRODUCTS,
         "label": "여드름·주사",
-        "ingredients": ["Salicylic Acid", "Azelaic Acid", "Niacinamide", "Zinc", "Green Tea"],
+        # 유분 부담이 적은 보습만 더한다. 페트롤라툼·시어버터는 여드름엔 넣지 않는다.
+        "ingredients": [
+            "Salicylic Acid", "Azelaic Acid", "Niacinamide", "Zinc", "Green Tea",
+            "Glycerin", "Squalane", "Allantoin",
+        ],
         "avoid": [],
         "guide": "여드름·주사엔 살리실산(BHA)·아젤라산·나이아신아마이드 성분이 도움이 됩니다. 화농성이 심하면 벤조일퍼옥사이드·아다팔렌 등은 약국·피부과 상담을 권합니다.",
     },
     "psoriasis": {
         "kind": PRODUCTS,
         "label": "건선",
-        "ingredients": ["Salicylic Acid", "Ceramide", "Hyaluronic Acid"],
+        # 각질 완화(살리실산·우레아) + 강한 폐색 보습.
+        "ingredients": [
+            "Salicylic Acid", "Urea", "Ceramide", "Hyaluronic Acid",
+            "Petrolatum", "Glycerin", "Shea Butter",
+        ],
         "avoid": [],
         "guide": "건선은 각질 완화(살리실산)와 보습이 보조가 되지만, 근본 치료는 칼시포트리올·국소 스테로이드 등 처방이 필요합니다. 피부과 상담을 권합니다.",
     },
     "other": {
         "kind": PRODUCTS,
         "label": "기타 피부 이상",
-        "ingredients": ["Ceramide", "Panthenol", "Hyaluronic Acid"],
+        "ingredients": [
+            "Ceramide", "Panthenol", "Hyaluronic Acid",
+            "Glycerin", "Squalane", "Allantoin", "Shea Butter",
+        ],
         # 미분류 피부 이상엔 안전하게 강한 액티브를 배제하고 순한 보습·진정만.
         "avoid": ["Retinol", "Salicylic Acid", "Glycolic Acid", "Lactic Acid"],
         "guide": "정확한 분류가 어려워 우선 순한 보습·진정 관리를 권합니다. 증상이 지속·악화되면 피부과 상담을 받아보세요.",

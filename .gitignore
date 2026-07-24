@@ -27,3 +27,10 @@ data/
 
 # Office 임시 잠금 파일
 ~$*
+
+# 스크래치·런팟 패키징 산출물(재생성 가능, 대용량 ~477MB) — VC 제외
+scratch/
+runpod_aihub/
+runpod_pc/
+runpod_skin/
+retune_pkg/

@@ -31,6 +31,21 @@ MOOD_MAKEUP: dict[str, dict[str, str]] = {
     "caramel-mocha": {"lip": "#A86B47", "cheek": "#C0906E", "eye": "#9A6A48"},
 }
 
+# 남성용 — 색조를 '약하게' 하는 게 아니라 **항목 자체를 교체**한다(item-match 성별 분기와 동일 원칙).
+# 여성: 립·볼·아이 / 남성: 눈썹·립밤. 남성에게 블러셔·아이섀도는 올리지 않는다.
+#   lip  = 틴트가 아니라 '립밤 바른 정도'의 자연 톤(채도를 크게 낮춘 뮤트 로즈브라운)
+#   brow = 무드의 웜/쿨에 맞춘 눈썹 색(웜무드=웜브라운, 쿨무드=애쉬브라운)
+MOOD_MAKEUP_MALE: dict[str, dict[str, str]] = {
+    "cherry-chocolate": {"lip": "#8C5A55", "brow": "#4A3328"},
+    "tomato-red": {"lip": "#A8635A", "brow": "#5A3A28"},
+    "rose-wine": {"lip": "#97605F", "brow": "#4A3A38"},
+    "plum-creme": {"lip": "#8E5F63", "brow": "#46383C"},
+    "berry-sorbet": {"lip": "#A0635F", "brow": "#4A3A3A"},
+    "peach-latte": {"lip": "#AE6F5E", "brow": "#5C4030"},
+    "coral": {"lip": "#B26A58", "brow": "#5C4030"},
+    "caramel-mocha": {"lip": "#A2705A", "brow": "#55402E"},
+}
+
 # mediapipe FaceMesh 랜드마크 인덱스
 LIPS_OUTER = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185]
 LIPS_INNER = [78, 95, 88, 178, 87, 14, 317, 402, 318, 308, 415, 310, 311, 312, 13, 82, 81, 80, 191]
@@ -38,6 +53,9 @@ LEFT_EYE_UPPER = [33, 246, 161, 160, 159, 158, 157, 173, 133]
 RIGHT_EYE_UPPER = [263, 466, 388, 387, 386, 385, 384, 398, 362]
 LEFT_CHEEK = 50
 RIGHT_CHEEK = 280
+# 눈썹 — 각 눈썹의 아래선/윗선. 두 줄을 합쳐 convex hull 로 눈썹 영역을 만든다.
+LEFT_BROW = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46]
+RIGHT_BROW = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276]
 FACE_LEFT = 234
 FACE_RIGHT = 454
 
@@ -102,6 +120,20 @@ def _lip_color_gate(img_bgr: np.ndarray, geom: np.ndarray) -> np.ndarray:
     return np.clip((a - thr) / 5.0 + 0.6, 0.0, 1.0)
 
 
+def _brow_hair_gate(img_bgr: np.ndarray, geom: np.ndarray) -> np.ndarray:
+    """눈썹 영역 안에서 '눈썹털(어두운) 픽셀'만 남기는 소프트 게이트.
+
+    convex hull 은 눈썹보다 넓게 잡히므로 그대로 칠하면 주변 피부까지 어두워진다.
+    영역 내 밝기(L) 하위 픽셀만 남겨 털 위에만 색이 올라가게 한다(입술 게이트와 같은 원리).
+    """
+    region = geom > 0.05
+    if int(region.sum()) < 20:
+        return np.ones_like(geom, dtype=np.float32)
+    lightness = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
+    thr = float(np.percentile(lightness[region], 55))
+    return np.clip((thr - lightness) / 8.0 + 0.35, 0.0, 1.0)
+
+
 def _eyeshadow_poly(pts: np.ndarray, lift: int) -> np.ndarray:
     top = pts.copy()
     top[:, 1] = np.clip(top[:, 1] - lift, 0, None)
@@ -122,10 +154,18 @@ def _face_crop(rgb: np.ndarray, landmarks, w: int, h: int) -> np.ndarray:
     return crop if crop.size else rgb
 
 
-def apply_mood(image_bytes: bytes, mood_id: str, max_size: int = 1000, crop_face: bool = False) -> dict:
+def apply_mood(
+    image_bytes: bytes,
+    mood_id: str,
+    max_size: int = 1000,
+    crop_face: bool = False,
+    gender: str = "female",
+) -> dict:
+    """사진에 메이크업 무드를 적용한다. gender="male" 이면 눈썹·립밤만 올린다."""
+    is_male = (gender or "").strip().lower() == "male"
     rgb = _load_rgb(image_bytes, max_size)
     original_url = _to_data_url(rgb)
-    colors = MOOD_MAKEUP.get(mood_id)
+    colors = (MOOD_MAKEUP_MALE if is_male else MOOD_MAKEUP).get(mood_id)
     if colors is None:
         return {"applied": False, "message": "지원하지 않는 무드입니다.", "original_image": original_url, "image": original_url}
 
@@ -159,29 +199,43 @@ def apply_mood(image_bytes: bytes, mood_id: str, max_size: int = 1000, crop_face
     cv2.fillPoly(inner, [_points(lm, LIPS_INNER, w, h)], 255)
     lip = np.clip(_feather(lip_mask, 2) - _feather(inner, 1), 0, 1)
     lip = lip * _lip_color_gate(img_bgr, lip)
-    # 입술은 풀립스틱보다 은은한 '틴트'가 자연스러워 강도를 낮춰 기본값으로 둔다.
-    img_bgr = _recolor(img_bgr, lip, _hex_to_bgr(colors["lip"]), strength=0.55, l_strength=0.28)
 
-    # 볼 (블러셔) — 소프트 원형 (자연스럽게 은은히)
-    cheek_mask = np.zeros((h, w), dtype=np.uint8)
-    radius = max(5, int(face_w * 0.10))
-    for center in (_points(lm, [LEFT_CHEEK], w, h)[0], _points(lm, [RIGHT_CHEEK], w, h)[0]):
-        cv2.circle(cheek_mask, tuple(int(v) for v in center), radius, 255, -1)
-    cheek = _feather(cheek_mask, max(10, int(face_w * 0.06)))
-    img_bgr = _recolor(img_bgr, cheek, _hex_to_bgr(colors["cheek"]), strength=0.20, l_strength=0.04)
+    if is_male:
+        # 남성 — 눈썹 정돈 + 립밤. **블러셔·아이섀도는 올리지 않는다.**
+        # 입술은 '바른 티'가 아니라 원래 입술색이 정돈된 정도까지만(강도 0.22).
+        img_bgr = _recolor(img_bgr, lip, _hex_to_bgr(colors["lip"]), strength=0.22, l_strength=0.06)
+        brow_mask = np.zeros((h, w), dtype=np.uint8)
+        for indices in (LEFT_BROW, RIGHT_BROW):
+            cv2.fillConvexPoly(brow_mask, cv2.convexHull(_points(lm, indices, w, h)), 255)
+        brow = _feather(brow_mask, max(2, int(face_w * 0.008)))
+        brow = brow * _brow_hair_gate(img_bgr, brow)
+        img_bgr = _recolor(img_bgr, brow, _hex_to_bgr(colors["brow"]), strength=0.45, l_strength=0.30)
+        message = "눈썹과 립밤을 적용했습니다."
+    else:
+        # 입술은 풀립스틱보다 은은한 '틴트'가 자연스러워 강도를 낮춰 기본값으로 둔다.
+        img_bgr = _recolor(img_bgr, lip, _hex_to_bgr(colors["lip"]), strength=0.55, l_strength=0.28)
 
-    # 아이섀도 — 윗눈꺼풀 위로 살짝
-    lift = max(4, int(face_w * 0.05))
-    eye_mask = np.zeros((h, w), dtype=np.uint8)
-    cv2.fillPoly(eye_mask, [_eyeshadow_poly(_points(lm, LEFT_EYE_UPPER, w, h), lift)], 255)
-    cv2.fillPoly(eye_mask, [_eyeshadow_poly(_points(lm, RIGHT_EYE_UPPER, w, h), lift)], 255)
-    eye = _feather(eye_mask, max(3, int(face_w * 0.015)))
-    img_bgr = _recolor(img_bgr, eye, _hex_to_bgr(colors["eye"]), strength=0.30, l_strength=0.14)
+        # 볼 (블러셔) — 소프트 원형 (자연스럽게 은은히)
+        cheek_mask = np.zeros((h, w), dtype=np.uint8)
+        radius = max(5, int(face_w * 0.10))
+        for center in (_points(lm, [LEFT_CHEEK], w, h)[0], _points(lm, [RIGHT_CHEEK], w, h)[0]):
+            cv2.circle(cheek_mask, tuple(int(v) for v in center), radius, 255, -1)
+        cheek = _feather(cheek_mask, max(10, int(face_w * 0.06)))
+        img_bgr = _recolor(img_bgr, cheek, _hex_to_bgr(colors["cheek"]), strength=0.20, l_strength=0.04)
+
+        # 아이섀도 — 윗눈꺼풀 위로 살짝
+        lift = max(4, int(face_w * 0.05))
+        eye_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(eye_mask, [_eyeshadow_poly(_points(lm, LEFT_EYE_UPPER, w, h), lift)], 255)
+        cv2.fillPoly(eye_mask, [_eyeshadow_poly(_points(lm, RIGHT_EYE_UPPER, w, h), lift)], 255)
+        eye = _feather(eye_mask, max(3, int(face_w * 0.015)))
+        img_bgr = _recolor(img_bgr, eye, _hex_to_bgr(colors["eye"]), strength=0.30, l_strength=0.14)
+        message = "메이크업 무드를 적용했습니다."
 
     applied_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     if crop_face:
         applied_rgb = _face_crop(applied_rgb, lm, w, h)
-    return {"applied": True, "message": "메이크업 무드를 적용했습니다.", "original_image": original_url, "image": _to_data_url(applied_rgb)}
+    return {"applied": True, "message": message, "original_image": original_url, "image": _to_data_url(applied_rgb)}
 
 
 def apply_mood_to_model(mood_id: str, max_size: int = 1000, crop_face: bool = False) -> dict:

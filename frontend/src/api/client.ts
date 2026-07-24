@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeSkinResponse, BodyConditionScore, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from '../types/api';
+import type { AnalysisMode, AnalyzeSkinResponse, BodyConditionScore, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -48,6 +48,20 @@ export async function analyzeFaceShape(file: File): Promise<FaceShapeResponse> {
 
 export async function getMoodThumbnails(): Promise<MoodThumbnailsResponse> {
   const { data } = await api.get<MoodThumbnailsResponse>('/api/style/mood-thumbnails');
+  return data;
+}
+
+export async function previewMakeupOnPhoto(
+  file: File,
+  mood: string,
+  gender: 'female' | 'male' = 'female',
+): Promise<MakeupPreviewResponse> {
+  const form = new FormData();
+  form.append('image', file);
+  form.append('mood', mood);
+  // 성별로 '강도'가 아니라 **올리는 항목**이 바뀐다 — 여성 립·볼·아이 / 남성 눈썹·립밤.
+  form.append('gender', gender);
+  const { data } = await api.post<MakeupPreviewResponse>('/api/style/makeup-preview/photo', form);
   return data;
 }
 

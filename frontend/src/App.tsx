@@ -38,7 +38,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzePersonalColor, analyzeSkin, chat, getHistory, getMoodThumbnails, matchPersonalColorItems, recommend } from './api/client';
+import { analyzeFaceShape, analyzePersonalColor, analyzeSkin, chat, getHistory, getMoodThumbnails, matchPersonalColorItems, previewMakeupOnPhoto, recommend } from './api/client';
 import type { AnalysisMode, AnalyzeSkinResponse, BodyConditionScore, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
@@ -165,6 +165,8 @@ const qrImageUrl = (data: string, size = 160) =>
   `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=0&data=${encodeURIComponent(data)}`;
 
 const ageGroups = [
+  { value: 'baby', label: '영유아(0~2)' },
+  { value: 'child', label: '아동(3~9)' },
   { value: '10s', label: '10대' },
   { value: '20s', label: '20대' },
   { value: '30s', label: '30대' },
@@ -357,9 +359,21 @@ type AppModule = 'home' | 'skin-care' | 'personal-color';
 
 const scoreKeys = Object.keys(scoreLabels) as (keyof SkinScores)[];
 
+// 3구간 표시: 이 점수의 학습 라벨이 원래 2~3단계(없음/약간/많음)뿐이라 정밀한 숫자는
+// 촬영 노이즈로 흔들린다. 구간(양호/보통/관리 필요)으로 보여주면 ±몇 점 흔들려도 같은 구간에
+// 머물러 결과가 안정적이고, 데이터에도 솔직하다. 높을수록 심각(관리 필요).
+function scoreBand(value: number): { label: string; color: 'success' | 'warning' | 'error' } {
+  if (value < 34) return { label: '양호', color: 'success' };
+  if (value < 67) return { label: '보통', color: 'warning' };
+  return { label: '관리 필요', color: 'error' };
+}
+
 function ageToAgeGroup(age: string): string {
   const numericAge = Number.parseInt(age, 10);
   if (Number.isNaN(numericAge)) return '20s';
+  // 영유아·아동: 바디 추천이 안내+소아안전 큐레이션으로 분기한다(성인 액티브·향료 배제).
+  if (numericAge <= 2) return 'baby';
+  if (numericAge < 10) return 'child';
   if (numericAge < 20) return '10s';
   if (numericAge < 30) return '20s';
   if (numericAge < 40) return '30s';
@@ -396,8 +410,7 @@ function averageBodyConditions(results: AnalyzeSkinResponse[]): BodyConditionSco
   });
   return Array.from(totals.values())
     .map((item) => ({ ...item, probability: Math.round((item.probability / results.length) * 10) / 10 }))
-    .sort((a, b) => b.probability - a.probability)
-    .slice(0, 3);
+    .sort((a, b) => b.probability - a.probability);
 }
 
 type StyleMood = {
@@ -904,6 +917,10 @@ export default function App() {
   const [moodItems, setMoodItems] = useState<PersonalColorItemMatchResponse | null>(null);
   const [moodThumbnails, setMoodThumbnails] = useState<Record<string, string>>({});
   const [moodThumbsLoading, setMoodThumbsLoading] = useState(false);
+  // 내 사진에 무드 적용 — 퍼스널컬러 분석에 쓴 사진을 그대로 재사용해 다시 올리지 않게 한다.
+  const [myFaceMakeup, setMyFaceMakeup] = useState<{ mood: string; image: string } | null>(null);
+  const [myFaceLoading, setMyFaceLoading] = useState(false);
+  const [myFaceError, setMyFaceError] = useState('');
   const [itemRegion, setItemRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [itemPlatform, setItemPlatform] = useState<ItemPlatform>('all');
   const [reportProductKeys, setReportProductKeys] = useState<string[]>([]);
@@ -1295,6 +1312,30 @@ export default function App() {
       });
     } finally {
       setLoading('');
+    }
+  }
+
+  async function applyMoodToMyFace(moodId: string) {
+    // 이미 내 사진이 떠 있으면 토글로 모델 사진으로 되돌린다.
+    if (myFaceMakeup?.mood === moodId) {
+      setMyFaceMakeup(null);
+      return;
+    }
+    if (!personalColorFile) return;
+    setMyFaceLoading(true);
+    setMyFaceError('');
+    try {
+      const result = await previewMakeupOnPhoto(
+        personalColorFile,
+        moodId,
+        personalColorProfile.gender === 'male' ? 'male' : 'female',
+      );
+      if (result.applied) setMyFaceMakeup({ mood: moodId, image: result.image });
+      else setMyFaceError(result.message);
+    } catch {
+      setMyFaceError('내 사진에 적용하지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setMyFaceLoading(false);
     }
   }
 
@@ -1948,7 +1989,7 @@ export default function App() {
                     <Typography variant="overline">Personal color result</Typography>
                     <Typography variant="h3" fontWeight={900}>{personalColorResult.label}</Typography>
                     <Typography color="text.secondary" sx={{ mt: 1 }}>
-                      신뢰도 {Math.round(personalColorResult.confidence * 100)}% · {personalColorResult.skin_summary}
+                      {personalColorResult.skin_summary}
                     </Typography>
                     {personalColorResult.decision_note && (
                       <Typography color="rgba(255,255,255,0.76)" sx={{ mt: 0.75, fontSize: 13 }}>
@@ -1957,12 +1998,20 @@ export default function App() {
                     )}
                     {(() => {
                       // 단일 라벨은 여름쿨↔겨울쿨 등에서 흔들려, 가능성 높은 2개 타입을 확률과 함께 노출한다.
+                      //
+                      // ⚠️ season_margin 으로 "근소한 차이"를 게이팅하지 않는다(2026-07-17 실측).
+                      // margin 이 클수록(=모델과 색휴리스틱이 일치할수록) 오히려 덜 맞는다:
+                      //   margin<0.16 : top-1 0.500 / top-2 0.740  (n=50)
+                      //   margin>=0.16: top-1 0.354 / top-2 0.615  (n=65)
+                      // 현행 정확도의 원천이 model(winter편향)×color(spring편향) 상쇄라, 둘이 일치하면
+                      // 공유편향으로 같이 틀린다. 즉 margin 은 확신이 아니라 "같은 방향으로 틀릴 위험"의
+                      // 지표다. 뒤집어 쓰는 것도 원리가 없으므로 게이팅 자체를 없애고 항상 2개를 준다.
+                      // (top-2 0.72~0.74 가 이 파이프라인에서 유일하게 쓸 만한 수치다.)
                       const pct = (s?: string | null) =>
                         s ? Math.round((personalColorResult.metrics[`prob_${s}`] ?? 0) * 100) : null;
                       const p1 = pct(personalColorResult.season);
                       if (p1 == null) return null;
                       const p2 = pct(personalColorResult.alternate_season);
-                      const isClose = (personalColorResult.metrics.season_margin ?? 1) < 0.16;
                       return (
                         <Box sx={{ mt: 1.5 }}>
                           <Typography sx={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', mb: 0.5 }}>
@@ -1977,7 +2026,7 @@ export default function App() {
                             {personalColorResult.alternate_label && (
                               <>
                                 <Typography component="span" sx={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>
-                                  {isClose ? '또는' : '다음'}
+                                  또는
                                 </Typography>
                                 <Chip
                                   size="small"
@@ -1988,20 +2037,24 @@ export default function App() {
                               </>
                             )}
                           </Stack>
-                          {isClose && personalColorResult.alternate_label && (
+                          {personalColorResult.alternate_label && (
                             <Typography sx={{ mt: 0.75, fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>
-                              두 타입이 근소한 차이예요 — 둘 다 대보고 더 어울리는 쪽을 고르세요.
+                              두 타입 중 하나예요 — 둘 다 대보고 더 어울리는 쪽을 고르세요.
                             </Typography>
                           )}
                         </Box>
                       );
                     })()}
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
-                      <Chip
-                        size="small"
-                        label={`촬영 품질 ${Math.round((personalColorResult.metrics.capture_quality ?? personalColorResult.confidence) * 100)}%`}
-                        color={(personalColorResult.metrics.capture_quality ?? personalColorResult.confidence) >= 0.72 ? 'success' : 'warning'}
-                      />
+                      {/* 촬영 품질(이미지 상태)과 confidence(계절 확신)는 다른 값이라 폴백으로 섞지 않는다.
+                          confidence 는 실측상 정확도와 음의 상관이라 품질로 대신 보여주면 오도한다. */}
+                      {personalColorResult.metrics.capture_quality != null && (
+                        <Chip
+                          size="small"
+                          label={`촬영 품질 ${Math.round(personalColorResult.metrics.capture_quality * 100)}%`}
+                          color={personalColorResult.metrics.capture_quality >= 0.72 ? 'success' : 'warning'}
+                        />
+                      )}
                       <Chip
                         size="small"
                         label={personalColorResult.metrics.face_detected ? '얼굴 crop 적용' : '얼굴 crop 제한'}
@@ -2370,7 +2423,7 @@ export default function App() {
 
       const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? styleMoodRecommendations[0]?.mood ?? STYLE_MOODS[0];
       const reportDate = new Date().toISOString().slice(0, 10);
-      const quality = Math.round(((personalColorResult?.metrics.capture_quality ?? personalColorResult?.confidence) ?? 0.72) * 100);
+      const quality = Math.round((personalColorResult?.metrics.capture_quality ?? 0.72) * 100);
       const seasonTag = displaySeasonLabel(personalColorResult?.label);
       const faceTag = faceShapeLabel(faceShape?.detected ? faceShape.shape : undefined);
       const reportProfile = reportSeasonProfile(personalColorResult);
@@ -2416,7 +2469,9 @@ export default function App() {
                   {personalColorResult?.advice?.[0] ?? reportProfile.colorLine}
                 </Typography>
                 <Stack direction="row" spacing={0.8} sx={{ mt: 1.2 }} flexWrap="wrap" useFlexGap>
-                  <Chip size="small" label={`신뢰도 ${Math.round((personalColorResult?.confidence ?? 0) * 100)}%`} />
+                  {personalColorResult?.alternate_label && (
+                    <Chip size="small" label={`또는 ${personalColorResult.alternate_label}`} />
+                  )}
                   <Chip size="small" label={`품질 ${quality}%`} variant="outlined" />
                 </Stack>
                 <Box className="report-palette">
@@ -2432,12 +2487,36 @@ export default function App() {
                     <Typography className="report-section-title">선택한 무드</Typography>
                     <Typography className="report-title">{moodCopy.label}</Typography>
                   </Box>
-                  <Box className="report-mood-thumb">
-                    {moodThumbnails[activeMood.id] ? (
-                      <img src={moodThumbnails[activeMood.id]} alt={activeMood.label} />
-                    ) : (
-                      <Box className={`style-mood-thumb ${activeMood.thumbClass}`} />
-                    )}
+                  <Box>
+                    <Box className="report-mood-thumb">
+                      {myFaceMakeup?.mood === activeMood.id ? (
+                        <img src={myFaceMakeup.image} alt={`내 사진에 ${activeMood.label} 적용`} />
+                      ) : moodThumbnails[activeMood.id] ? (
+                        <img src={moodThumbnails[activeMood.id]} alt={activeMood.label} />
+                      ) : (
+                        <Box className={`style-mood-thumb ${activeMood.thumbClass}`} />
+                      )}
+                    </Box>
+                    {personalColorFile ? (
+                      <Button
+                        size="small"
+                        fullWidth
+                        disabled={myFaceLoading}
+                        onClick={() => applyMoodToMyFace(activeMood.id)}
+                        sx={{ mt: 0.6, fontSize: 12 }}
+                      >
+                        {myFaceLoading
+                          ? '적용 중…'
+                          : myFaceMakeup?.mood === activeMood.id
+                            ? '모델 사진 보기'
+                            : '내 사진으로 보기'}
+                      </Button>
+                    ) : null}
+                    {myFaceError ? (
+                      <Typography sx={{ mt: 0.4, fontSize: 11, color: 'error.main', textAlign: 'center' }}>
+                        {myFaceError}
+                      </Typography>
+                    ) : null}
                   </Box>
                 </Box>
                 <Typography className="report-copy strong">
@@ -2745,13 +2824,16 @@ export default function App() {
                     심각도
                   </Typography>
                 </Box>
-                {(Object.entries(analysis.scores) as [keyof SkinScores, number][]).map(([key, value]) => (
-                  <Box className="score-row" key={key}>
-                    <Typography variant="body2">{scoreLabels[key]}</Typography>
-                    <LinearProgress variant="determinate" value={value} sx={{ height: 10, borderRadius: 1 }} />
-                    <Typography variant="body2" textAlign="right">{value}</Typography>
-                  </Box>
-                ))}
+                {(Object.entries(analysis.scores) as [keyof SkinScores, number][]).map(([key, value]) => {
+                  const band = scoreBand(value);
+                  return (
+                    <Box className="score-row" key={key}>
+                      <Typography variant="body2">{scoreLabels[key]}</Typography>
+                      <LinearProgress variant="determinate" value={value} color={band.color} sx={{ height: 10, borderRadius: 1 }} />
+                      <Typography variant="body2" textAlign="right" color={`${band.color}.main`} fontWeight={700}>{band.label}</Typography>
+                    </Box>
+                  );
+                })}
               </>
             )}
             {analysis.analysis_mode === 'body' && analysis.body_conditions.map((item) => (
@@ -2774,9 +2856,13 @@ export default function App() {
   }
 
   function renderRecommendationPage() {
+    // 컬럼(product_columns)이 있으면 카테고리별 컬럼으로 통일해 보여준다(face·body 공통).
+    // 컬럼 없음(예: 악성의심 안내·카탈로그 부족): 기존 상품 그리드 유지.
+    const showColumns = !!recommendation?.product_columns?.length;
     return (
       <Grid container spacing={2}>
-        <Grid item xs={12} lg={8}>
+        {/* 추천 영역은 전체폭(컬럼이 좁아지지 않게). 추천 기록은 아래로 스택. */}
+        <Grid item xs={12}>
           <Paper className="page-panel" elevation={0}>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} gap={1.5}>
               <Typography variant="h5" fontWeight={800}>맞춤 추천</Typography>
@@ -2824,12 +2910,89 @@ export default function App() {
                   </Box>
                 )}
                 <Divider />
+                {/* 상품 카테고리 컬럼(퍼스널컬러 립/아이/베이스처럼): 카테고리별 추천 상품 여러 개. */}
+                {showColumns && (
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom>카테고리별 추천 상품</Typography>
+                    <Grid container spacing={1.5} className="item-match-columns">
+                      {recommendation.product_columns!.map((col) => (
+                        <Grid item xs={12} sm={6} md={12 / recommendation.product_columns!.length} key={col.key}>
+                          <Box className="item-match-column">
+                            <Box className="kiosk-match-card compact" sx={{ minHeight: 66 }}>
+                              <Typography fontWeight={900}>{col.label}</Typography>
+                              {col.reason && <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>{col.reason}</Typography>}
+                            </Box>
+                            <Stack spacing={2} className="item-match-product-stack">
+                              {col.products.length ? col.products.map((rp) => {
+                                const rlinks = rp.platform_links ?? {};
+                                const rplatforms = (rp.matched_platforms?.length ? rp.matched_platforms : Object.keys(rlinks))
+                                  .filter((key): key is ItemPlatform => key !== 'all' && key in ITEM_PLATFORM_META && Boolean(rlinks[key]))
+                                  .filter((key) => selectedPlatform === 'all' || key === selectedPlatform)
+                                  .map((key) => ITEM_PLATFORM_META[key]);
+                                return (
+                                  <Box className="rakuten-product-card" key={rp.id}>
+                                    <Box className="rakuten-product-image">
+                                      <ProductImage src={rp.image_url} alt={rp.name} fallback={<Sparkles size={26} />} />
+                                    </Box>
+                                    <Typography fontWeight={900} className="rakuten-product-title">{rp.name}</Typography>
+                                    <Typography variant="body2" color="text.secondary" noWrap>
+                                      {rp.brand}
+                                      {rp.price > 0 && ` · $${(rp.price / 100).toFixed(2)}`}
+                                    </Typography>
+                                    {rp.avg_rating != null && (
+                                      <Typography variant="caption" color="text.secondary">
+                                        ★ {rp.avg_rating.toFixed(1)}
+                                        {rp.review_count != null && ` (${rp.review_count.toLocaleString()})`}
+                                      </Typography>
+                                    )}
+                                    {!!rp.reason_tags?.length && (
+                                      <Stack direction="row" gap={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
+                                        {rp.reason_tags.slice(0, 2).map((tag) => (
+                                          <Chip key={tag} size="small" label={tag} variant="outlined" />
+                                        ))}
+                                      </Stack>
+                                    )}
+                                    <Stack direction="row" gap={0.8} flexWrap="wrap" sx={{ mt: 'auto', pt: 1.2 }}>
+                                      {rplatforms.map((platform) => (
+                                        <Button
+                                          key={platform.key}
+                                          component="a"
+                                          href={rlinks[platform.key]}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          size="small"
+                                          variant="contained"
+                                          disableElevation
+                                          startIcon={
+                                            <Box sx={{ width: 16, height: 16, borderRadius: '4px', bgcolor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                              <Box component="img" src={faviconUrl(platform.domain)} alt="" width={12} height={12} sx={{ display: 'block' }} />
+                                            </Box>
+                                          }
+                                          sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
+                                        >
+                                          {platform.label}
+                                        </Button>
+                                      ))}
+                                    </Stack>
+                                  </Box>
+                                );
+                              }) : (
+                                <Typography variant="body2" color="text.secondary">이 카테고리에 맞는 상품이 없어요.</Typography>
+                              )}
+                            </Stack>
+                          </Box>
+                        </Grid>
+                      ))}
+                    </Grid>
+                  </Box>
+                )}
                 {/* body(피부질환) 안내형은 의도적으로 상품이 없으므로 '카탈로그 부족' 문구를 띄우지 않는다. */}
                 {!recommendation.products.length && analysis?.analysis_mode !== 'body' && (
                   <Alert severity="info">선택한 플랫폼에 맞는 추천 후보가 아직 부족합니다. 모든 플랫폼으로 넓혀 보거나 상품 카탈로그를 보강해 주세요.</Alert>
                 )}
                 <Grid container spacing={1.5}>
-                  {recommendation.products.map((product, index) => {
+                  {/* 컬럼이 있으면 위 카테고리 컬럼으로 통일하고 평면 그리드는 비운다(중복 방지). */}
+                  {(showColumns ? [] : recommendation.products).map((product, index) => {
                     // 퍼스널컬러 카드와 동일한 버튼 체계: 입점 리졸버가 채운 platform_links를
                     // ITEM_PLATFORM_META(라쿠텐 포함)로 렌더하고, 선택 플랫폼으로 필터한다.
                     const links = product.platform_links ?? {};
@@ -2916,7 +3079,7 @@ export default function App() {
             )}
           </Paper>
         </Grid>
-        <Grid item xs={12} lg={4}>
+        <Grid item xs={12}>
           <Paper className="page-panel" elevation={0}>
             <Stack direction="row" spacing={1} alignItems="center">
               <History size={18} />

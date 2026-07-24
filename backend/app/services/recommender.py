@@ -1,9 +1,11 @@
 import json
+from collections import defaultdict
 from urllib.parse import quote_plus
 
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Ingredient, Product, ProductIngredient, RecommendationHistory, SkinAnalysis, Survey
+from app.services.routine_steps import classify_routine_step
 from app.services.derma_condition_care import (
     GUIDE_ONLY,
     OTC_INGREDIENTS,
@@ -11,6 +13,17 @@ from app.services.derma_condition_care import (
     REFERRAL,
     care_for,
     load_otc_examples,
+)
+from app.services.body_categories import ALL_CATEGORIES as NON_FACE_CATEGORIES
+from app.services.ingredient_aliases import detect_ingredients_ko
+from app.services.kr_ingredient_notice import raw_ingredients_for_url
+from app.services.pediatric_care import (
+    PEDIATRIC_GUIDANCE,
+    PEDIATRIC_GUIDANCE_NO_PRODUCTS,
+    PEDIATRIC_SAFE_INGREDIENTS,
+    is_pediatric,
+    is_pediatric_safe,
+    raw_ingredients_have_fragrance,
 )
 from app.services.platform_availability import unavailable_platforms_bulk
 from app.services.skincare_ingredient_knowledge import (
@@ -20,6 +33,7 @@ from app.services.skincare_ingredient_knowledge import (
 from app.schemas.api import (
     BodyConditionScore,
     IngredientOut,
+    ProductColumn,
     ProductOut,
     RecommendationResponse,
     SkinScores,
@@ -35,6 +49,9 @@ TARGET_LABELS = {
     "pigmentation": "색소침착",
     "oiliness": "유분",
 }
+
+# 얼굴 분석이 내는 점수 키. 성분 targets 중 이 6개만 얼굴 랭킹에 쓴다.
+FACE_SCORE_TARGETS = frozenset(TARGET_LABELS)
 
 SKIN_TYPE_LABELS = {
     "dry": "건성",
@@ -881,6 +898,225 @@ def infer_ingredients(db: Session, scores: SkinScores, survey: SurveyInput) -> l
     return [ingredient for ingredient in ranked if priorities.intersection(set(ingredient.targets.split(",")))][:5]
 
 
+# ── 카테고리별 상품 컬럼 조립 ─────────────────────────────────────────
+# 클렌저/토너/세럼/보습/선크림 카테고리별로 추천 상품 여러 개(퍼스널컬러 컬럼과 동일 모델).
+# 세럼만 사진 고민(total) 기반, 나머지는 품질(평점·피부타입). 근거: docs/ROUTINE_RECOMMENDATION_SPEC.md
+ROUTINE_SLOTS = [
+    ("cleanser", "클렌저"),
+    ("toner", "토너"),
+    ("serum", "세럼"),
+    ("moisturizer", "보습"),
+    ("sunscreen", "선크림"),
+]
+_SOOTHING_INGREDIENTS = {"Centella Asiatica", "Panthenol", "Green Tea"}
+_AHA_BHA = {"Salicylic Acid", "Glycolic Acid", "Lactic Acid"}
+_PER_COLUMN = 4   # 컬럼당 추천 상품 수
+
+
+def _generic_quality(product, survey: SurveyInput, platform_score: float, soothing: bool) -> float:
+    """비-세럼 단계용 품질 점수: 평점 + 피부타입 적합 + 플랫폼 (+민감 진정 가점)."""
+    score = rating_score_for(product)
+    if survey.skin_type in product.skin_types or "all" in product.skin_types:
+        score += 4.0
+    score += min(3.0, platform_score * 0.3)
+    if soothing and survey.sensitivity >= 4:
+        names = {pi.ingredient.name for pi in product.ingredients}
+        if names & _SOOTHING_INGREDIENTS:
+            score += 3.0
+    return score
+
+
+def _serum_sort_key(x, survey: SurveyInput):
+    """세럼 랭킹 키: 사진 고민(total)으로 정렬하되, 민감 피부엔 강한 액티브(레티놀·AHA/BHA)를 감점."""
+    product, total = x[0], x[1]
+    if survey.sensitivity >= 4:
+        names = {pi.ingredient.name for pi in product.ingredients}
+        if names & (_AHA_BHA | {"Retinol"}):
+            total -= 30.0
+    return (total, rating_score_for(product))
+
+
+def build_product_columns(scored, survey: SurveyInput):
+    """scored(전체 후보) → 카테고리별 추천 상품 컬럼(각 top-N).
+
+    scored = [(total, platform_score, product, reason_tags, _evidence), ...].
+    반환: ([(key, label, reason, [(product, total, reason_tags, ps), ...])], moist_step).
+    세럼은 total(고민) 기반(민감시 강한 액티브 감점), 나머지는 품질(평점·피부타입).
+    보습은 피부타입으로 로션/크림 택1(없으면 폴백). face·body 공용(고민의 출처만 다름).
+    """
+    moist_step = "lotion" if survey.skin_type in ("oily", "combination") else "cream"
+    pools: dict[str, list] = defaultdict(list)
+    for total, platform_score, product, reason_tags, _evidence in scored:
+        step = classify_routine_step(product.category, product.name)
+        if step:
+            pools[step].append((product, total, reason_tags, platform_score))
+
+    columns = []
+    for key, label in ROUTINE_SLOTS:
+        if key == "serum":
+            cand = sorted(pools.get("serum", []), key=lambda x: _serum_sort_key(x, survey), reverse=True)
+        elif key == "moisturizer":
+            pool = pools.get(moist_step) or pools.get("cream") or pools.get("lotion") or []
+            cand = sorted(pool, key=lambda x: (_generic_quality(x[0], survey, x[3], True), x[1]), reverse=True)
+        else:
+            soothing = key in ("cleanser", "toner")
+            cand = sorted(pools.get(key, []), key=lambda x: (_generic_quality(x[0], survey, x[3], soothing), x[1]), reverse=True)
+        # 이름 기준 중복 제거(카탈로그 소스별 중복행) 후 top-N.
+        top, seen = [], set()
+        for item in cand:
+            nm = (item[0].name or "").strip().lower()
+            if nm in seen:
+                continue
+            seen.add(nm)
+            top.append(item)
+            if len(top) >= _PER_COLUMN:
+                break
+        reason = ""
+        if key == "serum" and top:
+            tags = [t for t in top[0][2] if t not in ("피부 타입 적합", "선택 플랫폼 매칭")]
+            reason = (" · ".join(tags[:2]) + " 케어") if tags else ""
+        columns.append((key, label, reason, top))
+    return columns, moist_step
+
+
+# ── 바디 상품 컬럼 조립 ───────────────────────────────────────────────
+# 얼굴 5슬롯(클렌저·토너·세럼·보습·선크림)은 바디에 안 맞는다. 바디엔 토너·세럼 개념이
+# 없고, 얼굴 슬롯을 그대로 쓰면 classify_routine_step 이 body.* 를 모르니 컬럼이 전부
+# 얼굴 제품으로 찬다. 그래서 바디 전용 슬롯을 따로 둔다.
+# 근거 데이터: body.wash 191 · body.lotion 161 · body.cream 41 · body.oil 26 · body.treatment 11.
+BODY_SLOTS: list[tuple[str, str, tuple[str, ...]]] = [
+    ("body_wash", "바디 세정", ("body.wash",)),
+    ("body_moisturizer", "바디 보습", ("body.lotion", "body.cream")),
+    ("body_treatment", "바디 집중케어", ("body.treatment", "body.oil")),
+]
+# 슬롯에 쓰이는 카테고리 전체. 미스트·데오드란트·제모·선케어와 hand.*/foot.* 는 여기 없다
+# — 카탈로그로는 갖고 있되 질환 추천에는 올리지 않는다(BODY_CATEGORY_SPEC.md §1).
+BODY_CATALOG_CATEGORIES = frozenset(
+    category for _key, _label, categories in BODY_SLOTS for category in categories
+)
+
+# 지역별로 '구매 가능한' 바디 상품만 추천하기 위한 시장 판정. 바디 상품은 스킨케어와 달리
+# 리전 카탈로그(올영 국내몰 KR / 마츠키요·아마존JP JP)에서 왔고, product_url 도메인이
+# 그 시장을 그대로 드러낸다. JP 사용자에게 KR 국내몰 상품을 추천하면 입점 리졸버가 링크를
+# 전부 떼어내(after(jp)=[]) 프론트가 카드를 통째로 숨긴다 → "맞는 상품이 없어요".
+# 바디 추천에서 제외할 소스(사용자 결정 2026-07-24: 마츠키요 크롤 배제).
+# DB엔 옛 적재분이 남아 있으므로 추천 시점에도 걸러 즉시 반영한다(재적재 불필요).
+_EXCLUDED_BODY_URL_MARKERS = ("matsukiyo",)
+
+
+def is_excluded_body_source(product) -> bool:
+    url = (getattr(product, "product_url", "") or "").lower()
+    return any(marker in url for marker in _EXCLUDED_BODY_URL_MARKERS)
+
+
+def product_market(product) -> str:
+    url = (getattr(product, "product_url", "") or "").lower()
+    if "oliveyoung.co.kr" in url or "naver" in url or "lotteon" in url:
+        return "kr"
+    if "matsukiyo" in url or "amazon.co.jp" in url:
+        return "jp"
+    if "global.oliveyoung" in url:
+        return "global"
+    if "amazon.com" in url:
+        return "us"
+    return ""
+
+
+# region → 그 지역에서 실제로 살 수 있는 시장. KR=국내몰·네이버·amazon.com(ASIN),
+# JP=마츠키요·amazon.co.jp·올영 글로벌.
+REGION_MARKETS: dict[str, frozenset[str]] = {
+    "kr": frozenset({"kr", "us"}),
+    "jp": frozenset({"jp", "global"}),
+}
+
+
+def _body_ingredient_names(product) -> set[str]:
+    return {pi.ingredient.name for pi in product.ingredients}
+
+
+def _body_rank_key(item, survey: SurveyInput, want: set[str]):
+    """바디 상품 랭킹 키.
+
+    성분 일치를 '하드 게이트'가 아니라 '가점'으로 쓴다. 케어 카테고리 435건 중 성분이
+    확인된 건 164건뿐이라, 교집합을 필수 조건으로 걸면 나머지가 통째로 사라진다.
+    대신 성분이 확인된 상품이 항상 위로 오게 정렬한다.
+    """
+    product, _total, _tags, platform_score = item
+    names = _body_ingredient_names(product)
+    match = len(want & names)
+    verified = 1 if names else 0          # 성분 정보 유무 자체가 신뢰 신호
+    skin_fit = 1 if (survey.skin_type in product.skin_types or "all" in product.skin_types) else 0
+    return (match, verified, skin_fit, rating_score_for(product), platform_score)
+
+
+def build_body_columns(scored, survey: SurveyInput, want: set[str], strict: bool):
+    """scored → 바디 슬롯별 상품 컬럼.
+
+    ``strict`` 는 '자극 성분을 피해야 하는 질환'(avoid 목록이 있는 습진·아토피 등)일 때 True.
+    이때는 **성분이 확인된 상품만** 올린다. 성분을 모르는 상품은 avoid 검사를 할 수 없어서,
+    레티놀 바디로션을 아토피에 추천하는 사고가 날 수 있기 때문이다.
+    """
+    moist_first = "body.lotion" if survey.skin_type in ("oily", "combination") else "body.cream"
+    pools: dict[str, list] = defaultdict(list)
+    for _total, platform_score, product, reason_tags, _evidence in scored:
+        category = (product.category or "").strip().lower()
+        if category in BODY_CATALOG_CATEGORIES:
+            pools[category].append((product, _total, reason_tags, platform_score))
+
+    columns = []
+    for key, label, categories in BODY_SLOTS:
+        if key == "body_moisturizer":
+            # 피부타입으로 로션/크림 우선순위를 바꾼다(얼굴 보습 슬롯과 같은 규칙).
+            ordered = (moist_first, *(c for c in categories if c != moist_first))
+        else:
+            ordered = categories
+        pool = [item for category in ordered for item in pools.get(category, [])]
+        if strict:
+            pool = [item for item in pool if _body_ingredient_names(item[0])]
+        cand = sorted(pool, key=lambda x: _body_rank_key(x, survey, want), reverse=True)
+
+        top, seen = [], set()
+        for item in cand:
+            name_key = (item[0].name or "").strip().lower()
+            if name_key in seen:
+                continue
+            seen.add(name_key)
+            top.append(item)
+            if len(top) >= _PER_COLUMN:
+                break
+        reason = ""
+        if top:
+            matched = sorted(want & _body_ingredient_names(top[0][0]))
+            if matched:
+                reason = " · ".join(matched[:2]) + " 함유"
+        columns.append((key, label, reason, top))
+    return columns
+
+
+def _product_out(product, score, reason_tags, evidence_note, matched_map, hidden_map) -> ProductOut:
+    return ProductOut(
+        id=product.id,
+        brand=product.brand.name,
+        name=product.name,
+        category=product.category,
+        price=product.price,
+        score=score,
+        description=product.description,
+        ingredients=[item.ingredient.name for item in product.ingredients],
+        product_url=product.product_url,
+        platform_links=build_platform_links(product),
+        matched_platforms=[
+            platform for platform in matched_map.get(product.id, [])
+            if platform not in hidden_map.get(product.id, set())
+        ],
+        image_url=product.image_url,
+        avg_rating=product.avg_rating or None,
+        review_count=product.review_count or None,
+        reason_tags=reason_tags,
+        evidence_note=evidence_note,
+    )
+
+
 def recommend_products(
     db: Session,
     scores: SkinScores,
@@ -936,10 +1172,15 @@ def recommend_products(
         platform_score = platform_fit_score(product, platform)
         if platform_score < 0:
             continue
+        # 얼굴 점수(6종)에 해당하는 타깃만 센다. 바디 보습 성분(글리세린·페트롤라툼 등)은
+        # targets 가 barrier/moisture 라 여기서 걸러진다 — 안 거르면 severity_focus 가
+        # 타깃 '평균'이라, 상품 82%에 든 글리세린이 0점 타깃으로 들어가 얼굴 랭킹을 뭉갠다.
+        # 현재 얼굴 성분 14종은 전부 얼굴 타깃이라 이 필터는 오늘 기준 no-op 이다.
         product_targets = {
             target
             for product_ingredient in product.ingredients
             for target in product_ingredient.ingredient.targets.split(",")
+            if target in FACE_SCORE_TARGETS
         }
         product_ingredient_names = {
             product_ingredient.ingredient.name for product_ingredient in product.ingredients
@@ -974,6 +1215,11 @@ def recommend_products(
             reason_tags = [f"{safe_matches}개 바디 진정 성분", "바디 보습 카테고리"]
             evidence_note = None
         else:
+            # 바디·핸드·풋 상품(body.* / hand.* / foot.*)은 얼굴 추천 후보에서 뺀다.
+            # 얼굴 경로는 카테고리 화이트리스트 없이 DB 전체를 점수화하므로, 바디 카탈로그를
+            # 적재한 순간 바디워시가 얼굴 Top5에 올라온다. 네임스페이스가 그 경계를 만든다.
+            if (product.category or "").strip().lower() in NON_FACE_CATEGORIES:
+                continue
             matched_targets = ingredient_targets.intersection(product_targets)
             skin_type_match = 8 if survey.skin_type in product.skin_types or "all" in product.skin_types else 0
             # ── 사진 점수 지배 랭킹 ──────────────────────────────────────────────
@@ -1039,12 +1285,31 @@ def recommend_products(
     db.commit()
     db.refresh(history)
 
+    # face 모드면 카테고리별 상품 컬럼(각 여러 개)을 조립한다. body는 recommend_derma_care에서.
+    column_selection: list = []
+    if analysis_mode != "body":
+        column_selection, _moist_step = build_product_columns(scored, survey)
+
     # 후보 플랫폼을 미리 구한 뒤, 실시간 입점 확인으로 '실제 없는' 곳만 숨긴다.
-    matched_map = {product.id: matched_platforms(product) for _s, _ps, product, _reason_tags, _evidence_note in top_products}
+    # top_products + 컬럼 상품을 합쳐(중복 제거) 한 번에 확인한다.
+    union = {product.id: product for _s, _ps, product, _rt, _en in top_products}
+    for _key, _label, _reason, top in column_selection:
+        for prod, _t, _rt, _ps in top:
+            union[prod.id] = prod
+    matched_map = {pid: matched_platforms(p) for pid, p in union.items()}
     hidden_map = unavailable_platforms_bulk(
-        (product.id, product.brand.name, product.name, set(matched_map[product.id]))
-        for _s, _ps, product, _reason_tags, _evidence_note in top_products
+        (p.id, p.brand.name, p.name, set(matched_map[p.id])) for p in union.values()
     )
+
+    product_columns = [
+        ProductColumn(
+            key=key,
+            label=label,
+            reason=reason,
+            products=[_product_out(prod, t, rt, None, matched_map, hidden_map) for prod, t, rt, _ps in top],
+        )
+        for key, label, reason, top in column_selection
+    ]
 
     explanation = (
         build_body_explanation(body_conditions, ingredient_names, product_names)
@@ -1067,31 +1332,92 @@ def recommend_products(
             for ingredient in ingredients
         ],
         products=[
-            ProductOut(
-                id=product.id,
-                brand=product.brand.name,
-                name=product.name,
-                category=product.category,
-                price=product.price,
-                score=score,
-                description=product.description,
-                ingredients=[item.ingredient.name for item in product.ingredients],
-                product_url=product.product_url,
-                platform_links=build_platform_links(product),
-                matched_platforms=[
-                    platform
-                    for platform in matched_map[product.id]
-                    if platform not in hidden_map.get(product.id, set())
-                ],
-                image_url=product.image_url,
-                avg_rating=product.avg_rating or None,
-                review_count=product.review_count or None,
-                reason_tags=reason_tags,
-                evidence_note=evidence_note,
-            )
+            _product_out(product, score, reason_tags, evidence_note, matched_map, hidden_map)
             for score, _platform_score, product, reason_tags, evidence_note in top_products
         ],
         explanation=explanation,
+        product_columns=product_columns,
+    )
+
+
+def _recommend_pediatric(
+    db: Session,
+    survey: SurveyInput,
+    user_id: int | None,
+    analysis_id: int | None,
+    platform: str,
+    region: str,
+) -> RecommendationResponse:
+    """영유아·소아 안내 + 성분검증된 순한 상품 큐레이션.
+
+    질환별 랭킹을 하지 않는다. 소아안전 화이트리스트(순한 장벽·보습만, 액티브·향료 배제)를
+    통과한 상품만 카테고리별로 소수 노출한다. 통과 상품이 부족하면 안내만 낸다.
+    """
+    allowed_markets = REGION_MARKETS.get(region)
+    candidates = db.query(Product).options(
+        selectinload(Product.brand),
+        selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
+    ).filter(Product.category.in_(BODY_CATALOG_CATEGORIES)).all()
+
+    safe: dict[str, list] = defaultdict(list)
+    for product in candidates:
+        if is_excluded_body_source(product):  # 마츠키요 배제
+            continue
+        if allowed_markets is not None and product_market(product) not in allowed_markets:
+            continue
+        names = {pi.ingredient.name for pi in product.ingredients}
+        if not is_pediatric_safe(names, product.name or ""):
+            continue
+        # 전성분 원문으로 향료·에센셜오일까지 검사한다. 검출 성분(23종)만 보면 향료가
+        # 어휘 밖이라 새어나간다(록시땅 시어버터오일 등). 원문이 없으면(비-KR) 이름 검사에 맡긴다.
+        if raw_ingredients_have_fragrance(raw_ingredients_for_url(product.product_url)):
+            continue
+        safe[(product.category or "").strip().lower()].append((product, names))
+
+    columns = []
+    for key, label, categories in BODY_SLOTS:
+        pool = [item for category in categories for item in safe.get(category, [])]
+        pool.sort(key=lambda x: (len(x[1]), rating_score_for(x[0])), reverse=True)
+        top, seen = [], set()
+        for product, names in pool:
+            nk = (product.name or "").strip().lower()
+            if nk in seen:
+                continue
+            seen.add(nk)
+            reason = " · ".join(sorted(names & PEDIATRIC_SAFE_INGREDIENTS)[:3]) + " 함유"
+            top.append((product, 0.0, [reason], 0.0))
+            if len(top) >= _PER_COLUMN:
+                break
+        if top:
+            columns.append((key, f"{label} (순한 성분)", "액티브·향료 배제", top))
+
+    total = sum(len(t) for _k, _l, _r, t in columns)
+    explanation = PEDIATRIC_GUIDANCE if total else PEDIATRIC_GUIDANCE_NO_PRODUCTS
+
+    history = RecommendationHistory(
+        user_id=user_id, analysis_id=analysis_id,
+        recommended_ingredients=json.dumps([]),
+        recommended_products=json.dumps([p.name for _k, _l, _r, t in columns for p, *_ in t]),
+    )
+    db.add(history)
+    db.commit()
+    db.refresh(history)
+
+    union = {p.id: p for _k, _l, _r, t in columns for p, *_ in t}
+    matched_map = {pid: matched_platforms(p) for pid, p in union.items()}
+    hidden_map = unavailable_platforms_bulk(
+        (p.id, p.brand.name, p.name, set(matched_map[p.id])) for p in union.values()
+    )
+    product_columns = [
+        ProductColumn(
+            key=key, label=label, reason=reason,
+            products=[_product_out(p, s, rt, None, matched_map, hidden_map) for p, s, rt, _ps in top],
+        )
+        for key, label, reason, top in columns
+    ]
+    return RecommendationResponse(
+        history_id=history.id, ingredients=[], products=[],
+        explanation=explanation, product_columns=product_columns,
     )
 
 
@@ -1102,6 +1428,7 @@ def recommend_derma_care(
     user_id: int | None,
     analysis_id: int | None = None,
     platform: str = "all",
+    region: str = "all",
 ) -> RecommendationResponse:
     """2단 모델의 질환 그룹(tier2)에 '적합한 성분' 기준으로 제품/안내를 낸다.
 
@@ -1113,6 +1440,12 @@ def recommend_derma_care(
     conditions = [c.condition for c in body_conditions] or ["other"]
     top_condition = conditions[0]
     top_care = care_for(top_condition)
+
+    # 영유아·소아: 질환 판정보다 먼저 가로챈다. 바디 질환 분류기는 성인 데이터로 학습돼
+    # 아기 피부 판정을 신뢰할 수 없고, 성인용 액티브를 아기에게 추천하면 안 된다. 그래서
+    # 질환별 랭킹 대신 '안내 + 성분검증된 순한 상품 소수 큐레이션'만 한다(사용자 결정).
+    if is_pediatric(survey.age_group):
+        return _recommend_pediatric(db, survey, user_id, analysis_id, platform, region)
 
     # 악성 의심만 안전상 제품 대신 진료 안내로 남긴다(제품 폴백 금지).
     if top_care["kind"] == REFERRAL:
@@ -1145,17 +1478,47 @@ def recommend_derma_care(
     ingredients.sort(key=lambda ing: order.get(ing.name, 99))
 
     top: list[tuple[float, Product, list[str]]] = []
+    column_selection: list = []
     if target_care["kind"] == PRODUCTS and want_names:
         want, avoid = set(want_names), set(target_care.get("avoid", []))
         candidates = db.query(Product).options(
             selectinload(Product.brand),
             selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
         ).all()
+        # 성분 우선 원칙: 성분 데이터가 없는 상품은 추천하지 않는다(항상 strict).
+        # 성분을 모르면 (1) 질환 적합성을 판단할 수 없고 (2) 자극 성분 배제도 불가능하다.
+        # 사용자 방침: "성분이 없으면 상품을 추천하면 안 된다."
+        strict = True
+        # 지역별로 그 시장에서 살 수 있는 상품만 남긴다. 필터 결과가 비면(카탈로그가
+        # 얇은 리전) 전체로 폴백한다 — 죽은 링크보단 낫다.
+        allowed_markets = REGION_MARKETS.get(region)
+        if allowed_markets is not None:
+            region_pool = [
+                p for p in candidates
+                if (p.category or "").strip().lower() in BODY_CATALOG_CATEGORIES
+                and product_market(p) in allowed_markets
+            ]
+            if region_pool:
+                candidates = region_pool
         scored: list[tuple[float, Product, list[str]]] = []
         for product in candidates:
-            names = {pi.ingredient.name for pi in product.ingredients}
-            if avoid & names or not (want & names):
+            category = (product.category or "").strip().lower()
+            # 바디 질환 추천은 바디 케어 카테고리에서만 고른다. 예전엔 카탈로그 전체를
+            # 훑어서 얼굴 제품('Foaming Facial Cleanser')이 바디 추천에 올라왔다.
+            if category not in BODY_CATALOG_CATEGORIES:
                 continue
+            if is_excluded_body_source(product):  # 마츠키요 배제
+                continue
+            names = {pi.ingredient.name for pi in product.ingredients}
+            # 상품명도 avoid 검사에 넣는다. 성분 데이터가 없는 상품이 63% 라 성분표만
+            # 보면 '레티노이드 0.1% 바디세럼' 같은 상품이 습진 추천에 그대로 올라온다.
+            names_from_label = set(detect_ingredients_ko(product.name or ""))
+            if avoid & (names | names_from_label):
+                continue
+            if strict and not names:
+                continue
+            # 성분 일치는 하드 게이트가 아니라 가점이다. 케어 카테고리 435건 중 성분이
+            # 확인된 건 164건뿐이라, 교집합을 필수로 걸면 후보가 통째로 사라진다.
             match = len(want & names)
             skin_type_match = 8 if survey.skin_type in product.skin_types or "all" in product.skin_types else 0
             rating_score = rating_score_for(product)
@@ -1167,7 +1530,22 @@ def recommend_derma_care(
             )
             reason = [target_care["label"]] + [f"{name} 함유" for name in want_names if name in names][:3]
             scored.append((total, product, reason))
-        top = sorted(scored, key=lambda item: (item[0], item[1].avg_rating or 0.0), reverse=True)[:5]
+        # 성분이 일치하는 상품을 항상 위로(match 우선), 그다음 점수·평점.
+        top = sorted(
+            scored,
+            key=lambda item: (
+                len(want & {pi.ingredient.name for pi in item[1].ingredients}),
+                item[0],
+                item[1].avg_rating or 0.0,
+            ),
+            reverse=True,
+        )[:5]
+
+        scored_cols = [
+            (total, platform_fit_score(product, platform), product, reason, None)
+            for total, product, reason in scored
+        ]
+        column_selection = build_body_columns(scored_cols, survey, want, strict)
 
     # 1순위가 제품 불가라 하위 병으로 넘어갔으면 그 사실을 먼저 알린다.
     lead = ""
@@ -1203,31 +1581,27 @@ def recommend_derma_care(
     db.commit()
     db.refresh(history)
 
-    matched_map = {product.id: matched_platforms(product) for _s, product, _r in top}
+    # top(평면) + 컬럼 상품을 합쳐 한 번에 입점 확인.
+    union = {product.id: product for _s, product, _r in top}
+    for _k, _l, _r, coltop in column_selection:
+        for prod, _t, _rt, _ps in coltop:
+            union[prod.id] = prod
+    matched_map = {pid: matched_platforms(p) for pid, p in union.items()}
     hidden_map = unavailable_platforms_bulk(
-        (product.id, product.brand.name, product.name, set(matched_map[product.id]))
-        for _s, product, _r in top
+        (p.id, p.brand.name, p.name, set(matched_map[p.id])) for p in union.values()
     )
     products_out = [
-        ProductOut(
-            id=product.id,
-            brand=product.brand.name,
-            name=product.name,
-            category=product.category,
-            price=product.price,
-            score=score,
-            description=product.description,
-            ingredients=[item.ingredient.name for item in product.ingredients],
-            product_url=product.product_url,
-            platform_links=build_platform_links(product),
-            matched_platforms=[p for p in matched_map[product.id] if p not in hidden_map.get(product.id, set())],
-            image_url=product.image_url,
-            avg_rating=product.avg_rating or None,
-            review_count=product.review_count or None,
-            reason_tags=reason,
-            evidence_note=None,
-        )
+        _product_out(product, score, reason, None, matched_map, hidden_map)
         for score, product, reason in top
+    ]
+    product_columns = [
+        ProductColumn(
+            key=key,
+            label=label,
+            reason=reason,
+            products=[_product_out(prod, t, rt, None, matched_map, hidden_map) for prod, t, rt, _ps in coltop],
+        )
+        for key, label, reason, coltop in column_selection
     ]
     return RecommendationResponse(
         history_id=history.id,
@@ -1237,6 +1611,7 @@ def recommend_derma_care(
         ],
         products=products_out,
         explanation=explanation,
+        product_columns=product_columns,
     )
 
 

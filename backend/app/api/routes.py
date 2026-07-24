@@ -28,7 +28,6 @@ from app.schemas.api import (
     SkinScores,
 )
 from app.services.chatbot import answer_skin_question
-from app.services.body_skin_analyzer import BodySkinAnalyzer
 from app.services.dermatology_analyzer import DermatologyAnalyzer, SCREENING_NOTE
 from app.services.image_router import get_skin_image_router
 from app.services.naver_client import NaverClient
@@ -39,6 +38,7 @@ from app.services.oliveyoung_kr_search import prune_kr_oliveyoung
 from app.services.personal_color_analyzer import PersonalColorAnalyzer
 from app.services.platform_resolver import OLIVEYOUNG_GLOBAL_DETAIL, dedup_by_line, resolve_product_platforms
 from app.services.product_image_provider import fill_missing_images
+from app.services.rakuten_body_links import rakuten_link_for
 from app.services.rakuten_client import RakutenClient
 from app.services.recommender import (
     build_platform_links,
@@ -248,6 +248,34 @@ def _attach_rakuten(p, url: str) -> None:
     p.matched_platforms = sorted(links.keys())
 
 
+# 상품 URL 도메인 → 프론트가 렌더하는 플랫폼 버튼 키(ITEM_PLATFORM_META).
+_NATIVE_LINK_DOMAINS = (
+    ("oliveyoung.co.kr", "oliveyoung"),
+    ("global.oliveyoung", "oliveyoung"),
+    ("matsukiyo", "matsukiyo"),
+    ("amazon.co.jp", "amazon_jp"),
+    ("amazon.com", "amazon_us"),
+    ("naver", "naver"),
+    ("lotteon", "naver"),
+)
+
+
+def _backfill_native_body_link(product) -> None:
+    """플랫폼 링크가 통째로 빈 상품에 원산지 URL을 버튼으로 되살린다."""
+    links = getattr(product, "platform_links", None) or {}
+    if links:
+        return
+    url = (getattr(product, "product_url", "") or "").strip()
+    if not url:
+        return
+    low = url.lower()
+    for needle, key in _NATIVE_LINK_DOMAINS:
+        if needle in low:
+            product.platform_links = {key: url}
+            product.matched_platforms = [key]
+            return
+
+
 def _filter_by_requested_platform(products: list, platform: str) -> list:
     platform = normalize_platform(platform)
     if platform == "all":
@@ -392,6 +420,7 @@ def recommend(
             payload.user_id,
             None,
             "all",
+            region,
         )
     else:
         try:
@@ -408,25 +437,51 @@ def recommend(
         )
     # KR 지역: 영문 카탈로그 상품을 네이버 한글 데이터(브랜드/상품명/URL/이미지)로 보강한다.
     # 국내몰 라이브 검색이 한글로 이뤄지므로, 보강 '후'(한글 정체성)에 입점 검증해야 잘 맞는다.
+    # 평면 추천(products)과 카테고리 컬럼 상품(product_columns[].products)을 함께 보강한다 —
+    # 안 그러면 컬럼 카드의 버튼/한글화/이미지가 부실해진다(서로 다른 ProductOut 인스턴스).
+    column_products = [p for col in response.product_columns for p in col.products]
+    enrichable = response.products + column_products
     if region == "kr":
-        enrich_products_with_naver_kr(response.products)
+        enrich_products_with_naver_kr(enrichable)
     # 퍼스널컬러 화면과 동일하게: 지역별 입점 리졸버로 플랫폼 버튼을 통일한다.
     # KR=네이버/Amazon.com/올리브영 국내몰, JP=라쿠텐/Amazon.co.jp/올리브영 글로벌.
-    for product in response.products:
+    for product in enrichable:
         resolve_product_platforms(product, region)
     # JP 스킨케어: 라쿠텐 소스가 아니면 라쿠텐 버튼이 안 붙으므로, API로 브랜드 일치 실상품을
     # 검증해 직링크를 부착한다(미취급이면 버튼 없음 — 아이템매칭 남성 흐름과 동일 원칙).
     if region == "jp":
-        _verify_rakuten_for_skincare(response.products, RakutenClient())
+        _verify_rakuten_for_skincare(enrichable, RakutenClient())
     # 올리브영 입점 검증: JP=글로벌 카탈로그 직링크(카탈로그 없을 때만 라이브 prune). KR=국내몰
     # NewMainSearchApi 라이브 검색으로 goodsNo 직링크 교체/미취급 버튼 제거(curl_cffi).
     if region == "jp" and not catalog_available():
-        prune_global_oliveyoung(response.products)
+        prune_global_oliveyoung(enrichable)
     elif region == "kr":
-        prune_kr_oliveyoung(response.products)
-    # 카드 이미지 보강(KR=네이버, JP=라쿠텐 검색 이미지, 이미 있으면 유지).
+        prune_kr_oliveyoung(enrichable)
+    # JP 바디: 사전 매칭된 라쿠텐 직링크를 붙인다(rakuten_body_links 캐시). 라이브 검색
+    # (_verify_rakuten_for_skincare)은 초당 1요청 제한 탓에 상위 6개만 붙지만, 캐시는
+    # enrich 단계에서 매칭해 둔 전부(≈133건)에 직링크를 준다 — API 재호출·레이트리밋 없음.
+    if payload.analysis_mode == "body" and region == "jp":
+        for product in enrichable:
+            url = rakuten_link_for(getattr(product, "name", "") or "")
+            if url:
+                links = dict(getattr(product, "platform_links", None) or {})
+                links["rakuten"] = url
+                product.platform_links = links
+                matched = list(getattr(product, "matched_platforms", None) or [])
+                if "rakuten" not in matched:
+                    matched.append("rakuten")
+                product.matched_platforms = matched
+    # 바디 상품은 리전 카탈로그(마츠키요 등)에서 왔는데, resolve_product_platforms 가 그
+    # 원산지 링크까지 지우면 프론트 카드에 구매 버튼이 하나도 안 남는다(마츠키요 상품은
+    # 라쿠텐·아마존JP 매칭이 안 되기 일쑤). 링크가 통째로 빈 바디 상품엔 원산지 링크를
+    # 되살려, 카드가 최소한 '살 수 있는 곳' 하나는 갖게 한다.
+    if payload.analysis_mode == "body":
+        for product in enrichable:
+            _backfill_native_body_link(product)
+    # 평면 상품만 선택 플랫폼으로 필터(루틴은 전 단계 유지 — 버튼은 프론트에서 필터).
     response.products = _filter_by_requested_platform(response.products, platform)
-    fill_missing_images(response.products, region)
+    # 카드 이미지 보강(KR=네이버, JP=라쿠텐 검색 이미지, 이미 있으면 유지).
+    fill_missing_images(enrichable, region)
     return response
 
 
@@ -616,6 +671,26 @@ def style_makeup_preview(payload: MakeupPreviewRequest) -> MakeupPreviewResponse
 
     result = apply_mood_to_model(payload.mood)
     return MakeupPreviewResponse(mood=payload.mood, **result)
+
+
+@router.post("/style/makeup-preview/photo", response_model=MakeupPreviewResponse)
+async def style_makeup_preview_photo(
+    mood: str = Form(...),
+    gender: str = Form(default="female"),
+    image: UploadFile = File(...),
+) -> MakeupPreviewResponse:
+    """번들 모델이 아니라 **이용자 본인 사진**에 무드를 적용한다.
+
+    성별로 올리는 항목이 다르다(item-match 성별 분기와 같은 원칙 — 강도만 줄이는 게 아니라
+    항목을 교체한다): 여성=립·볼·아이, 남성=눈썹·립밤. 남성에게 블러셔/아이섀도는 올리지 않는다.
+    """
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="An image file is required.")
+    # mediapipe/cv2는 무거우므로 요청 시점에 지연 임포트한다.
+    from app.services.makeup_applier import apply_mood
+
+    result = apply_mood(await image.read(), mood, gender=gender)
+    return MakeupPreviewResponse(mood=mood, **result)
 
 
 @router.get("/style/mood-thumbnails", response_model=MoodThumbnailsResponse)

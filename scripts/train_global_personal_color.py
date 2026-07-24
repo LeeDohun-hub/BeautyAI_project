@@ -145,22 +145,49 @@ def _load_season_rows(manifests):
 
 
 def stage2(args):
+    from collections import Counter
     rows = _load_season_rows(args.season_manifests)
-    print(f"stage2 season images: {len(rows)} (device={DEVICE})")
+    dist = Counter(r["label"] for r in rows)
+    print(f"stage2 season images: {len(rows)} (device={DEVICE})  dist={dict(dist)}")
     feat, dim = backbone()
     if args.init and Path(args.init).exists():
         ck = torch.load(args.init, map_location="cpu")
         feat.load_state_dict(ck["backbone_state_dict"]); print(f"init backbone from {args.init}")
     head = nn.Linear(dim, len(SEASONS))
     net = nn.ModuleDict({"feat": feat, "head": head}).to(DEVICE)
-    opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
-    ce = nn.CrossEntropyLoss(label_smoothing=0.05)
+
+    frozen = bool(getattr(args, "freeze_backbone", False))
+    if frozen:
+        for p in net["feat"].parameters():
+            p.requires_grad_(False)
+        print("  backbone FROZEN — 헤드만 학습(다인종 표현 보존, 유럽셋 덮어쓰기 방지)")
+    opt = torch.optim.AdamW([p for p in net.parameters() if p.requires_grad],
+                            lr=args.lr, weight_decay=1e-4)
+
+    weight = None
+    if getattr(args, "class_weight", False):
+        n, k = len(rows), len(SEASONS)
+        weight = torch.tensor([n / (k * max(1, dist.get(s, 0))) for s in SEASONS],
+                              dtype=torch.float32, device=DEVICE)
+        print("  class weights:", {s: round(float(w), 2) for s, w in zip(SEASONS, weight)})
+    ce = nn.CrossEntropyLoss(weight=weight, label_smoothing=getattr(args, "label_smoothing", 0.05))
+
     dl = DataLoader(SeasonDS(rows, TRAIN_TF), batch_size=args.batch, shuffle=True, num_workers=0)
     for ep in range(args.epochs):
-        net.train(); tot = 0.0
+        if frozen:
+            net["feat"].eval(); net["head"].train()   # 동결 BN 통계 유지
+        else:
+            net.train()
+        tot = 0.0
         for x, y in dl:
             x, y = x.to(DEVICE), y.to(DEVICE)
-            loss = ce(net["head"](net["feat"](x)), y)
+            if frozen:
+                with torch.no_grad():
+                    f = net["feat"](x)
+                logit = net["head"](f)
+            else:
+                logit = net["head"](net["feat"](x))
+            loss = ce(logit, y)
             opt.zero_grad(); loss.backward(); opt.step(); tot += float(loss)
         print(f"  epoch {ep+1}/{args.epochs} loss={tot/max(1,len(dl)):.4f}", flush=True)
     # save in the SAME format the app's EfficientNetSeasonClassifier expects (full efficientnet_b0)
@@ -183,6 +210,9 @@ def main():
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--freeze-backbone", action="store_true", help="Stage2: 백본 동결(헤드만 학습)")
+    ap.add_argument("--label-smoothing", type=float, default=0.05)
+    ap.add_argument("--class-weight", action="store_true", help="Stage2: 계절 불균형 클래스 가중치")
     args = ap.parse_args()
     if args.stage == 1:
         stage1(args)

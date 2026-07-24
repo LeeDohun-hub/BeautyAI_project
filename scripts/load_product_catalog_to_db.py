@@ -31,6 +31,21 @@ INGREDIENT_RULES = {
     "Green Tea": ("Antioxidant and soothing botanical for oily or red skin.", "oiliness,redness,acne", ("green tea", "camellia sinensis")),
     "Zinc": ("Sebum and blemish support often used for oily skin.", "oiliness,acne", ("zinc",)),
     "Peptide": ("Firming support used in wrinkle care products.", "wrinkle", ("peptide", "palmitoyl")),
+    # ── 바디(장벽·보습) 성분 ────────────────────────────────────────────────
+    # 위 14종은 얼굴 액티브 위주라 바디 제품 전성분에 거의 안 걸린다(실측: 전성분을 확보한
+    # 332건 중 68%만 검출). 바디는 에몰리언트·오클루시브로 구성되므로 아래를 추가한다.
+    # targets 를 얼굴 점수(acne/pore/wrinkle/redness/pigmentation/oiliness)가 아닌
+    # barrier/moisture/soothing 으로 둔다 → recommender.FACE_SCORE_TARGETS 필터에 걸려
+    # 얼굴 랭킹에는 영향이 없다. 글리세린은 상품 82%에 들어 있어 이 분리가 특히 중요하다.
+    "Glycerin": ("Humectant that draws water into the skin; base of most body moisturizers.", "moisture,barrier", ("glycerin", "glycerol")),
+    "Petrolatum": ("Occlusive that blocks water loss. First-line emollient for atopic skin.", "barrier,moisture", ("petrolatum", "petroleum jelly", "mineral oil", "paraffin")),
+    "Shea Butter": ("Rich emollient for dry and rough body skin.", "barrier,moisture", ("shea butter", "butyrospermum")),
+    "Squalane": ("Lightweight emollient that restores skin lipids.", "barrier,moisture", ("squalane", "squalene")),
+    "Allantoin": ("Soothing keratolytic used for rough, irritated skin.", "soothing,barrier", ("allantoin",)),
+    "Colloidal Oatmeal": ("Skin protectant recognized for eczema itch relief.", "soothing,barrier", ("colloidal oatmeal", "avena sativa", "oat kernel")),
+    "Urea": ("Humectant and keratolytic for very dry or thickened skin.", "moisture,barrier", ("urea",)),
+    "Dimethicone": ("Silicone occlusive that reduces water loss without greasiness.", "barrier", ("dimethicone",)),
+    "Jojoba Oil": ("Emollient oil close to skin sebum.", "barrier,moisture", ("jojoba", "simmondsia")),
 }
 
 TAG_INGREDIENT_FALLBACKS = {

@@ -24,7 +24,9 @@ services:
   backend:
     build: ./backend
     environment:
-      DATABASE_URL: mysql+pymysql://beautyai:beautyai@mysql:3306/beautyai
+      # .env 의 DATABASE_URL(운영 Supabase)을 상속한다. 없으면 로컬 mysql 로 폴백.
+      # 로컬 mysql 은 seed 데모(상품 25개)뿐이라, 실제 카탈로그(바디 포함)는 Supabase 에 있다.
+      DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://beautyai:beautyai@mysql:3306/beautyai}
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       RAKUTEN_APP_ID: ${RAKUTEN_APP_ID:-}

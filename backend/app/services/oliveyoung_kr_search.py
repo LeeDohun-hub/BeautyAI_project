@@ -74,12 +74,19 @@ def kr_rate_limited_until() -> float:
         return _rate_limited_until
 
 
+# 검색 API 가 주는 IMG_PATH_NM 은 이 접두사에 붙이면 바로 쓸 수 있는 썸네일이 된다.
+# 예: '10/0000/0025/A00000025825406ko.jpg?l=ko'
+# 파일명 끝 2자리(…06ko)는 상품마다 달라 goodsNo 로 생성할 수 없다. 반드시 API 값을 써야 한다.
+KR_IMAGE_BASE = "https://image.oliveyoung.co.kr/cfimages/cf-goods/uploads/images/thumbnails/"
+
+
 @dataclass(frozen=True)
 class KRResult:
     goods_no: str
     brand: str
     name: str
     sold_out: bool
+    image_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -258,12 +265,14 @@ def _parse(payload: dict) -> KRSearch:
         goods_no = str(r.get("GOODS_NO") or "").strip()
         if not goods_no:
             continue
+        image_path = str(r.get("IMG_PATH_NM") or "").strip()
         results.append(
             KRResult(
                 goods_no=goods_no,
                 brand=str(r.get("ONL_BRND_NM") or r.get("ONL_BRND_NM_EN") or "").strip(),
                 name=str(r.get("GOODS_NM") or "").strip(),
                 sold_out=str(r.get("GOODS_SOUT_INFO") or "").strip().upper() == "Y",
+                image_url=(KR_IMAGE_BASE + image_path.lstrip("/")) if image_path else "",
             )
         )
     return KRSearch(total_count=total, results=tuple(results))
