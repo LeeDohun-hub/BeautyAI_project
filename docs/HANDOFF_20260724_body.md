@@ -13,8 +13,14 @@
 1. **`.env`** (루트, 비밀키) — 없으면 백엔드·DB·API 안 돔
    - `DATABASE_URL`(운영 Supabase — **이게 카탈로그 6,991건·바디 970건의 실제 저장소**), `RAKUTEN_*`, `NAVER_*`, `OPENAI_*` 등
    - ⚠️ `docker-compose.yml`이 이제 `.env`의 `DATABASE_URL`을 상속하므로, `.env`가 없으면 빈 로컬 MySQL(상품 25개)로 폴백 → 추천이 빔
-2. **`data/models/*.pt`** — 없으면 분석 휴리스틱 폴백
-   - `skin_efficientnet_b0.pt`, `body_skin_mobilenet_v3.pt`(또는 derma 2단), `personal_color_*.pt`
+2. **`data/models/` 의 런타임 모델 7개** (~113MB, 27개 중 앱이 실제 로드하는 것만) — 없으면 분석 휴리스틱 폴백
+   - `skin_efficientnet_b0_aihub03.pt` (얼굴 피부, config·.env 기본)
+   - `derma_tier1_gate.pt` + `derma_tier2_classifier.pt` (바디 질환 2단)
+   - `body_skin_mobilenet_v3.pt` (바디 레거시, docker-compose가 참조)
+   - `personal_color_retrain_try2_smooth005.pt` (퍼스널컬러)
+   - `aihub_pc_lab.pt` + `aihub_pc_lab_v3.pt` (퍼스널컬러 Lab 앙상블)
+   - ⚠️ docker-compose는 옛 `skin_efficientnet_b0.pt`를, config/.env는 `_aihub03.pt`를 가리켜 얼굴 모델이 어긋나 있음. 둘 다 챙기거나 docker-compose를 `_aihub03.pt`로 맞출 것
+   - 나머지 ~20개(aihub_pc_lab_v2·pc_global_*·backbone_*·personal_color_try*·train 체크포인트)는 실험·학습용, 런타임 불필요
 
 ## 🟡 선택 이전 (없으면 재생성 가능, 있으면 시간 절약)
 바디 성분·이미지는 **운영 Supabase에 이미 적재**돼서 `.env`만 있으면 집에서도 바로 나옴.
