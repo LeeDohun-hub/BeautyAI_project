@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import statistics
 import sys
@@ -26,8 +25,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-if hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL = PROJECT_ROOT / "data" / "models" / "nails_seg_s_yolov8_v1.pt"

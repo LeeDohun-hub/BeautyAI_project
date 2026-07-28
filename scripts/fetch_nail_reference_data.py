@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import shutil
@@ -25,8 +24,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-if hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = PROJECT_ROOT / "data" / "models"

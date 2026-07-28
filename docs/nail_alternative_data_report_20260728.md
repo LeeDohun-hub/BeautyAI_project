@@ -81,7 +81,10 @@ python scripts/detect_nail_regions.py \
 
 ## 7. 다음 단계 제안
 
-1. **B안 MVP 착수** — 크롭 임베딩 인덱스(사전학습 CNN) + 최근접 검색. 학습 불필요.
+> **1번은 같은 날 완료됨** → [nail_retrieval_mvp_20260728.md](nail_retrieval_mvp_20260728.md)
+> (인덱스 6,340개, 랜덤 대비 색차 75.2% 개선, color hit@5 96%)
+
+1. ~~**B안 MVP 착수** — 크롭 임베딩 인덱스(사전학습 CNN) + 최근접 검색. 학습 불필요.~~ ✅
 2. **팔레트 추출 브리지** — 크롭에서 대표색 추출 → 기존 퍼스널컬러 `nail` 컬럼([pc-item-match-pipeline])과 연결하면 "내 사진 속 디자인 → 비슷한 색 상품" 이 바로 된다.
 3. `POST /api/analyze-nail-design` + 홈 카드 활성화(설계문서 §4·§5).
 4. AI-Hub 04 메타데이터가 확보되면 A안 분류로 승격.
