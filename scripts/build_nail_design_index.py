@@ -30,6 +30,17 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "backend"))
+
+# 알고리즘 원본은 백엔드 서비스다 — 빌드와 서빙이 다른 구현을 쓰면 같은 사진에서 다른 색·임베딩이
+# 나와 검색 품질이 조용히 망가진다. 여기서는 그걸 그대로 가져다 쓴다.
+from app.services.nail_design_index import (  # noqa: E402
+    EMBED_SIZE,  # noqa: F401  (외부에서 참조할 수 있게 재노출)
+    MIN_CROP_PX,
+    Embedder,
+    dominant_color,
+)
+
 MODEL_PATH = PROJECT_ROOT / "data" / "models" / "nails_seg_s_yolov8_v1.pt"
 DATA_04 = PROJECT_ROOT / "data" / "04.네일 및 페디큐어 데이터" / "3.개방데이터" / "1.데이터"
 FOOT_ZIPS = [
@@ -38,76 +49,6 @@ FOOT_ZIPS = [
 ]
 HAND_ROOT = PROJECT_ROOT / "data" / "nail_reference" / "nails_segmentation_v51_yolov8"
 INDEX_DIR = PROJECT_ROOT / "data" / "nail_index"
-
-MIN_CROP_PX = 32   # 이보다 작은 크롭은 버린다(초점 흐림·새끼발톱 — 리포트 §4)
-EMBED_SIZE = 128
-
-
-# --------------------------------------------------------------------------- 임베딩
-
-class Embedder:
-    """EfficientNet-B0 penultimate feature(1280d). 배치 추론."""
-
-    def __init__(self) -> None:
-        import torch
-        from torchvision import models, transforms
-
-        self.torch = torch
-        weights = models.EfficientNet_B0_Weights.IMAGENET1K_V1
-        net = models.efficientnet_b0(weights=weights)
-        net.classifier = torch.nn.Identity()
-        net.eval()
-        self.net = net
-        self.tf = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ])
-
-    def __call__(self, crops: list[np.ndarray]) -> np.ndarray:
-        torch = self.torch
-        batch = []
-        for c in crops:
-            rgb = cv2.cvtColor(cv2.resize(c, (EMBED_SIZE, EMBED_SIZE)), cv2.COLOR_BGR2RGB)
-            batch.append(self.tf(rgb))
-        with torch.no_grad():
-            feat = self.net(torch.stack(batch)).cpu().numpy().astype(np.float32)
-        norm = np.linalg.norm(feat, axis=1, keepdims=True)
-        return feat / np.clip(norm, 1e-8, None)
-
-
-def dominant_color(crop: np.ndarray) -> tuple[list[float], str]:
-    """크롭 중앙부의 대표색을 Lab 과 hex 로 반환. 반사 하이라이트는 제외한다."""
-    h, w = crop.shape[:2]
-    y0, y1 = int(h * 0.2), max(int(h * 0.8), int(h * 0.2) + 1)
-    x0, x1 = int(w * 0.2), max(int(w * 0.8), int(w * 0.2) + 1)
-    center = crop[y0:y1, x0:x1].reshape(-1, 3).astype(np.float32)
-    if len(center) < 8:
-        center = crop.reshape(-1, 3).astype(np.float32)
-
-    lab = cv2.cvtColor(center.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_BGR2LAB)
-    lab = lab.reshape(-1, 3).astype(np.float32)
-    # 젤네일은 정반사 하이라이트가 크다 — L 상위 15%를 빼야 흰색으로 쏠리지 않는다.
-    keep = lab[:, 0] <= np.percentile(lab[:, 0], 85)
-    if keep.sum() >= 8:
-        lab, center = lab[keep], center[keep]
-
-    from sklearn.cluster import KMeans
-
-    k = min(3, max(1, len(lab) // 50))
-    if k > 1:
-        km = KMeans(n_clusters=k, n_init=3, random_state=0).fit(lab)
-        biggest = np.argmax(np.bincount(km.labels_))
-        lab_mean = km.cluster_centers_[biggest]
-        bgr_mean = center[km.labels_ == biggest].mean(axis=0)
-    else:
-        lab_mean = lab.mean(axis=0)
-        bgr_mean = center.mean(axis=0)
-
-    b, g, r = (int(np.clip(v, 0, 255)) for v in bgr_mean)
-    # OpenCV Lab(uint8) → 실제 Lab 스케일
-    L, A, B = float(lab_mean[0]) * 100 / 255, float(lab_mean[1]) - 128, float(lab_mean[2]) - 128
-    return [round(L, 2), round(A, 2), round(B, 2)], f"#{r:02x}{g:02x}{b:02x}"
-
 
 # --------------------------------------------------------------------------- 크롭 소스
 

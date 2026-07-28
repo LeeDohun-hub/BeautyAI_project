@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeSkinResponse, BodyConditionScore, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from '../types/api';
+import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, BodyConditionScore, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -36,6 +36,14 @@ export async function matchPersonalColorItems(
     platform,
     gender,   // 남성이면 백엔드가 베이스/브로우/컨실러/립밤으로 밸런싱한다.
   });
+  return data;
+}
+
+export async function analyzeNailDesign(file: File, topK = 5): Promise<AnalyzeNailDesignResponse> {
+  const form = new FormData();
+  form.append('image', file);
+  form.append('top_k', String(topK));
+  const { data } = await api.post<AnalyzeNailDesignResponse>('/api/analyze-nail-design', form);
   return data;
 }
 

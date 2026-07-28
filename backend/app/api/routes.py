@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote_plus
 
@@ -7,14 +8,19 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import Product, ProductIngredient, RecommendationHistory, SkinAnalysis, User
 from app.schemas.api import (
+    AnalyzeNailDesignResponse,
     AnalyzeSkinResponse,
     ChatRequest,
     ChatResponse,
+    DetectedNail,
     FaceShapeResponse,
     HistoryOut,
+    NailDesignMatch,
+    NailSeasonFit,
     MakeupPreviewRequest,
     MakeupPreviewResponse,
     MoodThumbnailsResponse,
@@ -448,6 +454,114 @@ async def analyze_face_shape(image: UploadFile = File(...)) -> FaceShapeResponse
         return FaceShapeResponse(**analyze_face(image_bytes))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not analyze this image.") from exc
+
+
+NAIL_MAX_QUERY_NAILS = 3   # 크게 잡힌 것부터 — 엄지·검지가 보통 가장 선명하다
+
+
+@router.post("/analyze-nail-design", response_model=AnalyzeNailDesignResponse)
+async def analyze_nail_design(
+    image: UploadFile = File(...),
+    top_k: int = Form(default=5),
+) -> AnalyzeNailDesignResponse:
+    """손·발 사진 → 네일 검출 → 유사 디자인 검색 + 퍼스널컬러 시즌 적합도.
+
+    상품 추천은 여기서 하지 않는다. `recommended_shades` 가 PROFILES 의 네일 색이름 그대로라
+    프론트가 기존 item-match 라이브 검색에 그대로 넘길 수 있다(상품 파이프라인 중복 방지).
+    """
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="An image file is required.")
+    image_bytes = await image.read()
+
+    # torch·ultralytics·cv2 는 무거우므로 요청 시점에 지연 임포트한다.
+    import base64
+
+    import cv2
+    import numpy as np
+
+    from app.services.nail_design_index import (
+        detect_nails,
+        dominant_color,
+        feature_available,
+        get_embedder,
+        get_index,
+    )
+    from app.services.nail_palette import rank_seasons, season_nail_shades
+
+    if not feature_available():
+        # 모델·인덱스가 배포에 빠졌을 때 500 대신 '비활성'으로 응답한다(다른 AI 모듈과 동일 규약).
+        return AnalyzeNailDesignResponse(
+            feature_available=False, index_size=0,
+            note="네일 디자인 인덱스 또는 모델이 배포에 포함되지 않았습니다.",
+        )
+
+    index = get_index()
+    index.load()
+    settings = get_settings()
+
+    try:
+        img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("decode failed")
+        nails = detect_nails(img)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Could not analyze this image.") from exc
+
+    if not nails:
+        return AnalyzeNailDesignResponse(
+            feature_available=True, index_size=index.size,
+            note="사진에서 네일을 찾지 못했습니다. 손이나 발이 잘 보이도록 다시 찍어 주세요.",
+        )
+
+    embedder = get_embedder()
+    detected: list[DetectedNail] = []
+    for i, ((x1, y1, x2, y2), conf) in enumerate(nails[:NAIL_MAX_QUERY_NAILS]):
+        crop = img[max(y1, 0):y2, max(x1, 0):x2]
+        if crop.size == 0:
+            continue
+        lab, hex_color = dominant_color(crop)
+        vec = embedder([crop])[0]
+        matches = index.search(vec, lab, top_k, settings.nail_retrieval_color_weight)
+
+        out_matches = []
+        for m in matches:
+            thumb = None
+            if m.thumbnail_path:
+                raw = Path(m.thumbnail_path).read_bytes()
+                thumb = "data:image/png;base64," + base64.b64encode(raw).decode()
+            out_matches.append(NailDesignMatch(
+                design_id=m.design_id, region=m.region, similarity=m.similarity,
+                color_hex=m.color_hex, delta_e=m.delta_e, thumbnail=thumb,
+            ))
+        detected.append(DetectedNail(
+            index=i, confidence=round(conf, 3), bbox=[int(x1), int(y1), int(x2), int(y2)],
+            color_hex=hex_color, color_lab=lab, matches=out_matches,
+        ))
+
+    if not detected:
+        return AnalyzeNailDesignResponse(
+            feature_available=True, index_size=index.size,
+            note="네일 영역이 너무 작아 분석하지 못했습니다.",
+        )
+
+    # 시즌 적합도는 가장 크게 잡힌 네일(=가장 선명한 색) 기준으로 낸다.
+    primary = detected[0]
+    season_fit = [
+        NailSeasonFit(label=label, tone=tone, subtype=subtype, shade_name=fit.name,
+                      shade_hex=fit.hex, delta_e=fit.delta_e, score=fit.score)
+        for label, tone, subtype, fit in rank_seasons(tuple(primary.color_lab))
+    ]
+    best = season_fit[0]
+    shades = [name for name, _hex in season_nail_shades(best.tone, best.subtype)]
+
+    return AnalyzeNailDesignResponse(
+        feature_available=True,
+        index_size=index.size,
+        detected=detected,
+        season_fit=season_fit,
+        recommended_shades=shades,
+        note=f"사진 속 컬러는 '{best.label}'에 가장 가깝습니다({best.shade_name}).",
+    )
 
 
 @router.post("/recommend", response_model=RecommendationResponse)

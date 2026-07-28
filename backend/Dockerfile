@@ -8,9 +8,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-# 퍼스널컬러/피부 학습 모델(EfficientNet) 추론용 PyTorch(CPU 전용, 용량 최소화).
+# 퍼스널컬러/피부/네일 모델(EfficientNet·YOLOv8) 추론용 PyTorch(CPU 전용).
+# ⚠️ requirements.txt **보다 먼저** 깔아야 한다. ultralytics 가 torch 를 요구하는데, 순서가
+# 뒤바뀌면 pip 가 PyPI 기본 torch(CUDA 빌드)를 끌어와 nvidia-*(2.7GB)+triton(0.7GB)이
+# 이미지에 남는다(실측: 3.23GB → 10.2GB). 먼저 깔면 요구사항이 이미 충족돼 CUDA 를 받지 않는다.
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision
+RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 
 EXPOSE 8000

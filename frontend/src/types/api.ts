@@ -181,3 +181,42 @@ export type HistoryItem = {
   recommended_products: string[];
   created_at: string;
 };
+
+export type NailDesignMatch = {
+  design_id: string;
+  region: string;           // 'foot' | 'hand'
+  similarity: number;
+  color_hex: string;
+  delta_e: number;
+  thumbnail?: string | null; // data URI(64px)
+};
+
+export type NailSeasonFit = {
+  label: string;
+  tone: string;
+  subtype: string;
+  shade_name: string;
+  shade_hex: string;
+  delta_e: number;
+  score: number;
+};
+
+export type DetectedNail = {
+  index: number;
+  confidence: number;
+  bbox: number[];
+  color_hex: string;
+  color_lab: number[];
+  matches: NailDesignMatch[];
+};
+
+export type AnalyzeNailDesignResponse = {
+  // 모델·인덱스가 배포에 빠지면 false로 온다(에러가 아니라 비활성).
+  feature_available: boolean;
+  index_size: number;
+  detected: DetectedNail[];
+  season_fit: NailSeasonFit[];
+  // PROFILES의 네일 색이름 그대로라 item-match 검색어로 바로 넘길 수 있다.
+  recommended_shades: string[];
+  note: string;
+};

@@ -33,6 +33,21 @@ def _size(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
+def collect_optional() -> list[Path]:
+    """없어도 앱이 뜨는 자산 — 네일 디자인 기능은 빠지면 feature_available=False 로 비활성된다.
+
+    인덱스가 77MB 라 항상 싣지는 않는다. 필수(collect)와 달리 없어도 실패시키지 않는다.
+    """
+    from app.core.config import get_settings
+
+    s = get_settings()
+    out = []
+    for rel in (s.nail_seg_model_path, s.nail_embedder_model_path, s.nail_index_dir):
+        p = Path(rel)
+        out.append((p if p.is_absolute() else PROJECT_ROOT / p).resolve())
+    return out
+
+
 def collect() -> list[Path]:
     """config 가 참조하는 런타임 자산 경로(중복 제거, 존재 여부는 호출측에서 판정)."""
     from app.core.config import get_settings
@@ -62,12 +77,17 @@ def collect() -> list[Path]:
     return list(seen.values())
 
 
-def build(out_dir: Path, make_tar: bool) -> int:
+def build(out_dir: Path, make_tar: bool, with_nail: bool) -> int:
     data_root = (PROJECT_ROOT / "data").resolve()
     assets = collect()
 
     missing = [p for p in assets if not p.exists()]
     present = [p for p in assets if p.exists()]
+
+    skipped_optional: list[Path] = []
+    if with_nail:
+        for p in collect_optional():
+            (present if p.exists() else skipped_optional).append(p)
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -101,6 +121,11 @@ def build(out_dir: Path, make_tar: bool) -> int:
             tf.add(out_dir, arcname=".")
         print(f"tar: {tar_path} ({_size(tar_path)/1048576:.1f} MB)")
 
+    if skipped_optional:
+        print("\n(선택) 없어서 건너뛴 네일 디자인 자산 — 기능은 비활성으로 응답한다:")
+        for p in skipped_optional:
+            print(f"   {p}")
+
     if missing:
         print("\n⚠️ config 가 가리키는데 없는 파일:", file=sys.stderr)
         for p in missing:
@@ -114,8 +139,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=PROJECT_ROOT / "dist" / "runtime_data")
     ap.add_argument("--tar", action="store_true", help="tar.gz 도 함께 만든다")
+    ap.add_argument("--no-nail", action="store_true",
+                    help="네일 디자인 자산(인덱스 77MB 포함)을 빼고 만든다")
     args = ap.parse_args()
-    return build(args.out.resolve(), args.tar)
+    return build(args.out.resolve(), args.tar, with_nail=not args.no_nail)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@
 | API URL 이 번들에 구워져 환경마다 재빌드 필요 | nginx 가 `/api` 를 프록시 → 같은 오리진 호출, **이미지 하나로 어느 환경에나** |
 | `./data:/data` 통째 마운트(16.5GB) — 클라우드엔 그 볼륨이 없음 | `build_runtime_bundle.py` 로 **137MB** 슬림 번들 |
 | `chromadb` 가 requirements 에 있으나 코드에서 미사용 | 제거 — 백엔드 이미지 3.53GB → **3.23GB** |
+| `ultralytics` 추가 시 CUDA torch 가 딸려와 이미지가 **10.2GB** 로 부풂 | Dockerfile 에서 **CPU torch 를 requirements 보다 먼저** 설치 → **3.79GB** |
 | CI 가 배포 산출물을 전혀 검증 안 함 | `images` 잡 추가(compose 문법 + 두 이미지 빌드) |
 
 ## 2. 구성
@@ -60,7 +61,22 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 | 컨테이너 안 모델 7개 로드 | 전부 `exists=True`, personal_color `load=True` |
 | RAG 로드 | 9,031 레코드 |
 
-이미지 크기: 백엔드 **3.23GB** / 프론트 **74.4MB**(기존 개발용 592MB 대비 87%↓)
+이미지 크기: 백엔드 **3.79GB**(네일 기능 포함) / 프론트 **74.4MB**(기존 개발용 592MB 대비 87%↓)
+
+### ⚠️ Dockerfile 설치 순서 함정 (실측 3.23GB → 10.2GB → 3.79GB)
+
+`ultralytics` 를 `requirements.txt` 에 넣고 그걸 CPU torch 보다 **먼저** 설치하면, pip 가
+ultralytics 의 `torch` 요구를 PyPI 기본 휠(**CUDA 빌드**)로 해결하면서 `nvidia-*`(2.7GB)와
+`triton`(0.7GB)을 끌고 온다. 뒤이어 CPU torch 를 깔아도 이미 들어온 CUDA 패키지는 레이어에 남는다.
+
+→ **CPU torch 를 requirements 보다 먼저** 설치하면 요구가 이미 충족돼 CUDA 를 받지 않는다.
+확인법: `docker run --rm <image> sh -c "ls /usr/local/lib/python3.11/site-packages | grep -E '^(nvidia|triton)'"`
+가 비어 있어야 한다(`nvidia_ml_py` 는 ultralytics 의 순수 파이썬 패키지라 무관).
+
+### 네일 기능 end-to-end 실측 (프록시 경유)
+
+`POST /api/analyze-nail-design` → `feature_available=true`, index 6,340, 네일 3개 검출,
+유사 디자인 5건(썸네일 base64 13KB씩), 시즌 적합도 `가을 웜 뮤트 81.6점`.
 
 ## 5. 클라우드로 올릴 때 남은 일
 
@@ -70,8 +86,10 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 3. **메모리** — torch + EfficientNet CPU 추론이라 512MB 티어로는 부족하다. **1GB 이상** 필요.
 4. **슬림 번들 전달 방식** — 이미지에 `COPY` 로 굽거나(이미지가 137MB 더 커짐) 오브젝트
    스토리지에서 부팅 시 받는다. 현재 compose 는 로컬 디렉터리 마운트라 클라우드에선 그대로 못 쓴다.
-5. **네일 기능을 배포에 포함하려면** 인덱스 31MB + 썸네일 6,340개를 어떻게 올릴지 같은 결정이
-   필요하고, `ultralytics` 를 `backend/requirements.txt` 에 추가해야 한다(현재 미반영).
+5. ~~네일 기능을 배포에 포함하려면~~ **완료(2026-07-28)** — `ultralytics` 를 requirements 에 넣고
+   네일 자산(검출모델 22.8MB + 임베더 15.6MB + 인덱스 77.5MB)을 번들의 **선택 자산**으로 넣었다.
+   번들 137MB → **252.6MB**. 빼려면 `python scripts/build_runtime_bundle.py --no-nail`
+   (그 경우 `/api/analyze-nail-design` 이 `feature_available=false` 로 응답한다).
 
 ## 6. 주의
 

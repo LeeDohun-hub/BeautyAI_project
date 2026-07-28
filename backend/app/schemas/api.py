@@ -210,3 +210,46 @@ class HistoryOut(BaseModel):
     recommended_products: list[str]
     created_at: datetime
 
+
+class NailDesignMatch(BaseModel):
+    """인덱스에서 찾은 유사 디자인 한 건."""
+
+    design_id: str
+    region: str                      # "foot" | "hand"
+    similarity: float                # 하이브리드 점수(코사인 − λ·ΔE/100)
+    color_hex: str
+    delta_e: float                   # 질의 색과의 색차(CIE76)
+    thumbnail: str | None = None     # data URI(64px). 썸네일이 없으면 None
+
+
+class NailSeasonFit(BaseModel):
+    """이 색이 각 퍼스널컬러 시즌에 얼마나 맞는지."""
+
+    label: str                       # "겨울 쿨 딥" 등
+    tone: str
+    subtype: str
+    shade_name: str                  # 그 시즌에서 가장 가까운 네일 색조 이름
+    shade_hex: str
+    delta_e: float
+    score: float                     # 0~100
+
+
+class DetectedNail(BaseModel):
+    index: int
+    confidence: float
+    bbox: list[int]                  # [x1, y1, x2, y2]
+    color_hex: str
+    color_lab: list[float]
+    matches: list[NailDesignMatch] = Field(default_factory=list)
+
+
+class AnalyzeNailDesignResponse(BaseModel):
+    feature_available: bool          # 모델·인덱스가 없으면 False(에러 대신 비활성 응답)
+    index_size: int
+    detected: list[DetectedNail] = Field(default_factory=list)
+    # 가장 크게 잡힌 네일 기준. 프론트가 시즌 배지·상품 검색어로 쓴다.
+    season_fit: list[NailSeasonFit] = Field(default_factory=list)
+    # PROFILES 의 네일 색이름 그대로라 item-match 라이브 검색 키워드로 바로 넘길 수 있다.
+    recommended_shades: list[str] = Field(default_factory=list)
+    note: str = ""
+

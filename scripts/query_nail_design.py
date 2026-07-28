@@ -26,8 +26,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INDEX_DIR = PROJECT_ROOT / "data" / "nail_index"
 MODEL_PATH = PROJECT_ROOT / "data" / "models" / "nails_seg_s_yolov8_v1.pt"
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_nail_design_index import Embedder, dominant_color  # noqa: E402
+sys.path.insert(0, str(PROJECT_ROOT / "backend"))
+from app.services.nail_design_index import Embedder, dominant_color  # noqa: E402
 
 
 def load_index() -> tuple[np.ndarray, list[dict]]:

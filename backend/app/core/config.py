@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     # 경계 그룹은 임계값과 무관하게 ~53%(진짜 애매). 커버리지↔정밀도 트레이드오프라 조정 가능.
     # 기본 0.38 = 절반이 확신 답변(75% 정확). 키오스크가 정밀도를 원하면 0.45로 올린다.
     personal_color_borderline_threshold: float = 0.38
+    # 네일 디자인 리트리벌(B안). 셋 중 하나라도 없으면 기능이 비활성으로 응답한다.
+    #  - seg: 손톱 학습 YOLOv8(CC BY 4.0). 발톱에도 전이됨(발 909장 100% 검출).
+    #  - embedder: torchvision IMAGENET1K_V1 백본을 로컬 체크포인트로 굳힌 것.
+    #    ⚠️ weights=IMAGENET1K_V1 로 만들면 런타임에 인터넷 다운로드가 일어난다 — 다른 모델들과
+    #    동일하게 weights=None + 로컬 로드로 간다. 인덱스를 만든 가중치와 반드시 같아야 한다.
+    nail_seg_model_path: str = "./data/models/nails_seg_s_yolov8_v1.pt"
+    nail_embedder_model_path: str = "./data/models/nail_embedder_efficientnet_b0.pt"
+    nail_index_dir: str = "./data/nail_index"
+    # 하이브리드 점수 score = cos유사도 − λ·(ΔE/100). λ 스윕 실측(질의 400개):
+    #   0 → ΔE 23.4·hit@5 71% / 0.5 → ΔE 11.4·hit@5 96% / 1.0 → ΔE 8.3·hit@5 100%(질감 뭉개짐)
+    nail_retrieval_color_weight: float = 0.5
     problem_skin_knowledge_path: str = "./data/rag/problem_skin_knowledge.jsonl"
     skincare_ingredient_knowledge_path: str = "./data/rag/skincare_ingredient_knowledge.jsonl"
     # 병별 OTC 의약품 예시(OpenFDA OTC 라벨 기반). build_otc_drug_knowledge.py로 생성.

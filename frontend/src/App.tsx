@@ -38,8 +38,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzePersonalColor, analyzeSkin, chat, getHistory, getMoodThumbnails, matchPersonalColorItems, previewMakeupOnPhoto, recommend } from './api/client';
-import type { AnalysisMode, AnalyzeSkinResponse, BodyConditionScore, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, getHistory, getMoodThumbnails, matchPersonalColorItems, previewMakeupOnPhoto, recommend } from './api/client';
+import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, BodyConditionScore, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
 // 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
@@ -355,7 +355,7 @@ const raceIdentityOptions = [
   '응답하지 않음',
 ];
 
-type AppModule = 'home' | 'skin-care' | 'personal-color';
+type AppModule = 'home' | 'skin-care' | 'personal-color' | 'nail-design';
 
 const scoreKeys = Object.keys(scoreLabels) as (keyof SkinScores)[];
 
@@ -888,6 +888,10 @@ export default function App() {
   const previewUrlsRef = useRef<string[]>([]);
   const personalColorPreviewsRef = useRef<string[]>([]);
   const [appModule, setAppModule] = useState<AppModule>('home');
+  // 네일 디자인 분석(리트리벌). 인덱스·모델이 배포에 없으면 결과의 feature_available 이 false 로 온다.
+  const [nailPreview, setNailPreview] = useState<string>('');
+  const [nailResult, setNailResult] = useState<AnalyzeNailDesignResponse | null>(null);
+  const [nailLoading, setNailLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('face');
   const [survey, setSurvey] = useState<SurveyInput>({
@@ -1103,6 +1107,28 @@ export default function App() {
     setAppModule('personal-color');
     setPersonalColorStep(0);
     setError('');
+  }
+
+  function startNailDesign() {
+    stopCamera();
+    setAppModule('nail-design');
+    setNailResult(null);
+    setNailPreview('');
+    setError('');
+  }
+
+  async function handleNailUpload(file: File) {
+    setNailLoading(true);
+    setError('');
+    setNailResult(null);
+    setNailPreview(URL.createObjectURL(file));
+    try {
+      setNailResult(await analyzeNailDesign(file, 5));
+    } catch {
+      setError('네일 사진을 분석하지 못했습니다. 다른 사진으로 다시 시도해 주세요.');
+    } finally {
+      setNailLoading(false);
+    }
   }
 
   function goHome() {
@@ -1620,14 +1646,16 @@ export default function App() {
             </Grid>
 
             <Grid item xs={12} md={4}>
-              <Paper elevation={0} className="module-card disabled-module">
+              <Paper elevation={0} className="module-card active-module">
                 <Stack spacing={1.5}>
                   <Box className="module-icon"><ImagePlus size={24} /></Box>
-                  <Typography variant="h5" fontWeight={900}>추후 추가</Typography>
+                  <Typography variant="h5" fontWeight={900}>네일·페디 디자인</Typography>
                   <Typography color="text.secondary">
-                    얼굴형, 스타일 컨설팅, 아이템 매칭, 결과지 출력 기능을 이 영역에 확장합니다.
+                    손·발 사진에서 네일을 찾아 비슷한 디자인을 검색하고, 퍼스널컬러 시즌 적합도를 알려줍니다.
                   </Typography>
-                  <Chip label="확장 예정" size="small" sx={{ width: 'fit-content' }} />
+                  <Button variant="contained" endIcon={<ArrowRight size={16} />} onClick={startNailDesign}>
+                    시작하기
+                  </Button>
                 </Stack>
               </Paper>
             </Grid>
@@ -3132,6 +3160,153 @@ export default function App() {
     );
   }
 
+  function renderNailDesignPage() {
+    const primary = nailResult?.detected?.[0];
+    const bestSeason = nailResult?.season_fit?.[0];
+    return (
+      <Box className="app-shell">
+        <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
+          <Stack spacing={3}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Box>
+                <Typography variant="h4" fontWeight={900}>네일·페디 디자인</Typography>
+                <Typography color="text.secondary">
+                  손이나 발 사진을 올리면 비슷한 네일 디자인을 찾아 주고, 퍼스널컬러 시즌과 얼마나 맞는지 알려줍니다.
+                </Typography>
+              </Box>
+              <Button startIcon={<ArrowLeft size={16} />} onClick={goHome}>홈으로</Button>
+            </Stack>
+
+            {error && <Alert severity="error">{error}</Alert>}
+
+            <Paper elevation={0} sx={{ p: 3, border: '1px solid #e1e7ef' }}>
+              <Stack spacing={2}>
+                <Button variant="contained" component="label" startIcon={<ImagePlus size={18} />} disabled={nailLoading}>
+                  사진 선택
+                  <input
+                    hidden
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void handleNailUpload(file);
+                    }}
+                  />
+                </Button>
+                {nailLoading && <LinearProgress />}
+                {nailPreview && (
+                  <Box
+                    component="img"
+                    src={nailPreview}
+                    alt="업로드한 네일 사진"
+                    sx={{ maxWidth: 320, borderRadius: 2, border: '1px solid #e1e7ef' }}
+                  />
+                )}
+              </Stack>
+            </Paper>
+
+            {nailResult && !nailResult.feature_available && (
+              <Alert severity="info">{nailResult.note}</Alert>
+            )}
+
+            {nailResult?.feature_available && !primary && (
+              <Alert severity="warning">{nailResult.note}</Alert>
+            )}
+
+            {primary && (
+              <>
+                <Paper elevation={0} sx={{ p: 3, border: '1px solid #e1e7ef' }}>
+                  <Stack spacing={2}>
+                    <Typography variant="h6" fontWeight={800}>사진 속 컬러</Typography>
+                    <Stack direction="row" spacing={2} alignItems="center">
+                      <Box sx={{ width: 56, height: 56, borderRadius: 2, bgcolor: primary.color_hex, border: '1px solid #e1e7ef' }} />
+                      <Box>
+                        <Typography fontWeight={700}>{primary.color_hex}</Typography>
+                        <Typography color="text.secondary" variant="body2">
+                          네일 {nailResult.detected.length}개 검출 · 신뢰도 {Math.round(primary.confidence * 100)}%
+                        </Typography>
+                      </Box>
+                    </Stack>
+                    {bestSeason && <Alert severity="success">{nailResult.note}</Alert>}
+                  </Stack>
+                </Paper>
+
+                <Paper elevation={0} sx={{ p: 3, border: '1px solid #e1e7ef' }}>
+                  <Stack spacing={2}>
+                    <Typography variant="h6" fontWeight={800}>비슷한 디자인</Typography>
+                    {nailResult.detected.map((nail) => (
+                      <Stack key={nail.index} spacing={1}>
+                        <Typography variant="body2" color="text.secondary">
+                          검출 #{nail.index + 1} · {nail.color_hex}
+                        </Typography>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          {nail.matches.map((match, i) => (
+                            <Stack key={`${nail.index}-${match.design_id}-${i}`} alignItems="center" spacing={0.5}>
+                              {match.thumbnail ? (
+                                <Box
+                                  component="img"
+                                  src={match.thumbnail}
+                                  alt={match.design_id}
+                                  sx={{ width: 72, height: 72, borderRadius: 1.5, border: '1px solid #e1e7ef' }}
+                                />
+                              ) : (
+                                <Box sx={{ width: 72, height: 72, borderRadius: 1.5, bgcolor: match.color_hex, border: '1px solid #e1e7ef' }} />
+                              )}
+                              <Typography variant="caption" color="text.secondary">
+                                {match.region === 'foot' ? '발' : '손'} · ΔE {match.delta_e}
+                              </Typography>
+                            </Stack>
+                          ))}
+                        </Stack>
+                      </Stack>
+                    ))}
+                  </Stack>
+                </Paper>
+
+                <Paper elevation={0} sx={{ p: 3, border: '1px solid #e1e7ef' }}>
+                  <Stack spacing={2}>
+                    <Typography variant="h6" fontWeight={800}>퍼스널컬러 시즌 적합도</Typography>
+                    <Stack spacing={1}>
+                      {nailResult.season_fit.map((fit) => (
+                        <Stack key={fit.label} direction="row" spacing={2} alignItems="center">
+                          <Box sx={{ width: 24, height: 24, borderRadius: '50%', bgcolor: fit.shade_hex, border: '1px solid #e1e7ef' }} />
+                          <Typography sx={{ minWidth: 130 }} fontWeight={fit.label === bestSeason?.label ? 800 : 400}>
+                            {fit.label}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ minWidth: 90 }}>
+                            {fit.shade_name}
+                          </Typography>
+                          <Box sx={{ flex: 1 }}>
+                            <LinearProgress variant="determinate" value={fit.score} />
+                          </Box>
+                          <Typography variant="body2" sx={{ minWidth: 48, textAlign: 'right' }}>
+                            {fit.score}점
+                          </Typography>
+                        </Stack>
+                      ))}
+                    </Stack>
+                    {nailResult.recommended_shades.length > 0 && (
+                      <Box>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                          이 시즌에 어울리는 네일 컬러
+                        </Typography>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          {nailResult.recommended_shades.map((shade) => (
+                            <Chip key={shade} label={shade} size="small" />
+                          ))}
+                        </Stack>
+                      </Box>
+                    )}
+                  </Stack>
+                </Paper>
+              </>
+            )}
+          </Stack>
+        </Container>
+      </Box>
+    );
+  }
+
   const pages = [
     renderSurveyPage,
     renderFacePage,
@@ -3147,6 +3322,10 @@ export default function App() {
 
   if (appModule === 'personal-color') {
     return renderPersonalColorPage();
+  }
+
+  if (appModule === 'nail-design') {
+    return renderNailDesignPage();
   }
 
   return (
