@@ -19,6 +19,7 @@ from app.services.ingredient_aliases import detect_ingredients_ko
 from app.services.kr_ingredient_notice import raw_ingredients_for_url
 from app.services.pediatric_care import (
     PEDIATRIC_GUIDANCE,
+    PEDIATRIC_GUIDANCE_INGREDIENTS,
     PEDIATRIC_GUIDANCE_NO_PRODUCTS,
     PEDIATRIC_SAFE_INGREDIENTS,
     is_pediatric,
@@ -913,6 +914,28 @@ _AHA_BHA = {"Salicylic Acid", "Glycolic Acid", "Lactic Acid"}
 _PER_COLUMN = 4   # 컬럼당 추천 상품 수
 
 
+def _line_dedup_key(product) -> str:
+    """제품 '라인' 단위 dedup 키. 용량/기획/프로모 토큰을 걷어낸 '브랜드+라인명'으로 정규화한다.
+
+    카탈로그엔 같은 제품의 용량 변형이 별도 행으로 들어있어(예: 라운드랩 독도 클렌저
+    120/150/200/250ml), 이름을 그대로 키로 쓰면 한 컬럼이 같은 제품 용량변형으로 다 찬다
+    (사용자 지적 Bug A). build_search_query 로 사이즈/기획어를 떼어 라인 단위로 접는다.
+    build_search_query 는 platform_resolver 에 있고 그쪽이 recommender 를 import 하므로(순환)
+    지연 import 한다.
+    """
+    import re as _re
+
+    from app.services.platform_resolver import build_search_query
+
+    brand = product.brand.name if getattr(product, "brand", None) else ""
+    key = build_search_query(brand, product.name or "").strip().lower()
+    # 용량/수량 토큰을 위치 무관 제거: 같은 라인의 120/150/200/250ml 변형을 한 키로 접는다.
+    # build_search_query 는 '꼬리'의 사이즈만 떼서 250ml 가 코어에 남으면 변형이 안 접혔다.
+    key = _re.sub(r"\d+\s*(ml|ml\+|g|매|개|입|팩|세트|호|ea)\b", " ", key)
+    key = _re.sub(r"\s+", " ", key).strip()
+    return key or (product.name or "").strip().lower()
+
+
 def _generic_quality(product, survey: SurveyInput, platform_score: float, soothing: bool) -> float:
     """비-세럼 단계용 품질 점수: 평점 + 피부타입 적합 + 플랫폼 (+민감 진정 가점)."""
     score = rating_score_for(product)
@@ -961,10 +984,10 @@ def build_product_columns(scored, survey: SurveyInput):
         else:
             soothing = key in ("cleanser", "toner")
             cand = sorted(pools.get(key, []), key=lambda x: (_generic_quality(x[0], survey, x[3], soothing), x[1]), reverse=True)
-        # 이름 기준 중복 제거(카탈로그 소스별 중복행) 후 top-N.
+        # 라인 기준 중복 제거(카탈로그 소스별 중복행·용량변형) 후 top-N.
         top, seen = [], set()
         for item in cand:
-            nm = (item[0].name or "").strip().lower()
+            nm = _line_dedup_key(item[0])
             if nm in seen:
                 continue
             seen.add(nm)
@@ -1013,7 +1036,7 @@ def product_market(product) -> str:
     url = (getattr(product, "product_url", "") or "").lower()
     if "oliveyoung.co.kr" in url or "naver" in url or "lotteon" in url:
         return "kr"
-    if "matsukiyo" in url or "amazon.co.jp" in url:
+    if "matsukiyo" in url or "amazon.co.jp" in url or "rakuten.co.jp" in url:
         return "jp"
     if "global.oliveyoung" in url:
         return "global"
@@ -1077,7 +1100,7 @@ def build_body_columns(scored, survey: SurveyInput, want: set[str], strict: bool
 
         top, seen = [], set()
         for item in cand:
-            name_key = (item[0].name or "").strip().lower()
+            name_key = _line_dedup_key(item[0])
             if name_key in seen:
                 continue
             seen.add(name_key)
@@ -1380,7 +1403,7 @@ def _recommend_pediatric(
         pool.sort(key=lambda x: (len(x[1]), rating_score_for(x[0])), reverse=True)
         top, seen = [], set()
         for product, names in pool:
-            nk = (product.name or "").strip().lower()
+            nk = _line_dedup_key(product)
             if nk in seen:
                 continue
             seen.add(nk)
@@ -1394,9 +1417,16 @@ def _recommend_pediatric(
     total = sum(len(t) for _k, _l, _r, t in columns)
     explanation = PEDIATRIC_GUIDANCE if total else PEDIATRIC_GUIDANCE_NO_PRODUCTS
 
+    # 성분 우선 안내: 성인 제품을 억지로 추천하는 대신 '이런 성분을 찾으세요'를 낸다.
+    # 상품이 0건이면(카탈로그가 얇은 리전·아토피 등) 이 안내가 유일한 실행 가이드가 된다.
+    guidance_ingredients = [
+        IngredientOut(id=-(i + 1), name=name, benefit=benefit, targets=["barrier", "moisture"])
+        for i, (name, benefit) in enumerate(PEDIATRIC_GUIDANCE_INGREDIENTS)
+    ]
+
     history = RecommendationHistory(
         user_id=user_id, analysis_id=analysis_id,
-        recommended_ingredients=json.dumps([]),
+        recommended_ingredients=json.dumps([name for name, _ in PEDIATRIC_GUIDANCE_INGREDIENTS]),
         recommended_products=json.dumps([p.name for _k, _l, _r, t in columns for p, *_ in t]),
     )
     db.add(history)
@@ -1416,7 +1446,7 @@ def _recommend_pediatric(
         for key, label, reason, top in columns
     ]
     return RecommendationResponse(
-        history_id=history.id, ingredients=[], products=[],
+        history_id=history.id, ingredients=guidance_ingredients, products=[],
         explanation=explanation, product_columns=product_columns,
     )
 

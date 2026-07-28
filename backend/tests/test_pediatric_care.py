@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from app.services.pediatric_care import (
     PEDIATRIC_AVOID_INGREDIENTS,
+    PEDIATRIC_GUIDANCE_INGREDIENTS,
     PEDIATRIC_SAFE_INGREDIENTS,
     has_fragrance_signal,
     is_pediatric,
@@ -56,6 +57,46 @@ def test_fragrance_blocked_unless_fragrance_free() -> None:
     assert not is_pediatric_safe({"Glycerin", "Shea Butter"}, "존슨즈 아로마밀크 피치")
     # 무향 명시는 통과.
     assert is_pediatric_safe({"Glycerin", "Ceramide"}, "저자극 무향 바디로션")
+
+
+def test_japanese_fragrance_names_blocked() -> None:
+    # JP 상품은 전성분 원문이 없어 이름 검사가 유일한 향료 게이트다. 일본어 향 표현이
+    # 있으면 성분이 안전해도 소아에 올리지 않는다(실측 누출: 마츠키요 弱酸性ボディミルク フローラル).
+    assert has_fragrance_signal("弱酸性ボディミルク フローラル ４００ｍｌ")
+    assert has_fragrance_signal("弱酸性ボディミルク ローズ ４００ｍｌ")
+    assert has_fragrance_signal("マシュマロケア ボディミルク シルキーフラワー ２００ｍＬ")
+    safe = {"Glycerin", "Hyaluronic Acid", "Petrolatum"}
+    assert not is_pediatric_safe(safe, "弱酸性ボディミルク フローラル ４００ｍｌ")
+    assert not is_pediatric_safe(safe, "弱酸性ボディミルク ローズ ４００ｍｌ")
+    # 무향(無香料) 표기는 계속 통과해야 한다(위 fragrance-free 선통과).
+    assert not has_fragrance_signal("弱酸性ボディミルク 無香料 ４００ｍｌ")
+    assert is_pediatric_safe(safe, "弱酸性ボディミルク 無香料 ４００ｍｌ")
+    # 한자·기타 향 표현도 잡아야 한다(카타카나만 잡으면 새어나감 — 실측 누출).
+    assert has_fragrance_signal("BACKYARD FAMILY Saharaの薔薇 CE ローション")
+    assert has_fragrance_signal("マッサージオイル 金木犀 ボディオイル")
+    assert not is_pediatric_safe(safe, "Saharaの薔薇 ボディセラム")
+
+
+def test_guidance_ingredients_are_all_safe() -> None:
+    # 성분 우선 안내: '이런 성분을 찾으세요'로 내보내는 성분은 반드시 소아안전 화이트리스트
+    # 안에 있어야 하고, 배제 성분과 겹치면 안 된다(아기에게 배제 성분을 안내하면 안 됨).
+    names = {name for name, _ in PEDIATRIC_GUIDANCE_INGREDIENTS}
+    assert names, "안내 성분이 비어 있으면 안 된다"
+    assert names <= PEDIATRIC_SAFE_INGREDIENTS
+    assert names.isdisjoint(PEDIATRIC_AVOID_INGREDIENTS)
+    # 각 항목은 (성분명, 설명) 쌍이고 설명이 비어 있으면 안 된다.
+    assert all(name and benefit for name, benefit in PEDIATRIC_GUIDANCE_INGREDIENTS)
+
+
+def test_recommend_pediatric_surfaces_ingredient_guidance() -> None:
+    # 상품이 0건이어도 성분 안내는 항상 채워져야 한다(성인 제품 폴백 금지의 실행가능한 대안).
+    import inspect
+
+    from app.services import recommender
+
+    src = inspect.getsource(recommender._recommend_pediatric)
+    assert "ingredients=guidance_ingredients" in src
+    assert "ingredients=[]" not in src
 
 
 def test_recommend_derma_care_routes_pediatric() -> None:

@@ -113,6 +113,9 @@ def test_product_market_from_url() -> None:
     assert m("https://search.shopping.naver.com/x") == "kr"
     assert m("https://www.matsukiyococokara-online.com/x") == "jp"
     assert m("https://www.amazon.co.jp/dp/B00") == "jp"
+    # 라쿠텐 카탈로그 상품(crawl_rakuten_jp_body): product_url 자체가 라쿠텐 → jp 시장.
+    # 이게 없으면 적재한 rakuten 상품이 REGION_MARKETS['jp']에 안 잡혀 JP 추천에서 통째 탈락한다.
+    assert m("https://item.rakuten.co.jp/hc7/4987036485017/") == "jp"
     assert m("https://global.oliveyoung.com/product/detail?prdtNo=GA1") == "global"
     assert m("https://www.amazon.com/dp/B00") == "us"
     assert m("") == ""

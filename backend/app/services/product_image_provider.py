@@ -149,10 +149,17 @@ def oliveyoung_catalog_image(brand: str, name: str) -> str:
 
 
 # 지역별 이미지 소스 우선순위. 앞에서부터 시도해 살아있는 첫 이미지를 채택한다.
+# 올리브영 이미지는 미리보기에 쓰지 않는다(사용자 지시 2026-07-27): CDN 죽은 URL·403이 잦고
+# 상품카드 미리보기 신뢰도가 낮아, KR=네이버·JP=라쿠텐 이미지로만 채운다(없으면 placeholder).
 _PROVIDER_CASCADE: dict[str, list[Callable[[str, str], str]]] = {
-    "kr": [naver_image, oliveyoung_catalog_image],
-    "jp": [rakuten_image, oliveyoung_catalog_image, naver_image],
+    "kr": [naver_image],
+    "jp": [rakuten_image, naver_image],
 }
+
+
+def _is_oliveyoung_image(url: str) -> bool:
+    """올리브영 이미지 CDN URL인지(미리보기에서 배제 대상)."""
+    return "oliveyoung" in (url or "").lower()
 
 _IMAGE_MAGIC = (b"\xff\xd8", b"\x89PNG", b"GIF8", b"RIFF")
 
@@ -196,7 +203,8 @@ def _resolve_image(brand: str, name: str, current: str, providers: list[Callable
 
     반환값: 새로 채택한 URL, 유지면 None, 전부 실패면 "" (placeholder로 비움).
     """
-    if current and _is_live_image(current):
+    # 올리브영 이미지는 살아있어도 유지하지 않고 다른 소스로 교체한다(미리보기 배제 지시).
+    if current and not _is_oliveyoung_image(current) and _is_live_image(current):
         return None
     for provider in providers:
         try:

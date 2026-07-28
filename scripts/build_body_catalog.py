@@ -50,13 +50,16 @@ FIELDNAMES = [
 ]
 
 # 소스 우선순위(중복 시 앞선 소스를 남긴다). 공식 카테고리 > 검색 크롤 > 키워드.
+# rakuten_jp 는 실상품 URL·이미지·리뷰를 갖춘 직링크 소스라 amazon_jp(키워드 검색링크)보다
+# 앞에 둔다. JP 집중케어 물량을 메우려고 crawl_rakuten_jp_body.py 로 모은 것.
 SOURCE_PRIORITY = {
     "oliveyoung_global": 0,
     "oliveyoung_kr": 1,
-    "matsukiyo": 2,
-    "amazon_jp": 3,
-    "amazon_us": 4,
-    "amazon_hf": 5,
+    "rakuten_jp": 2,
+    "matsukiyo": 3,
+    "amazon_jp": 4,
+    "amazon_us": 5,
+    "amazon_hf": 6,
 }
 
 # 올리브영 글로벌 공식 서브카테고리 → 기본 카테고리. 제형은 이름으로 더 좁힌다.
@@ -241,6 +244,38 @@ def collect_amazon() -> list[dict]:
     return out
 
 
+def collect_rakuten_jp() -> list[dict]:
+    """라쿠텐 JP 바디 크롤 결과(crawl_rakuten_jp_body.py 산출물).
+
+    다른 소스와 달리 카테고리가 크롤 시점에 classify_by_keyword 로 이미 판정돼 있고,
+    오프타깃(슬리밍·가슴·민감부위·업무용)도 그 단계에서 걸러졌다. 여기서는 그대로 읽는다."""
+    out = []
+    for row in read_csv(MANIFEST_DIR / "rakuten_jp_body.csv"):
+        name = clean(row.get("name"))
+        category = clean(row.get("category"))
+        if not name or not category:
+            continue
+        out.append({
+            "category": category,
+            "group": group_of(category),
+            "source": "rakuten_jp",
+            "region": "jp",
+            "match": "keyword",
+            "brand": clean(row.get("brand")),
+            "name": name,
+            "name_ko": "",
+            "name_ja": clean(row.get("name_ja")) or name,
+            "price": to_int(row.get("price")),
+            "currency": clean(row.get("currency")) or "JPY",
+            "rating": to_float(row.get("rating")),
+            "review_count": to_int(row.get("review_count")),
+            "product_url": clean(row.get("product_url")),
+            "image_url": clean(row.get("image_url")),
+            "source_category": clean(row.get("keyword")),
+        })
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", action="store_true", help="카테고리별 표본까지 출력")
@@ -255,6 +290,7 @@ def main() -> int:
         # 마츠키요 크롤은 배제(사용자 결정 2026-07-24). 크롤 경로가 스킨케어 트리라 바디
         # 근거가 약하고, 개별 상품 페이지 대신 검색 링크만 나와 구매 신뢰도가 낮았다.
         # ("마츠키요", collect_matsukiyo),
+        ("라쿠텐 JP", collect_rakuten_jp),
         ("아마존", collect_amazon),
     ]:
         collected = fn()

@@ -57,21 +57,47 @@ class RakutenClient:
                 continue
         return []
 
-    def search_many(self, keywords: list[str], hits_per_keyword: int = 4) -> list[RakutenProduct]:
+    def search_many(
+        self, keywords: list[str], hits_per_keyword: int = 4, throttle: float = 0.0
+    ) -> list[RakutenProduct]:
+        """여러 키워드를 검색해 상품을 모은다(URL 기준 dedup).
+
+        throttle>0 이면 요청 사이에 그만큼 sleep 한다. 라쿠텐 openapi 는 ~1req/s 로 429 를
+        주므로(연속 발사하면 뒤쪽 키워드가 통째로 굶어 아이템매칭 컬럼이 빈다), 컬럼을 확정적으로
+        채워야 하는 호출부는 throttle≈1.1 로 요청을 벌린다. 그래도 429 로 0건이 나온 키워드는
+        간격을 두고 한 번 더 재시도해 컬럼 굶김을 없앤다.
+        """
+        import time
+
         seen: set[str] = set()
         products: list[RakutenProduct] = []
-        for keyword in keywords:
+        empties: list[str] = []
+
+        def _collect(items: list[RakutenProduct]) -> None:
+            for item in items:
+                if item.product_url in seen:
+                    continue
+                seen.add(item.product_url)
+                products.append(item)
+
+        for index, keyword in enumerate(keywords):
+            if throttle and index:
+                time.sleep(throttle)
             items = self.search(keyword, hits=hits_per_keyword)
             if not items:
                 # 접두 한정어(예: 톤 토큰 'イエベ')로 과도하게 좁혀 0건이면 첫 토큰을 떼고 재시도.
                 parts = keyword.split()
                 if len(parts) >= 3:
                     items = self.search(" ".join(parts[1:]), hits=hits_per_keyword)
-            for item in items:
-                if item.product_url in seen:
-                    continue
-                seen.add(item.product_url)
-                products.append(item)
+            if not items:
+                empties.append(keyword)
+            _collect(items)
+
+        # 429 등으로 0건이던 키워드는 간격을 두고 한 번 더(그동안 rate-limit 이 회복됨).
+        for keyword in empties:
+            if throttle:
+                time.sleep(throttle)
+            _collect(self.search(keyword, hits=hits_per_keyword))
         return products
 
     def _request_candidates(self, keyword: str, hits: int) -> list[tuple[str, dict[str, str | int]]]:

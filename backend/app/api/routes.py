@@ -137,6 +137,56 @@ _ITEM_CATEGORIES_FEMALE = ("lip", "blush", "eye", "base", "nail")
 _ITEM_CATEGORIES_MALE = ("base", "brow", "concealer", "lipbalm")
 
 
+def _interleave_by_category(keywords: list[str], gender: str, per_category: int | None = None) -> list[str]:
+    """검색 키워드를 카테고리 라운드로빈으로 재정렬(+선택적으로 카테고리당 개수 제한)한다.
+
+    라쿠텐/네이버 search_many 는 스로틀 없이 키워드를 순차 호출하는데, 라쿠텐은 ~1req/s로
+    429를 주므로 뒤쪽 카테고리(입력 순서상 eye/base/nail)가 통째로 굶어 컬럼이 빈다
+    (사용자 관측: JP eye 간헐 빔). 각 카테고리의 '첫 키워드'를 앞쪽에 모아 rate-limit 전에
+    모든 컬럼이 검색되게 한다.
+
+    per_category=1 이면 카테고리당 1개만 남겨 총 요청을 카테고리 수(≤5)로 묶는다 — 라쿠텐
+    rate-limit 안쪽이라 모든 컬럼이 확정적으로 채워진다(색상 다양성은 약간 줄어드는 트레이드오프,
+    사용자 결정 2026-07-27). DB 색상매칭은 전체 키워드를 그대로 쓰므로 영향 없다.
+    """
+    from collections import defaultdict
+
+    buckets: dict[str, list[str]] = defaultdict(list)
+    order: list[str] = []
+    for kw in keywords:
+        cat = _item_match_category(SimpleNamespace(keyword=kw, name=""), gender) or "_"
+        if cat not in buckets:
+            order.append(cat)
+        buckets[cat].append(kw)
+    rounds = max((len(b) for b in buckets.values()), default=0)
+    if per_category is not None:
+        rounds = min(rounds, per_category)
+    out: list[str] = []
+    for r in range(rounds):
+        for cat in order:
+            if r < len(buckets[cat]):
+                out.append(buckets[cat][r])
+    return out
+
+
+def _pick_diverse(bucket: list, k: int) -> list:
+    """컬럼 하나에서 k개를 뽑되 라쿠텐 라이브가 상위를 독식하지 않게 한다(사용자 지시 2026-07-27).
+
+    비-라쿠텐(직링크 DB/네이버/올리브영/아마존)을 먼저 채우고 라쿠텐으로 남은 칸을 메운다.
+    대안이 없으면 라쿠텐으로 채워 컬럼이 비지 않게 한다(직링크만 정책과 양립). bucket은 점수순.
+    """
+    non_rk = [x for x in bucket if (getattr(x, "source", "") or "") != "rakuten"]
+    rk = [x for x in bucket if (getattr(x, "source", "") or "") == "rakuten"]
+    picked: list = []
+    i = j = 0
+    while len(picked) < k and (i < len(non_rk) or j < len(rk)):
+        if i < len(non_rk):
+            picked.append(non_rk[i]); i += 1
+        if len(picked) < k and j < len(rk):
+            picked.append(rk[j]); j += 1
+    return picked
+
+
 def _balance_item_categories(items: list, limit: int = 10, per_category: int = 2, gender: str = "female") -> list:
     """점수순 상품을 성별 카테고리 세트에 고르게 배분한다.
 
@@ -156,7 +206,7 @@ def _balance_item_categories(items: list, limit: int = 10, per_category: int = 2
     selected: list = []
     seen: set[int] = set()
     for category in categories:
-        for item in buckets[category][:per_category]:
+        for item in _pick_diverse(buckets[category], per_category):
             selected.append(item)
             seen.add(id(item))
     # 남은 칸 채우기. 여성은 기존대로 점수순 아무 상품이나(프론트가 미분류를 렌더에서 거른다).
@@ -480,6 +530,22 @@ def recommend(
             _backfill_native_body_link(product)
     # 평면 상품만 선택 플랫폼으로 필터(루틴은 전 단계 유지 — 버튼은 프론트에서 필터).
     response.products = _filter_by_requested_platform(response.products, platform)
+    # 네이버 보강이 서로 다른 상품의 표시명을 같은 국내몰 매칭명으로 재작성하면(라운드랩 독도
+    # 클렌저 용량변형들 → 동일 표시명) 컬럼에 시각적 중복이 남는다(Bug A). 최종 표시명 기준으로
+    # 컬럼·평면 목록을 한 번 더 dedup 한다(선택 시점 라인 dedup 뒤에 생긴 충돌 정리).
+    def _dedup_by_display_name(items: list) -> list:
+        seen: set[str] = set()
+        out: list = []
+        for p in items:
+            key = (getattr(p, "name", "") or "").strip().lower()
+            if key and key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
+        return out
+    for col in response.product_columns:
+        col.products = _dedup_by_display_name(col.products)
+    response.products = _dedup_by_display_name(response.products)
     # 카드 이미지 보강(KR=네이버, JP=라쿠텐 검색 이미지, 이미 있으면 유지).
     fill_missing_images(enrichable, region)
     return response
@@ -525,7 +591,13 @@ def personal_color_item_match(
     client = RakutenClient()
     wants_rakuten = region == "jp" and platform in {"all", "rakuten"}
     if wants_rakuten and client.configured:
-        rakuten_products = client.search_many(keywords, hits_per_keyword=payload.hits_per_keyword)
+        # 카테고리당 1키워드(≤5요청)로 라쿠텐 rate-limit 안에서 모든 컬럼을 확정적으로 채운다.
+        # 단일 키워드라 후보가 얇아지지 않게 키워드당 조회 수를 넉넉히(≥6) 준다.
+        rakuten_products = client.search_many(
+            _interleave_by_category(keywords, gender, per_category=1),
+            hits_per_keyword=max(payload.hits_per_keyword, 6),
+            throttle=1.1,  # 라쿠텐 ~1req/s: 요청을 벌려 뒤쪽 컬럼(nail 등)이 429로 굶지 않게.
+        )
         products.extend(
             RakutenProductOut(
                 id=item.id,
@@ -560,7 +632,10 @@ def personal_color_item_match(
     naver_client = NaverClient()
     wants_naver = region == "kr" and platform in {"all", "naver"}
     if wants_naver and naver_client.configured:
-        naver_products = naver_client.search_many(keywords, hits_per_keyword=payload.hits_per_keyword)
+        naver_products = naver_client.search_many(
+            _interleave_by_category(keywords, gender, per_category=1),
+            hits_per_keyword=max(payload.hits_per_keyword, 6),
+        )
         products.extend(
             RakutenProductOut(
                 id=f"naver-{item.id}",
@@ -607,34 +682,40 @@ def personal_color_item_match(
         key=lambda item: (item.score or 0, item.review_count or 0, item.review_average or 0),
         reverse=True,
     )
-    # 립/블러셔/아이/베이스 4개 컬럼에 고르게 배분한다. 이렇게 하면 '모든 플랫폼'에서도
-    # 베이스/블러셔 컬럼이 비지 않고, 각 컬럼은 카테고리 내 점수순으로 채워진다.
+
+    # 재정렬(2026-07-27, 사용자 지시): 링크를 '먼저' 확정한 뒤 컬럼을 배분한다.
+    # 예전엔 balance(컬럼배분)가 링크를 모른 채 상위 점수로 컬럼을 정했고, 그 뒤 resolve/
+    # seed-filter가 살 수 없는(빈링크) 카드를 드롭해 컬럼이 비었다(JP eye/nail, KR lip).
+    # 이제 후보 전체에 resolve(전부 로컬 — 카탈로그 조회·URL조립, 네트워크 없음)로 링크를 부여하고
+    # '살 수 있는 곳이 없는' 카드를 먼저 걸러낸 뒤, 링크 있는 상품으로 컬럼을 채운다.
+    for product in ranked:
+        resolve_product_platforms(product, region)
+    ranked = [p for p in ranked if (getattr(p, "platform_links", None) or {})]
+
+    # 컬럼 배분: 각 컬럼에 per_category개, 라쿠텐 라이브가 상위를 독식하지 않도록 비-라쿠텐
+    # (직링크 DB/네이버/올리브영/아마존)을 먼저 채우고 라쿠텐으로 남은 칸을 메운다(_pick_diverse).
     products = _balance_item_categories(ranked, limit=10, per_category=2, gender=gender)
 
-    # KR: 국내몰 라이브 검색은 한글로 이뤄지므로, 입점 검증 '전에' 네이버 한글 데이터로 보강한다.
-    # 영문 DB 상품명('TIRTIR Mask Fit Red Cushion')은 국내몰 검색 0건이지만, 한글 정체성
-    # ('티르티르 마스크 핏 레드 쿠션')이면 매칭돼 올리브영 goodsNo 직링크가 붙는다(사용자 지적).
+    # 이하 네트워크 검증/보강은 배분된 top-N 에만 건다(라쿠텐 429 등 레이트리밋 보호).
+    # KR: 네이버 한글 데이터로 보강 후 링크를 다시 확정한다(영문 DB명 → 한글 정체성 → 올영 goodsNo 직링크).
     if region == "kr":
         enrich_products_with_naver_kr(products)
-
-    # 입점 리졸버: 최종 노출 상품마다 플랫폼 전반(라쿠텐/네이버 매칭 + 마츠키요 인덱스 +
-    # 아마존/올리브영 라인 검색링크)을 채운다. 네트워크 호출은 top N에만 한정한다.
-    for product in products:
-        resolve_product_platforms(product, region)
+        for product in products:
+            resolve_product_platforms(product, region)
     # JP 남성 OY 주입 상품: 라쿠텐 API로 검증해 실제 있으면 직링크 부착(미취급이면 버튼 없음).
-    # 아마존은 검증 API가 없어 붙이지 않는다(올리브영 직링크 기준으로 통일 — 오탐 방지).
     if region == "jp" and gender == "male":
         _verify_rakuten_for_global(products, client)
-    # 올리브영 입점 검증: JP=글로벌 카탈로그(없을 때만 라이브 prune), KR=국내몰 라이브 검색으로
-    # goodsNo 직링크 교체/미취급 버튼 제거.
+    # 올리브영 입점 검증: JP=글로벌 카탈로그(없을 때만 라이브 prune), KR=국내몰 라이브 검색.
     if region == "jp":
         if not catalog_available():
             prune_global_oliveyoung(products)
     elif region == "kr":
         prune_kr_oliveyoung(products)
 
-    # 이미지가 없는 상품은 지역별 실시간 검색(KR=네이버, JP=라쿠텐)으로 대표 이미지를 보강한다.
+    # 요청 플랫폼 필터 후, prune 으로 링크가 통째로 비게 된 카드는 최종 드롭(살 수 있는 곳 없음).
     products = _filter_by_requested_platform(products, platform)
+    products = [p for p in products if (getattr(p, "platform_links", None) or {})]
+    # 이미지가 없거나 죽은(또는 올리브영) 이미지는 지역별 실시간 검색(KR=네이버, JP=라쿠텐)으로 교체.
     fill_missing_images(products, region)
 
     if products:
