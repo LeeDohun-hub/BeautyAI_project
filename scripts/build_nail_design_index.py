@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -85,13 +87,34 @@ def iter_foot_crops(model, limit: int | None):
                     yield "foot", split, Path(name).stem, i, img, tuple(box)
 
 
-def iter_hand_crops(limit: int | None):
-    """정답 라벨 기반 크롭(검출 불필요)."""
+# Roboflow 파일명은 `<원본>_jpg.rf.<해시>` 꼴이고, 같은 원본을 증강한 사본이 여러 장 들어 있다
+# (v51 은 원본 3,626 → 7,025 로 증강). 증강 쌍둥이가 top-K 를 차지하면 "비슷한 디자인"이
+# 사실상 같은 사진의 변형만 나오므로, 원본 단위로 한 장만 인덱싱한다.
+_RF_BASE_RE = re.compile(r"^(.*?)_(?:jpg|png|jpeg)\.rf\.[0-9a-f]+$", re.I)
+
+
+def source_base(stem: str) -> str:
+    m = _RF_BASE_RE.match(stem)
+    return (m.group(1) if m else stem).lower()
+
+
+def iter_hand_crops(limit: int | None, dedup: bool = True):
+    """정답 라벨 기반 크롭(검출 불필요). dedup=True 면 증강 사본을 원본당 1장으로 줄인다."""
+    seen_bases: set[str] = set()
     for split in ("valid", "train", "test"):
         img_dir, lbl_dir = HAND_ROOT / split / "images", HAND_ROOT / split / "labels"
         if not img_dir.is_dir():
             continue
         files = sorted(img_dir.glob("*.jpg")) + sorted(img_dir.glob("*.png"))
+        if dedup:
+            unique = []
+            for p in files:
+                base = source_base(p.stem)
+                if base in seen_bases:
+                    continue
+                seen_bases.add(base)
+                unique.append(p)
+            files = unique
         if limit is not None:
             files = files[:limit]
         for path in files:
@@ -108,10 +131,14 @@ def iter_hand_crops(limit: int | None):
 
 # --------------------------------------------------------------------------- 빌드
 
-def build(limit_foot: int | None, limit_hand: int | None, batch: int) -> None:
+def build(limit_foot: int | None, limit_hand: int | None, batch: int, dedup_hand: bool = True) -> None:
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
     thumbs = INDEX_DIR / "thumbs"
-    thumbs.mkdir(exist_ok=True)
+    # 이전 빌드의 썸네일을 지우고 시작한다. 남겨두면 meta.json 이 참조하지 않는 고아 파일이
+    # 쌓여 번들만 커진다(구성이 바뀌면 id 도 바뀐다).
+    if thumbs.exists():
+        shutil.rmtree(thumbs)
+    thumbs.mkdir(parents=True)
 
     embedder = Embedder()
     model = None
@@ -128,7 +155,7 @@ def build(limit_foot: int | None, limit_hand: int | None, batch: int) -> None:
     if model is not None:
         sources.append(iter_foot_crops(model, limit_foot))
     if limit_hand != 0:
-        sources.append(iter_hand_crops(limit_hand))
+        sources.append(iter_hand_crops(limit_hand, dedup=dedup_hand))
 
     def flush():
         if pending:
@@ -176,14 +203,18 @@ def build(limit_foot: int | None, limit_hand: int | None, batch: int) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--limit-foot", type=int, default=None, help="zip 당 이미지 수 제한(0=발 제외)")
-    ap.add_argument("--limit-hand", type=int, default=250, help="split 당 이미지 수 제한(0=손 제외)")
+    ap.add_argument("--limit-hand", type=int, default=None,
+                    help="split 당 이미지 수 제한(0=손 제외). 기본은 제한 없음 — 증강 중복을 "
+                         "원본 단위로 먼저 접으므로 전량을 넣어도 폭증하지 않는다.")
     ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--no-dedup-hand", action="store_true",
+                    help="Roboflow 증강 사본을 원본 단위로 접지 않는다(디버그용)")
     args = ap.parse_args()
 
     if not MODEL_PATH.exists() and args.limit_foot != 0:
         print(f"모델 없음: {MODEL_PATH} — fetch_nail_reference_data.py 를 먼저 실행하세요.", file=sys.stderr)
         return 1
-    build(args.limit_foot, args.limit_hand, args.batch)
+    build(args.limit_foot, args.limit_hand, args.batch, dedup_hand=not args.no_dedup_hand)
     return 0
 
 

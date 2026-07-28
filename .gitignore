@@ -26,6 +26,9 @@ data/models/*.bak-*
 aihub_datasets.txt
 data/
 
+# 리뷰 시트는 썸네일을 base64로 내장해 1.5MB+ 인 생성물이다(review_nail_retrieval.py --make 로 재생성).
+docs/nail_retrieval_review.html
+
 # Office 임시 잠금 파일
 ~$*
 
