@@ -33,6 +33,29 @@ def _size(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
+# ⚠️ 런타임이 읽는 매니페스트. **config 에 없고 서비스 모듈에 하드코딩**돼 있어서, config 기반
+# 수집(collect)만으로는 통째로 빠진다. 실제로 이게 빠진 채 배포돼 컨테이너에서 아마존 카탈로그가
+# 0건이었다(us items: 0 / jp items: 0) — 아마존 버튼이 데이터와 무관하게 나올 수 없었다.
+# 새 매니페스트를 읽는 코드를 추가하면 여기도 같이 채울 것.
+RUNTIME_MANIFESTS = (
+    "amazon_beauty_products.csv",      # amazon_catalog (US 베이스)
+    "amazon_beauty_us.csv",            # amazon_catalog
+    "amazon_beauty_hf.csv",            # amazon_catalog (McAuley HF)
+    "amazon_beauty_jp.csv",            # amazon_catalog (JP)
+    "amazon_beauty_jp_esci.csv",       # amazon_catalog (JP, ESCI 보강)
+    "oliveyoung_kr_ingredients.csv",   # kr_ingredient_notice
+    "oliveyoung_kr_products.csv",      # oliveyoung_kr_search
+    "oliveyoung_global_products.csv",  # oliveyoung_catalog
+    "matsukiyo_products.csv",          # matsukiyo_matcher
+    "rakuten_jp_ingredients.csv",      # rakuten_body_links
+)
+
+
+def collect_manifests() -> list[Path]:
+    base = PROJECT_ROOT / "data" / "manifests"
+    return [(base / name).resolve() for name in RUNTIME_MANIFESTS]
+
+
 def collect_optional() -> list[Path]:
     """없어도 앱이 뜨는 자산 — 네일 디자인 기능은 빠지면 feature_available=False 로 비활성된다.
 
@@ -79,7 +102,7 @@ def collect() -> list[Path]:
 
 def build(out_dir: Path, make_tar: bool, with_nail: bool) -> int:
     data_root = (PROJECT_ROOT / "data").resolve()
-    assets = collect()
+    assets = collect() + collect_manifests()
 
     missing = [p for p in assets if not p.exists()]
     present = [p for p in assets if p.exists()]

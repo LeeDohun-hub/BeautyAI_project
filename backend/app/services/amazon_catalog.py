@@ -207,7 +207,11 @@ class _AmazonItem:
 # - JP: amazon.co.jp 크롤(실 JP ASIN, 일본어 타이틀). '일본어 상품명'으로 매칭, JP 버튼은
 #   amazon.co.jp/dp — US ASIN 재활용의 404 위험을 없앤다(공유 안 되는 ASIN도 실 JP ASIN이라 유효).
 _CRAWL_FILENAMES = ("amazon_beauty_us.csv", "amazon_beauty_hf.csv")
-_JP_CRAWL_FILENAMES = ("amazon_beauty_jp.csv",)
+# ESCI(아마존 공개 Shopping Queries) JP 로케일에서 추린 바디케어 12,358건을 더한다.
+# 기존 amazon_beauty_jp.csv(3,868건)는 한국 화장품 위주라, 라쿠텐·마츠키요에서 온 일본
+# 드럭스토어 바디 상품과 겹치지 않아 JP+아마존 조합에서 보습·집중케어가 0건이었다.
+# 생성: scripts/build_amazon_jp_catalog_from_esci.py
+_JP_CRAWL_FILENAMES = ("amazon_beauty_jp.csv", "amazon_beauty_jp_esci.csv")
 _KNOWN_BRAND_KEYS = frozenset(
     key
     for key in {normalize_key(value) for value in _KO_TO_EN_BRAND.values()} | {"2an"}
