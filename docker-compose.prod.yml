@@ -1,0 +1,65 @@
+# 프로덕션 구성 — 로컬 개발용 docker-compose.yml 과 다른 점:
+#   1) 프론트가 Vite 개발서버가 아니라 nginx 정적 서빙(Dockerfile.prod)
+#   2) 프론트 nginx 가 /api 를 백엔드로 프록시 → API URL 을 번들에 굽지 않는다
+#   3) mysql 컨테이너 없음 — 운영 DB 는 Supabase(DATABASE_URL)
+#   4) data/ 를 통째로 마운트하지 않고 슬림 번들(dist/runtime_data, 137MB)만 읽기전용 마운트
+#
+# 사전 준비:
+#   python scripts/build_runtime_bundle.py     # dist/runtime_data 생성
+#   cp .env.prod.example .env.prod             # 값 채우기
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# 접속: http://localhost:8080  (백엔드는 호스트에 노출하지 않는다 — 프록시로만 접근)
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 이 필요합니다 — .env.prod 를 확인하세요}
+      REDIS_URL: redis://redis:6379/0
+      # 프론트와 같은 오리진(nginx 프록시)으로 들어오므로 CORS 는 사실상 불필요하지만,
+      # 백엔드를 별도 도메인에 직접 노출할 경우를 위해 남겨둔다.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      RAKUTEN_APP_ID: ${RAKUTEN_APP_ID:-}
+      RAKUTEN_ACCESS_KEY: ${RAKUTEN_ACCESS_KEY:-}
+      RAKUTEN_REFERER: ${RAKUTEN_REFERER:-http://localhost:8080/}
+      NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
+      NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      # 컨테이너 안에서 config.project_root(=parents[3])는 '/'라 ./data/... 는 /data/... 가 된다.
+      # 슬림 번들이 그 레이아웃(models/, rag/)을 그대로 갖고 있다. 읽기전용으로 충분하다.
+      - ./dist/runtime_data:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      redis:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        # 빈 값 = 같은 오리진(/api) → nginx 프록시 경유. 백엔드를 별도 도메인에 둘 때만 채운다.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy

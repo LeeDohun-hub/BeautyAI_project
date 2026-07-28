@@ -1,0 +1,25 @@
+# 프로덕션 프론트엔드 — 정적 빌드 후 nginx 로 서빙.
+# 기존 Dockerfile 은 `npm run dev`(Vite 개발서버)라 프로덕션에 쓸 수 없다. 이 파일이 그 대체다.
+
+# --- 빌드 ---
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+
+# 빈 문자열이면 axios baseURL 이 상대경로가 되어 nginx 프록시(/api)를 탄다 → 이미지가 환경 독립적.
+# 프록시를 안 쓰고 백엔드를 다른 도메인에 둘 거면 여기에 절대 URL 을 넘긴다(환경별 이미지가 됨).
+# ⚠️ client.ts 는 `?? 'http://localhost:8000'` 폴백이라, 이 값을 **정의는 해야** 한다.
+#    미정의면 undefined → localhost 폴백이 번들에 구워져 프로덕션에서 깨진다.
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+RUN npm run build
+
+# --- 서빙 ---
+FROM nginx:1.27-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
+    CMD wget -qO- http://127.0.0.1:8080/ >/dev/null || exit 1

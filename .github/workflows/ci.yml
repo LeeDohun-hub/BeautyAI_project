@@ -27,3 +27,16 @@ jobs:
       - run: npm run build
         working-directory: frontend
 
+  # 배포 산출물이 실제로 빌드되는지 검증한다. 여기서 깨지면 배포 시점에야 알게 된다.
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 프로덕션 compose 문법 검증
+        run: docker compose -f docker-compose.prod.yml --env-file .env.prod.example config >/dev/null
+      - name: 프론트 프로덕션 이미지 빌드 (nginx 정적 서빙)
+        run: docker build -f frontend/Dockerfile.prod -t beautyai-frontend:ci frontend
+      - name: 백엔드 이미지 빌드
+        # torch CPU 휠을 받아 오느라 수 분 걸린다. 느리면 push 한정으로 조건을 걸 것.
+        run: docker build -t beautyai-backend:ci backend
+
