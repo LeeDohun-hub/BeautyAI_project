@@ -2,7 +2,7 @@
 #   1) 프론트가 Vite 개발서버가 아니라 nginx 정적 서빙(Dockerfile.prod)
 #   2) 프론트 nginx 가 /api 를 백엔드로 프록시 → API URL 을 번들에 굽지 않는다
 #   3) mysql 컨테이너 없음 — 운영 DB 는 Supabase(DATABASE_URL)
-#   4) data/ 를 통째로 마운트하지 않고 슬림 번들(dist/runtime_data, 137MB)만 읽기전용 마운트
+#   4) data/(18GB) 대신 슬림 번들(dist/runtime_data)을 **이미지에 COPY** — 마운트 없음
 #
 # 사전 준비:
 #   python scripts/build_runtime_bundle.py     # dist/runtime_data 생성
@@ -22,7 +22,11 @@ services:
       retries: 5
 
   backend:
-    build: ./backend
+    build:
+      # 컨텍스트가 저장소 루트다 — 런타임 번들(dist/runtime_data)이 backend/ 밖에 있어서.
+      # 루트 .dockerignore 가 data/(18GB) 등을 잘라내 컨텍스트는 작게 유지된다.
+      context: .
+      dockerfile: backend/Dockerfile.prod
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 이 필요합니다 — .env.prod 를 확인하세요}
@@ -36,10 +40,9 @@ services:
       NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
       NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    volumes:
-      # 컨테이너 안에서 config.project_root(=parents[3])는 '/'라 ./data/... 는 /data/... 가 된다.
-      # 슬림 번들이 그 레이아웃(models/, rag/)을 그대로 갖고 있다. 읽기전용으로 충분하다.
-      - ./dist/runtime_data:/data:ro
+    # 볼륨 마운트 없음 — 런타임 번들은 이미지 안(/data)에 들어 있다(backend/Dockerfile.prod).
+    # 마운트에 의존하면 원격 호스트(EC2 등)에 번들을 따로 올려야 하고, 빠뜨리면 기능이
+    # 에러 없이 조용히 죽는다(실측 2회). 이미지 하나로 끝나게 한다.
     healthcheck:
       # ⚠ /health(생존) 가 아니라 /ready(준비) 를 본다. 워밍(카탈로그·모델 로딩 ≈20초)이
       # 끝나기 전에 healthy 로 뜨면, 프론트가 먼저 뜨고 **첫 사용자가 30초를 기다린다**(실측).

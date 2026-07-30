@@ -1,6 +1,7 @@
 # 배포 가이드 (BeautyAI)
 
-작성 2026-07-28 · 상태: **로컬에서 프로덕션 구성 실증 완료** (클라우드 실배포는 미실행)
+작성 2026-07-28 · 갱신 2026-07-30
+상태: **로컬에서 프로덕션 구성 실증 완료** (E2E 16/16). AWS EC2 배포 절차는 §5 — 실배포는 미실행.
 
 ---
 
@@ -78,18 +79,94 @@ ultralytics 의 `torch` 요구를 PyPI 기본 휠(**CUDA 빌드**)로 해결하�
 `POST /api/analyze-nail-design` → `feature_available=true`, index 6,340, 네일 3개 검출,
 유사 디자인 5건(썸네일 base64 13KB씩), 시즌 적합도 `가을 웜 뮤트 81.6점`.
 
-## 5. 클라우드로 올릴 때 남은 일
+## 5. AWS EC2 배포 (2026-07-30 확정)
 
-1. **레지스트리 푸시** — CI 는 지금 빌드만 한다. GHCR 푸시·태깅은 미구현.
-2. **백엔드 이미지 3.23GB 가 크다.** 대부분 torch CPU + mediapipe다. 줄이려면
-   멀티스테이지로 빌드 아티팩트를 털거나, 추론을 ONNX 로 옮기는 검토가 필요하다.
-3. **메모리** — torch + EfficientNet CPU 추론이라 512MB 티어로는 부족하다. **1GB 이상** 필요.
-4. **슬림 번들 전달 방식** — 이미지에 `COPY` 로 굽거나(이미지가 137MB 더 커짐) 오브젝트
-   스토리지에서 부팅 시 받는다. 현재 compose 는 로컬 디렉터리 마운트라 클라우드에선 그대로 못 쓴다.
-5. ~~네일 기능을 배포에 포함하려면~~ **완료(2026-07-28)** — `ultralytics` 를 requirements 에 넣고
-   네일 자산(검출모델 22.8MB + 임베더 15.6MB + 인덱스 77.5MB)을 번들의 **선택 자산**으로 넣었다.
-   번들 137MB → **252.6MB**. 빼려면 `python scripts/build_runtime_bundle.py --no-nail`
-   (그 경우 `/api/analyze-nail-design` 이 `feature_available=false` 로 응답한다).
+**방식: EC2 단일 인스턴스 + docker compose. 런타임 번들은 이미지에 COPY.**
+
+왜 이 조합인가:
+- 컨테이너가 **계속 떠 있어야** 한다. 기동 시 카탈로그·모델을 데우는 데 40초가 걸리고,
+  그 후 요청은 캐시 덕에 빠르다(추천 14초 → 재요청 9초). 태스크가 자주 뜨고 지는
+  Fargate 류는 매번 4.5GB 이미지 pull + 40초 워밍을 다시 치른다.
+- 번들을 마운트가 아니라 **이미지에 굽는다**. 마운트에 의존하면 원격 호스트에 번들을 따로
+  올려야 하고, 빠뜨리면 **에러 없이 기능만 조용히 죽는다**(실측 2회: 2026-07-28 카탈로그
+  0건, 2026-07-30 ASIN 검증파일 누락 → 아마존 매칭 18.8%→5%).
+
+### 5.1 인스턴스 사양
+
+| 항목 | 값 | 근거 |
+|---|---|---|
+| 타입 | **t3.medium (2 vCPU / 4GB)** | 백엔드 컨테이너 실측 **1.24GB** 상주. 2GB 티어(t3.small)는 OS·Docker 오버헤드까지 더하면 빠듯하다 |
+| 디스크 | 30GB gp3 이상 | 백엔드 이미지 4.54GB + 프론트 74.5MB + 레이어 캐시 |
+| OS | Amazon Linux 2023 또는 Ubuntu 22.04 | docker + compose plugin 설치 |
+| 보안그룹 | 80/443 인바운드 | 백엔드(8000)는 **열지 않는다** — nginx 프록시로만 접근 |
+
+⚠ 로컬에서 개발 스택과 프로덕션을 동시에 띄우면 메모리 경합으로 응답이 3~10배 느려진다
+(실측: 추천 14초 → 125초). 벤치마킹은 한쪽만 띄우고 할 것.
+
+### 5.2 이미지 만들기
+
+번들은 **빌드 전에** 만들어야 한다. 없으면 COPY 가 실패한다.
+
+```bash
+python scripts/build_runtime_bundle.py          # dist/runtime_data (372MB)
+docker compose -f docker-compose.prod.yml --env-file .env.prod build
+```
+
+- 백엔드는 `backend/Dockerfile.prod`(컨텍스트 = 저장소 루트)로 빌드된다.
+  루트 `.dockerignore` 가 허용목록이라 `data/`(18GB)는 컨텍스트에 실리지 않는다.
+- 개발용 `backend/Dockerfile`(컨텍스트 = `backend/`)은 그대로 둔다.
+
+### 5.3 EC2 로 옮기는 두 가지 방법
+
+**(a) 인스턴스에서 직접 빌드** — 레지스트리 불필요, 가장 단순
+```bash
+# EC2 에서
+git clone <repo> && cd BeautyAI_project
+# 모델·카탈로그 원본(data/)이 있어야 번들을 만들 수 있다 → S3 등으로 필요한 것만 전송
+python scripts/build_runtime_bundle.py
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+→ 빌드에 CPU·시간이 들고(t3.medium 에서 수십 분), `data/` 원본을 인스턴스에 올려야 한다.
+
+**(b) 로컬에서 빌드 → ECR 푸시 → EC2 에서 pull** *(권장)*
+```bash
+# 로컬
+aws ecr create-repository --repository-name beautyai-backend
+aws ecr get-login-password --region <리전> | docker login --username AWS --password-stdin <계정>.dkr.ecr.<리전>.amazonaws.com
+docker tag beautyai_prod-backend:latest  <계정>.dkr.ecr.<리전>.amazonaws.com/beautyai-backend:<태그>
+docker push <계정>.dkr.ecr.<리전>.amazonaws.com/beautyai-backend:<태그>
+# 프론트도 동일하게
+```
+EC2 에는 `docker-compose.prod.yml` 의 `build:` 를 `image:` 로 바꾼 파일을 두고 `up -d` 한다.
+→ **번들이 이미 이미지 안에 있으므로 EC2 에 `data/` 를 올릴 필요가 없다.**
+
+### 5.4 기동 확인 (순서대로)
+
+```bash
+curl -f http://<호스트>/health   # {"status":"ok"}   — 프로세스 생존
+curl -f http://<호스트>/ready    # {"status":"ready"} — 워밍 완료(기동 후 ~40초)
+```
+
+- ALB/타깃그룹 헬스체크는 **`/ready`** 를 봐야 한다. `/health` 로 두면 워밍 전에 트래픽이
+  붙어 첫 사용자가 30초를 기다린다(실측).
+- 반대로 **liveness(재시작 판단)에 `/ready` 를 쓰면 안 된다.** 워밍 중 503 을 '죽음'으로 읽고
+  재시작하면, 재시작마다 워밍을 다시 해 영원히 준비되지 않는다.
+- 번들이 제대로 들어갔는지 확인:
+  ```bash
+  docker compose -f docker-compose.prod.yml exec backend python -c \
+    "from app.services import amazon_catalog as ac; print(len(ac._load_items('us')), len(ac._dead_asins()))"
+  # 63801 476  ← 0 이 나오면 번들 누락
+  ```
+
+### 5.5 아직 안 된 것
+
+1. **ECR 푸시 자동화** — CI 는 빌드만 한다. 태깅·푸시는 수동.
+2. **HTTPS** — 현재 nginx 는 8080 평문. ALB + ACM 인증서, 또는 인스턴스에 Caddy/certbot 필요.
+3. **백엔드 이미지 4.54GB** — torch CPU + mediapipe + 번들 372MB. 줄이려면 멀티스테이지나
+   추론 ONNX 이관 검토.
+4. ~~슬림 번들 전달 방식~~ **완료(2026-07-30)** — 이미지에 COPY 로 확정.
+5. ~~네일 기능 포함~~ **완료(2026-07-28)** — `--no-nail` 로 빼면 번들이 작아지고
+   `/api/analyze-nail-design` 이 `feature_available=false` 로 응답한다.
 
 ## 6. 주의
 
