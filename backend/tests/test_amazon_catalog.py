@@ -159,3 +159,118 @@ def test_jp_catalog_rejects_row_with_conflicting_brand_in_title(monkeypatch, tmp
 def test_urls(monkeypatch, tmp_path):
     assert ac.amazon_com_url("B01X").endswith("amazon.com/dp/B01X")
     assert ac.amazon_jp_url("B01X").endswith("amazon.co.jp/dp/B01X")
+
+
+# ── 2026-07-30 버그리포트 회귀 방어 ────────────────────────────────────────────
+# 사용자가 보고한 오매칭 4건의 원인별 게이트를 각각 고정한다.
+
+
+def test_rejects_brand_key_matching_mid_word(monkeypatch, tmp_path):
+    """브랜드 부분문자열 오탐: 'anua' 는 'm-anua-l' 의 부분문자열이다.
+
+    실측 오탐: '아누아 어성초 쿼세티놀 포어 딥 클렌징폼' → 'Manual Facial Cleansing Kabuki Brush'.
+    길이 4 하한만으론 단어 **중간**에 걸리는 걸 못 막아, 접두 규칙으로 바꿨다.
+    """
+    _use_manifest(monkeypatch, tmp_path, rows=[
+        ("B0MANUAL", "Manual", "Manual Facial Cleansing Kabuki Brush Skin Cleanser for Applying Foundation", "4.1", "700", ""),
+    ])
+    assert ac.match_amazon("아누아", "anua heartleaf quercetinol pore deep cleansing foam") is None
+
+
+def test_rejects_different_product_form(monkeypatch, tmp_path):
+    """제형 게이트: 선크림 쿼리가 '수딩 크림'에 매칭되면 안 된다.
+
+    실측 오탐: '아누아 어성초 실키 모이스처 선크림' → 'Anua Heartleaf 70% Soothing Cream'.
+    라인 토큰 2개(cream/moisture)만 겹쳐도 커버리지 0.5 를 넘겨 통과했다.
+    """
+    _use_manifest(monkeypatch, tmp_path, rows=[
+        ("B0ANUASOOTH", "Anua", "Anua Heartleaf 70% Soothing Cream 100ml moisturizing soothing the skin", "4.6", "5000", ""),
+    ])
+    assert ac.match_amazon("아누아", "anua moisture sunscreen silky cream") is None
+    # 같은 제형(수딩크림)으로 물으면 정상 매칭돼야 한다(게이트가 과하게 막지 않는지 확인).
+    m = ac.match_amazon("아누아", "anua heartleaf soothing cream moisturizing")
+    assert m is not None and m.asin == "B0ANUASOOTH"
+
+
+def test_rejects_tool_for_cosmetic_query(monkeypatch, tmp_path):
+    """도구/부속품은 화장품 쿼리의 매칭 대상이 아니다(제형='tool')."""
+    _use_manifest(monkeypatch, tmp_path, rows=[
+        ("B0BRUSH1", "CLIO", "CLIO Makeup Brush Set 5 pcs for Cushion Foundation", "4.3", "800", ""),
+    ])
+    assert ac.match_amazon("CLIO", "clio kill cover founwear cushion") is None
+
+
+def test_requires_rare_identity_token(monkeypatch, tmp_path):
+    """희귀어 게이트: 상품 정체성을 정하는 희귀 토큰이 빠진 후보는 기각한다.
+
+    실측 오탐: 'St.Tropez Gradual Tan **Watermelon** …' → '… **Tinted** …'(다른 SKU).
+    문턱 판정이 '카탈로그에 흔한 어휘일 때만' 켜지도록, 흔한 토큰을 채워 중앙값을 올린다.
+    """
+    common = [
+        (f"B0FILL{i:02d}", "Generic", f"Generic Daily Firming Body Lotion Tan Moisturizer variant {i}", "4.0", "10", "")
+        for i in range(200)
+    ]
+    _use_manifest(monkeypatch, tmp_path, rows=[
+        ("B0STTINT", "St.Tropez", "St.Tropez Gradual Tan Tinted Daily Firming Body Lotion 200ml Tanning Moisturizer", "4.4", "3000", ""),
+        *common,
+    ])
+    # 'watermelon' 은 이 카탈로그에 없으므로 요구 대상이 아니고(df=0), 'gradual' 은 희귀+후보에 존재.
+    # 대신 후보에 없는 희귀어를 요구하는지 확인하려면 카탈로그에 있는 희귀어를 쓴다.
+    assert ac.match_amazon("St.Tropez", "st tropez gradual tan tinted daily firming lotion") is not None
+    # 'tinted' 대신 다른 쉐이드(카탈로그에 존재하는 희귀어)를 요구하면 기각돼야 한다.
+    _use_manifest(monkeypatch, tmp_path, rows=[
+        ("B0STTINT", "St.Tropez", "St.Tropez Gradual Tan Tinted Daily Firming Body Lotion 200ml Tanning Moisturizer", "4.4", "3000", ""),
+        ("B0WMELON", "Generic", "Generic Watermelon Sugar Scrub", "4.0", "5", ""),
+        *common,
+    ])
+    assert ac.match_amazon("St.Tropez", "st tropez gradual tan watermelon daily firming lotion") is None
+
+
+def test_untrusted_source_requires_verified_asin(monkeypatch, tmp_path):
+    """사망률 높은 덤프(HF)는 개별 HTTP 검증된 ASIN만 링크로 쓴다.
+
+    HF 카탈로그는 실측 사망률 48.5% 인데 전체 매칭의 80% 를 차지해, 게이트 없이 쓰면
+    아마존 버튼 10개 중 4개가 404("Sorry! We couldn't find that page")로 열렸다.
+    """
+    _use_manifest(monkeypatch, tmp_path, rows=[])  # 베이스는 비움
+    hf = tmp_path / "amazon_beauty_hf.csv"
+    with hf.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_HEADER)
+        w.writerow(("B0HFDEAD", "holika", "HOLIKA HOLIKA My Fave Mood Eye Palette 01 Daisy Matte Shimmer", "4.3", "900", ""))
+    ac.clear_cache()
+
+    # 미검증 HF 행 → 버튼 없음
+    monkeypatch.setattr(ac, "_verified_alive_asins", lambda: frozenset())
+    assert ac.match_amazon("홀리카홀리카", "holika my fave mood eye palette") is None
+
+    # 검증(ok)된 뒤에는 쓸 수 있다
+    ac.match_amazon.cache_clear()
+    monkeypatch.setattr(ac, "_verified_alive_asins", lambda: frozenset({"B0HFDEAD"}))
+    m = ac.match_amazon("홀리카홀리카", "holika my fave mood eye palette")
+    assert m is not None and m.asin == "B0HFDEAD"
+
+
+def test_product_form_detects_korean_and_japanese():
+    assert ac.product_form("아누아 어성초 실키 모이스처 선크림 50ml") == "sunscreen"
+    assert ac.product_form("ANUA ドクダミ77 スージングトナー 250ml") == "toner"
+    assert ac.product_form("メイクブラシ 5本セット 携帯用") == "tool"
+    assert ac.product_form("ROUND LAB Pine Calming Cica Body Wash 400ml") == "bodywash"
+
+
+def test_rare_token_gate_off_for_cross_language_catalog(monkeypatch, tmp_path):
+    """JP 카탈로그(일본어)에 영문 쿼리를 넣으면 영문 토큰이 전부 '희귀'로 잡힌다.
+
+    그 상태로 게이트를 켜면 완전일치를 요구해 amazon_jp 링크가 전멸한다(실측 5→0).
+    쿼리 어휘가 카탈로그에 흔할 때만 켜지는지 확인한다.
+    """
+    _use_manifest(monkeypatch, tmp_path, rows=[])
+    jp = tmp_path / "amazon_beauty_jp.csv"
+    with jp.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_HEADER)
+        w.writerow(("B0JPANUA2", "anua", "ANUA アヌア ドクダミ 77 スージング トナー 250ml 化粧水", "4.6", "900", ""))
+    ac.clear_cache()
+    # 영문 쿼리의 라인 토큰(heartleaf/soothing/toner)은 이 카탈로그에 df 0~1 이라 희귀 판정이
+    # 무의미하다 → 게이트가 꺼지고, 브랜드+제형(토너)으로 매칭돼야 한다.
+    assert ac._rare_tokens(frozenset({"heartleaf", "soothing", "toner"}), "jp") == frozenset()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Alert,
   Box,
@@ -16,6 +16,7 @@ import {
   MenuItem,
   Paper,
   Select,
+  Slider,
   Stack,
   Step,
   StepLabel,
@@ -34,12 +35,15 @@ import {
   MessageSquare,
   RefreshCcw,
   Send,
+  ScanFace,
   Sparkles,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, getHistory, getMoodThumbnails, matchPersonalColorItems, previewMakeupOnPhoto, recommend } from './api/client';
-import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, BodyConditionScore, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from './types/api';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, getHistory, getMoodThumbnails, matchPersonalColorItems, previewMakeupOnPhoto, recommend, simulateVirtualSurgery } from './api/client';
+import { useAppLang, useT, type AppLang } from './i18n';
+import type { AnalysisMode, DetectedNail, NailShade, AnalyzeNailDesignResponse, AnalyzeSkinResponse, BodyConditionScore, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
 // 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
@@ -161,6 +165,64 @@ function buildRakutenShopLinks(product: RakutenProduct): Record<string, string> 
 // 사이트 파비콘 URL (구글 파비콘 서비스 — 실제 브랜드 로고를 안정적으로 제공)
 const faviconUrl = (domain: string) => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
 // 실제 스캔 가능한 QR 이미지(외부 생성기). data 에 URL/텍스트를 넣으면 QR PNG를 돌려준다.
+// BeautyWEB 주소. 배포마다 다르므로 환경변수로 빼고, 없으면 로컬 개발 기본값을 쓴다.
+const WEB_BASE_URL = (import.meta.env.VITE_WEB_BASE_URL as string | undefined) || 'http://localhost:5174';
+// BeautyWEB 은 언어별로 다른 포트에 뜬다(사용자 운영 방식): 한국어 5174 · 일본어 5175.
+const WEB_URL_BY_LANG: Record<AppLang, string> = {
+  ko: (import.meta.env.VITE_WEB_BASE_URL_KO as string | undefined) || 'http://localhost:5174',
+  ja: (import.meta.env.VITE_WEB_BASE_URL_JA as string | undefined) || 'http://localhost:5175',
+};
+
+/** 카드에 붙은 구매 링크 중 하나를 고른다(선호 순서 → 없으면 남은 것 아무거나 → 원산지 URL).
+ *
+ * 장바구니 딥링크는 상품마다 '살 수 있는 URL' 이 하나는 있어야 의미가 있다.
+ */
+function firstPurchaseUrl(links: Record<string, string> | undefined, fallback?: string | null): string {
+  const preferred = ['naver', 'rakuten', 'oliveyoung', 'amazon_us', 'amazon_jp', 'matsukiyo'];
+  for (const key of preferred) {
+    const url = links?.[key];
+    if (url) return url;
+  }
+  const any = Object.values(links ?? {}).find(Boolean);
+  return any || fallback || '';
+}
+
+/** 선택 상품을 담은 BeautyWEB 장바구니 딥링크.
+ *
+ * QR 이 그냥 '/cart' 만 가리키면 무엇을 담을지 알 수 없어 사실상 링크일 뿐이었다.
+ * 선택한 상품의 이름·브랜드·구매 URL 을 쿼리로 실어 보내, WEB 이 `?add=` 를 읽어
+ * 장바구니에 넣을 수 있게 한다(WEB 쪽 수신 처리는 별도 구현 필요).
+ */
+function webCartDeepLink(products: RakutenProduct[]): string {
+  const url = new URL('/cart', WEB_BASE_URL);
+  const payload = products.slice(0, PC_REPORT_MAX).map((product) => ({
+    n: product.name,
+    b: product.brand,
+    // 네이버/라쿠텐만 보던 탓에 **올리브영·아마존 전용 카드는 구매 URL 없이** 담겼다
+    // (아마존 탭에서 담은 상품이 대표적). 있는 링크는 무엇이든 싣는다.
+    u: firstPurchaseUrl(product.platform_links, product.product_url),
+  }));
+  if (payload.length) {
+    // base64(UTF-8 안전) 로 실어 한글·일본어 상품명이 깨지지 않게 한다.
+    url.searchParams.set('add', btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(payload)))));
+  }
+  return url.toString();
+}
+
+/** 피부 케어 상품(Product)용 장바구니 딥링크. RakutenProduct 와 필드가 달라 따로 둔다. */
+function webCartDeepLinkFromProducts(products: { name: string; brand: string; product_url?: string | null; platform_links?: Record<string, string> }[]): string {
+  const url = new URL('/cart', WEB_BASE_URL);
+  const payload = products.slice(0, SKIN_REPORT_MAX).map((product) => ({
+    n: product.name,
+    b: product.brand,
+    u: firstPurchaseUrl(product.platform_links, product.product_url),
+  }));
+  if (payload.length) {
+    url.searchParams.set('add', btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(payload)))));
+  }
+  return url.toString();
+}
+
 const qrImageUrl = (data: string, size = 160) =>
   `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=0&data=${encodeURIComponent(data)}`;
 
@@ -261,6 +323,8 @@ function NestedChipSelect({
   value: string[];
   onChange: (next: string[]) => void;
 }) {
+  // 표시는 번역하고 값(opt.value)은 한국어 그대로 넘긴다 — 값은 백엔드 매칭 키다.
+  const t = useT();
   const groupSx = { display: 'flex', flexWrap: 'wrap', gap: 1 } as const;
   const itemSx = { border: '1px solid #d6deea !important', borderRadius: '8px !important' } as const;
 
@@ -286,7 +350,7 @@ function NestedChipSelect({
             size="small"
             sx={itemSx}
           >
-            {opt.label}
+            {t(opt.label)}
           </ToggleButton>
         ))}
       </Box>
@@ -295,7 +359,7 @@ function NestedChipSelect({
         .map((parent) => (
           <Box key={parent.value} sx={{ mt: 1, ml: 1.5, pl: 1.5, borderLeft: '2px solid #e3e9f2' }}>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-              {parent.label} · 세부 선택
+              {t(parent.label)} · {t('세부 선택')}
             </Typography>
             <Box sx={groupSx}>
               {parent.children!.map((child) => (
@@ -307,7 +371,7 @@ function NestedChipSelect({
                   size="small"
                   sx={itemSx}
                 >
-                  {child.label}
+                  {t(child.label)}
                 </ToggleButton>
               ))}
             </Box>
@@ -317,7 +381,25 @@ function NestedChipSelect({
   );
 }
 
-const steps = ['설문', '피부 입력', '피부 분석', '추천', '상담'];
+// 상담은 결과지까지 본 뒤 질문하는 흐름이라 마지막에 둔다(사용자 지시 2026-07-29).
+const steps = ['설문', '피부 입력', '피부 분석', '추천', '결과지 출력', '상담'];
+// 결과지에 담을 수 있는 최대 개수. 추천 카테고리가 5개(클렌저·토너·세럼·보습·선크림)라
+// 카테고리당 하나씩 고를 수 있게 5로 둔다.
+const SKIN_REPORT_MAX = 5;
+// 퍼스널컬러 결과지도 같은 상한을 쓴다. 예전엔 4였고, 5번째를 체크하면 안내 없이 첫 선택이
+// 조용히 밀려나(slice(-4)) 사용자가 "5개 담기 실패"로 관측했다. 컬럼도 5개(립·블러셔·아이·
+// 베이스·네일)라 카테고리당 하나씩 고를 수 있는 게 자연스럽다.
+const PC_REPORT_MAX = SKIN_REPORT_MAX;
+
+// 추천 컬럼 헤더가 라벨만 있어 비어 보인다는 지적(2026-07-29). 백엔드가 reason 을 주는 건
+// 세럼(고민 기반)뿐이라, 나머지는 이 기본 설명으로 채운다. reason 이 있으면 그쪽이 우선.
+const SKIN_COLUMN_HINT: Record<string, string> = {
+  cleanser: '순한 세정 · 잔여물 정리',
+  toner: '수분 공급 · 결 정돈',
+  serum: '고민 집중 케어',
+  moisturizer: '장벽 보습 · 진정',
+  sunscreen: '자외선 차단 · 색소 예방',
+};
 
 const scoreLabels: Record<keyof SkinScores, string> = {
   acne: '트러블',
@@ -355,7 +437,7 @@ const raceIdentityOptions = [
   '응답하지 않음',
 ];
 
-type AppModule = 'home' | 'skin-care' | 'personal-color' | 'nail-design';
+type AppModule = 'home' | 'skin-care' | 'personal-color' | 'nail-design' | 'virtual-surgery';
 
 const scoreKeys = Object.keys(scoreLabels) as (keyof SkinScores)[];
 
@@ -573,12 +655,66 @@ const FACE_PRODUCT_MAP: Record<string, FaceProductSet> = {
 
 const DEFAULT_FACE_PRODUCT_SET = FACE_PRODUCT_MAP['warm-light'];
 
-function formatItemMatchPrice(price: number, region: ItemRegion): string {
-  return new Intl.NumberFormat(region === 'kr' ? 'ko-KR' : 'ja-JP', {
-    style: 'currency',
-    currency: region === 'kr' ? 'KRW' : 'JPY',
-    maximumFractionDigits: 0,
-  }).format(price);
+// 카드 배지는 '로즈 핑크 립'처럼 사용자가 고른 색상 키워드일 때만 뜻이 있다. DB 상품은
+// keyword 자리에 내부 카테고리('skincare','base','blush','body.scrub')가 들어와서, 립스틱
+// 카드에 'skincare' 배지가 붙는 식으로 오히려 오해를 준다 — 그런 내부 토큰은 숨긴다.
+// 실제 색상 키워드는 '로즈 핑크 립'/'ローズピンク リップ'처럼 반드시 비-ASCII를 포함한다.
+// 반대로 내부 카테고리는 'skincare','Face','body.scrub','lip' 같은 ASCII 단일 토큰이다.
+const INTERNAL_CATEGORY_BADGE = /^[a-z][a-z._-]*$/i;
+
+/** 화면 언어 토글(KO/JA). 어느 화면에서나 우상단에 고정으로 보인다. */
+function AppLangToggle() {
+  const { lang, setLang } = useAppLang();
+  return (
+    <Stack direction="row" spacing={0.5} className="lang-toggle">
+      {(['ko', 'ja'] as const).map((code) => (
+        <Button
+          key={code}
+          size="small"
+          variant={lang === code ? 'contained' : 'outlined'}
+          onClick={() => setLang(code)}
+          sx={{ minWidth: 44, px: 1 }}
+        >
+          {code === 'ko' ? '한국어' : '日本語'}
+        </Button>
+      ))}
+    </Stack>
+  );
+}
+
+function itemMatchBadgeLabel(keyword?: string | null): string | null {
+  const label = (keyword || '').trim();
+  if (!label) return null;
+  return INTERNAL_CATEGORY_BADGE.test(label) ? null : label;
+}
+
+// KR 검색은 커버리지를 위해 키워드를 **[한국어, 영어] 쌍**으로 보낸다(`로즈 핑크 립`,
+// `rose pink lipstick`). 그런데 배지는 '매칭된 키워드'를 그대로 보여주므로, 영어 쪽이
+// 걸린 카드만 `ivory beige foundation` 처럼 튄다. 쌍을 되짚어 한국어로 되돌린다.
+// 배지 문구 결정: (1) 한/영 쌍으로 되짚어 한국어가 있으면 그것, (2) KR 화면인데 끝내
+// 영어만 남으면 **숨긴다**(색상은 컬럼 헤더가 이미 알려주므로 영어 배지는 튀기만 한다),
+// (3) 그 외에는 상품 키워드 그대로(JP 는 일본어라 정상).
+function itemMatchBadgeFor(
+  product: RakutenProduct,
+  koByEn: Record<string, string>,
+  region: ItemRegion,
+): string | null | undefined {
+  const keyword = (product.keyword || '').trim();
+  const korean = koByEn[keyword.toLowerCase()];
+  if (korean) return korean;
+  if (region === 'kr' && keyword && !/[가-힣]/.test(keyword)) return null;
+  return undefined;
+}
+
+function koreanKeywordByEnglish(keywords: string[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (let i = 0; i + 1 < keywords.length; i += 2) {
+    const ko = keywords[i];
+    const en = keywords[i + 1];
+    // 쌍의 두 번째만 라틴문자일 때가 실제 [한국어, 영어] 쌍이다.
+    if (/[가-힣]/.test(ko) && !/[가-힣]/.test(en)) map[en.trim().toLowerCase()] = ko;
+  }
+  return map;
 }
 
 // 상품 대표 이미지. 죽은 URL(올리브영 403, 라쿠텐/마츠키요 404, 네트워크 오류 등)이면
@@ -602,19 +738,24 @@ function ProductImage({
   return <img src={src} alt={alt} loading="lazy" onError={() => setErrored(true)} />;
 }
 
+// region prop 은 가격 표기(통화 포맷) 전용이었는데 가격을 없애면서 함께 제거했다.
 function RakutenProductCard({
   product,
   selectedPlatform = 'all',
-  region = 'jp',
+  badgeLabel,
   checked = false,
+  disabled = false,
   onCheckedChange,
 }: {
   product: RakutenProduct;
   selectedPlatform?: ItemPlatform;
-  region?: ItemRegion;
+  badgeLabel?: string | null;   // 지정하면 배지를 이 값으로 그린다(한국어 되돌리기용).
   checked?: boolean;
+  disabled?: boolean;           // 결과지 담기 상한 도달 시 새 체크를 막는다.
   onCheckedChange?: (checked: boolean) => void;
 }) {
+  const t = useT();
+  const { lang } = useAppLang();
   const links = buildRakutenShopLinks(product);
   const matchedPlatforms = product.matched_platforms?.length
     ? product.matched_platforms
@@ -623,6 +764,16 @@ function RakutenProductCard({
     .filter((key): key is ItemPlatform => key !== 'all' && key in ITEM_PLATFORM_META && Boolean(links[key]))
     .filter((key) => selectedPlatform === 'all' || key === selectedPlatform)
     .map((key) => ITEM_PLATFORM_META[key]);
+  const rawBadge = itemMatchBadgeLabel(badgeLabel === undefined ? product.keyword : badgeLabel);
+  // 사전에 있으면 사전 문구, 없으면 단어 단위로 옮긴다('쿨 아이보리 남성 쿠션 팩트'처럼
+  // 색상+카테고리가 조합된 키워드는 문장 사전으로 못 덮는다). 한국어 모드에선 원문 그대로.
+  const badgeText = !rawBadge
+    ? null
+    : t(rawBadge) !== rawBadge
+      ? t(rawBadge)
+      : lang === 'ja'
+        ? localizePcPhraseToJa(rawBadge)
+        : rawBadge;
   return (
     <Box className="rakuten-product-card">
       {onCheckedChange && (
@@ -631,28 +782,38 @@ function RakutenProductCard({
           control={
             <Checkbox
               checked={checked}
+              disabled={disabled}
               onChange={(event) => onCheckedChange(event.target.checked)}
               size="small"
             />
           }
-          label="결과지에 담기"
+          label={t('결과지에 담기')}
         />
       )}
       <Box className="rakuten-product-image">
         <ProductImage src={product.image_url} alt={product.name} fallback={<Sparkles size={26} />} />
       </Box>
-      <Chip label={product.keyword} size="small" sx={{ width: 'fit-content' }} />
+      {/* badgeLabel: 지정 없으면(undefined) 상품 키워드를 쓰고, null 이면 배지를 숨긴다.
+          배지는 '검색 키워드'라 원문이 한국어다(KR 검색은 한국어여야 결과가 나오므로 키워드
+          자체는 절대 바꾸지 않는다). 화면에 보이는 문구만 번역한다. */}
+      {badgeText && (
+        <Chip label={badgeText} size="small" sx={{ width: 'fit-content' }} />
+      )}
       <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
       <Typography variant="body2" color="text.secondary" noWrap>{product.brand}</Typography>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1 }}>
-        <Typography fontWeight={900}>{formatItemMatchPrice(product.price, region)}</Typography>
-        {product.review_average ? (
-          <Typography variant="caption" color="text.secondary">
-            ★ {product.review_average}
-            {product.review_count ? ` (${product.review_count.toLocaleString()})` : ''}
-          </Typography>
-        ) : null}
-      </Stack>
+      {/* 가격은 일부러 표시하지 않는다(2026-07-29 실측 근거).
+          카드 하나에 구매 버튼이 여러 개인데 가격은 하나뿐이라, 어느 버튼을 누르든 최소
+          하나는 틀린 값이 된다. 올리브영 버튼이 붙은 카드 5건을 실제 국내몰 판매가와 대조하니
+          **일치 0건, ±10% 이내 0건, 최대 오차 118%**(표시 3,670 → 실제 8,000; 헤라
+          41,400 → 56,700)였다. 차이의 상당 부분은 단순 가격차가 아니라 **구성이 다른 상품**
+          (네이버 '2개 세트' ↔ 올영 '단품')이라 출처를 병기해도 오해가 남는다.
+          가격은 클릭 후 실제 판매처에서 확인하는 것이 정확하다. */}
+      {product.review_average ? (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+          ★ {product.review_average}
+          {product.review_count ? ` (${product.review_count.toLocaleString()})` : ''}
+        </Typography>
+      ) : null}
       <Stack direction="row" gap={0.8} flexWrap="wrap" sx={{ mt: 'auto', pt: 1.2 }}>
         {visiblePlatforms.map((platform) => (
           <Button
@@ -687,7 +848,68 @@ type ItemMatchColumnKey = 'lip' | 'blush' | 'eye' | 'base' | 'nail' | 'brow' | '
 // 문제를 막는다. 이 토큰이 있으면 어느 컬럼에도 넣지 않는다(백엔드 _NON_COSMETIC_RE와 동일).
 const NON_COSMETIC_RE = /(운동화|신발|슬리퍼|샌들|부츠|구두|로퍼|스니커|깔창|양말|방석|베개|매트|의자|소파|침대|러그|쿠션커버|커버지|스카프|장갑|모자|가방|지갑|벨트|시계|이어폰|충전|케이블|거치|ソックス|靴下|スニーカー|サンダル|スリッパ|ブーツ|クッションカバー|座布団|まくら|枕|マット|椅子|ソファ|寝具)/i;
 
+const ITEM_MATCH_COLUMN_KEYS: ItemMatchColumnKey[] = ['lip', 'blush', 'eye', 'base', 'nail', 'brow', 'concealer', 'lipbalm'];
+
+/** 지역·구매 플랫폼 선택 드롭다운.
+ *
+ * 퍼스널컬러 아이템매칭에만 있던 UI라 네일 화면에서는 지역/플랫폼을 바꿀 방법이 없었다
+ * (기본값이 라쿠텐 쪽이라 '이 컬러로 살 수 있는 상품'이 라쿠텐만 나왔다 — 사용자 지적).
+ * 두 화면이 같은 상태(itemRegion/itemPlatform)를 쓰므로 컴포넌트로 뽑아 공유한다.
+ */
+function ItemMarketFilter({
+  region,
+  platform,
+  onRegionChange,
+  onPlatformChange,
+  size = 'small',
+}: {
+  region: ItemRegion;
+  platform: ItemPlatform;
+  onRegionChange: (next: ItemRegion) => void;
+  onPlatformChange: (next: ItemPlatform) => void;
+  size?: 'small' | 'medium';
+}) {
+  const t = useT();
+  return (
+    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+      <FormControl size={size} sx={{ minWidth: 140 }}>
+        <InputLabel>{t('지역')}</InputLabel>
+        <Select
+          label={t('지역')}
+          value={region}
+          onChange={(event) => onRegionChange(event.target.value as ItemRegion)}
+        >
+          {ITEM_REGION_FILTERS.map((item) => (
+            <MenuItem key={item.value} value={item.value}>{t(item.label)}</MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+      <FormControl size={size} sx={{ minWidth: 160 }}>
+        <InputLabel>{t('구매 플랫폼')}</InputLabel>
+        <Select
+          label={t('구매 플랫폼')}
+          value={platform}
+          onChange={(event) => onPlatformChange(event.target.value as ItemPlatform)}
+        >
+          {(region === 'jp' ? JP_ITEM_PLATFORM_FILTERS : KR_ITEM_PLATFORM_FILTERS).map((item) => (
+            <MenuItem key={item.value} value={item.value}>{t(item.label)}</MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+    </Stack>
+  );
+}
+
 function itemMatchColumnFor(product: RakutenProduct, isMale = false): ItemMatchColumnKey | null {
+  // 1순위: 백엔드가 실어 보낸 컬럼 판정. 컬럼 '배분'을 한 주체와 '표시'를 하는 주체가 같은
+  // 판정을 쓰게 하려면 이게 유일한 방법이다 — 예전엔 아래 정규식을 TS로 다시 구현해 두고
+  // 백엔드만 고치는 일이 반복돼, 배분된 카드가 다른 컬럼에 뜨거나 사라졌다.
+  // (아래 폴백은 백엔드가 column 을 안 주는 경우 — 무드 추천 등 구 응답 호환용.)
+  const fromBackend = product.column;
+  if (fromBackend && (ITEM_MATCH_COLUMN_KEYS as string[]).includes(fromBackend)) {
+    return fromBackend as ItemMatchColumnKey;
+  }
+
   // 상품명/키워드로 카테고리를 판별한다. 상품명(name)은 브랜드명 등 노이즈가 섞여
   // 오분류를 유발하므로, DB 상품이 넘겨주는 카테고리 키워드(keyword)를 우선 신뢰한다.
   const primary = (product.keyword || '').toLowerCase();
@@ -698,7 +920,10 @@ function itemMatchColumnFor(product: RakutenProduct, isMale = false): ItemMatchC
   const isEye = (t: string) => /(eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ|아이|섀도|쉐도)/i.test(t);
   const isBase = (t: string) => /(base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스)/i.test(t);
   const isLip = (t: string) => /(lip|lipstick|tint|rouge|gloss|balm|リップ|ルージュ|ティント|립|틴트)/i.test(t);
-  const isNail = (t: string) => /(nail|pedi|polish|lacquer|manicure|ネイル|ペディ|マニキュア|네일|페디|매니큐어|젤네일)/i.test(t);
+  // ⚠ 'nail'/'네일'은 단어 경계로 본다 — 부분문자열이면 'snail'/'스네일'(달팽이 점액)이
+  // 걸려 코스알엑스 스네일 뮤신 같은 스킨케어가 네일 컬럼에 꽂힌다(백엔드 _ITEM_CATEGORY_PATTERNS
+  // 와 동일 규칙 유지). 'polishing'(각질제거)도 제외.
+  const isNail = (t: string) => /(?<![a-z])nail|(?<![a-z])pedi|(?<![a-z])polish(?!ing)|(?<![a-z])lacquer|(?<![a-z])manicure|(?<!ス)ネイル|ペディ|マニキュア|(?<!스)네일|페디|매니큐어/i.test(t);
   // 남성 전용: 브로우/컨실러는 base/eye 보다 먼저 판정(눈썹칼이 eye로, 컨실러가 base로 새지 않게).
   const isBrow = (t: string) => /(brow|eyebrow|アイブロウ|眉|아이브로우|브로우|눈썹)/i.test(t);
   const isConcealer = (t: string) => /(concealer|コンシーラー|컨실러|잡티|다크서클)/i.test(t);
@@ -744,8 +969,16 @@ function groupItemMatchProducts(products: RakutenProduct[], isMale = false): Rec
   );
 }
 
-function productPickKey(product: RakutenProduct): string {
-  return [product.id, product.keyword, product.name].filter(Boolean).join('::');
+/** 상품 동일성 키(id 무관). 브랜드+상품명만 본다.
+ *
+ * 아이템매칭은 2단 로딩(instant 즉답 → full 교체)이라 **같은 상품의 id 가 단계별로 다르다**
+ * (즉답은 DB `db-…`, full 은 라이브 `naver-…`/라쿠텐). 예전 담기 키는 id 를 포함해서
+ * 교체 순간 체크가 통째로 풀렸다 — 사용자가 "결과지에 담기 5개 실패"로 본 현상. 담은 상품을
+ * 이 키로 대조해 단계 교체를 넘어 선택이 유지되게 한다.
+ */
+function productIdentityKey(product: RakutenProduct): string {
+  const norm = (value: string) => value.toLowerCase().replace(/[\s[\]()（）【】/,·・…]+/g, '');
+  return `${norm(product.brand || '')}::${norm(product.name || '')}`;
 }
 
 function displaySeasonLabel(label?: string): string {
@@ -823,17 +1056,18 @@ function faceImpressionTag(face?: FaceShapeResponse | null): string {
   return '#인상분석전';
 }
 
-function reportMoodCopy(mood: StyleMood) {
+/** 결과지 무드 문구. **조립은 렌더에서** 한다 — 여기서 문자열을 합쳐 버리면 사전(원문=키)이
+ *  그 조합을 못 덮어 일본어 모드에서 한국어가 그대로 나온다(실측). composed=true 면
+ *  label/description 이 '조각'이고, 렌더가 뒤에 공통 문구를 붙인다. */
+function reportMoodCopy(mood: StyleMood): { label: string; description: string; composed: boolean } {
   if (mood.id === 'berry-sorbet') {
     return {
       label: '상큼 베리 소르베 무드 메이크업',
       description: '차가운 베리 소르베처럼 상큼하면서도 도화적인 컬러감이, 강한 대비로 생기를 불어넣는 메이크업이에요.',
+      composed: false,
     };
   }
-  return {
-    label: `${mood.label} 무드 메이크업`,
-    description: `${mood.vibe} 분위기를 살려 퍼스널 컬러와 어울리는 메이크업으로 정리했어요.`,
-  };
+  return { label: mood.label, description: mood.vibe, composed: true };
 }
 
 // 퍼스널컬러 색상어(한국어)를 일본 마켓(라쿠텐) 검색어로 번역한다. 한국어 색상어는
@@ -850,6 +1084,8 @@ const PC_COLOR_ATOMS_JA: Record<string, string> = {
   실버: 'シルバー', 그레이: 'グレー', 아이보리: 'アイボリー', 옐로우: 'イエロー',
   내추럴: 'ナチュラル', 뉴트럴: 'ニュートラル', 샌드: 'サンド', 베이스: 'ベース',
   푸시아: 'フクシア',
+  // 결과지 '메이크업 톤'에 실제로 나오는데 빠져 있던 색상어(실측 확인).
+  와인: 'ワイン', 페일: 'ペール', 베리: 'ベリー', 라일락: 'ライラック',
 };
 
 function localizeColorToJa(koPhrase: string): string {
@@ -857,6 +1093,52 @@ function localizeColorToJa(koPhrase: string): string {
     .split(/\s+/)
     .map((atom) => PC_COLOR_ATOMS_JA[atom] ?? atom)
     .join('');
+}
+
+// 제품 종류·성별 등 '색상 외' 단어의 일본어. 색상 사전(PC_COLOR_ATOMS_JA)과 짝을 이룬다.
+// 쓰임: ①컬럼 헤더의 추천 색상/문구 ②카드 배지(검색 키워드).
+// 배지는 '쿨 아이보리 남성 쿠션 팩트'처럼 색상+카테고리가 섞인 조합이라 사전 하나로는 못 덮고,
+// 단어 단위로 갈아끼워야 한다(색상 부분은 위 사전이 담당).
+// ⚠ 표시만 번역한다 — 검색에 실제로 쓰는 키워드는 한국어 그대로여야 네이버에서 결과가 나온다.
+const PC_TERM_ATOMS_JA: Record<string, string> = {
+  남성: 'メンズ', 남자: 'メンズ', 여성: 'レディース',
+  쿠션: 'クッション', 팩트: 'パクト', 파운데이션: 'ファンデーション',
+  비비크림: 'BBクリーム', 톤업크림: 'トーンアップクリーム', 크림: 'クリーム',
+  아이브로우: 'アイブロウ', 눈썹: 'まゆげ', 펜슬: 'ペンシル',
+  컨실러: 'コンシーラー', 잡티: 'シミ', 다크서클: 'くま',
+  립밤: 'リップバーム', 립: 'リップ', 틴트: 'ティント', 립스틱: 'リップスティック',
+  블러셔: 'チーク', 치크: 'チーク',
+  아이섀도우: 'アイシャドウ', 섀도우: 'アイシャドウ', 아이: 'アイ',
+  젤네일: 'ジェルネイル', 네일: 'ネイル', 페디큐어: 'ペディキュア',
+  커버: 'カバー', 메이크업: 'メイク', 코스메틱: 'コスメ',
+  // 색상 앞에 붙는 형용사(추천 색상 문구에 자주 나온다).
+  생기: '生き生き', 맑은: 'クリア', 은은한: 'ほのか', 부드러운: 'ソフト',
+};
+
+/** 색상/카테고리 조합 문구를 일본어로. 사전에 없는 단어는 그대로 둔다(안전 실패).
+ *
+ * 색상만으로 이뤄진 문구는 붙여 쓰고('말린 장미' → 'ドライローズ'), 카테고리어가 섞이면
+ * 띄어 쓴다('쿨 아이보리 남성 쿠션 팩트' → 'クールアイボリー メンズ クッション パクト').
+ * 일본어 화장품 표기 관행이 색상은 붙이고 종류는 띄우는 쪽이라 읽기 편하다.
+ */
+function localizePcPhraseToJa(koPhrase: string): string {
+  const atoms = (koPhrase || '').split(/\s+/).filter(Boolean);
+  if (!atoms.length) return koPhrase;
+  const translate = (atom: string): string => {
+    if (PC_COLOR_ATOMS_JA[atom] || PC_TERM_ATOMS_JA[atom]) {
+      return PC_COLOR_ATOMS_JA[atom] ?? PC_TERM_ATOMS_JA[atom];
+    }
+    // '잡티·다크서클' 처럼 가운뎃점으로 묶인 복합어는 쪼개서 각각 번역한다.
+    if (atom.includes('·')) {
+      return atom
+        .split('·')
+        .map((part) => PC_COLOR_ATOMS_JA[part] ?? PC_TERM_ATOMS_JA[part] ?? part)
+        .join('・');
+    }
+    return atom;
+  };
+  const allColors = atoms.every((atom) => PC_COLOR_ATOMS_JA[atom]);
+  return atoms.map(translate).join(allColors ? '' : ' ');
 }
 
 // 색상어(한국어) → 영어. 네이버에 영어로도 검색하면 수입/럭셔리(샤넬·맥·나스 등)까지
@@ -882,14 +1164,51 @@ function localizeColorToEn(koPhrase: string): string {
 }
 
 export default function App() {
+  const { lang: appLang } = useAppLang();
+  const t = useT();
+  /** 추천 색상·카테고리 문구 표시용 번역. 사전(t)에 있으면 그걸 쓰고, 없으면 단어 단위로 옮긴다.
+   *
+   * 이 값들은 분석 결과로 조합돼 나오기 때문에(예: '쿨 아이보리', '잡티·다크서클 커버',
+   * '말린 장미 립') 문장 단위 사전으로는 다 못 덮는다. 상품명/브랜드는 대상이 아니다. */
+  const tPhrase = (value: string): string => {
+    const dict = t(value);
+    if (dict !== value || appLang !== 'ja') return dict;
+    return localizePcPhraseToJa(value);
+  };
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const previewUrlsRef = useRef<string[]>([]);
   const personalColorPreviewsRef = useRef<string[]>([]);
   const [appModule, setAppModule] = useState<AppModule>('home');
+  const [virtualSurgeryTuning, setVirtualSurgeryTuning] = useState<VirtualSurgeryTuning>({
+    faceLine: 42,
+    jawBalance: 28,
+    noseContour: 34,
+    blemishCare: 56,
+  });
+  const [virtualSurgeryFile, setVirtualSurgeryFile] = useState<File | null>(null);
+  const [virtualSurgeryPreview, setVirtualSurgeryPreview] = useState('');
+  const [virtualSurgeryResult, setVirtualSurgeryResult] = useState<VirtualSurgeryResponse | null>(null);
+  const [virtualSurgeryLoading, setVirtualSurgeryLoading] = useState(false);
+  const [virtualSurgeryDragOver, setVirtualSurgeryDragOver] = useState(false);
+  const [virtualSurgeryStep, setVirtualSurgeryStep] = useState(0);
+  const [virtualSurgeryProfile, setVirtualSurgeryProfile] = useState({
+    gender: 'female',
+    ageGroup: '20s',
+    concern: '윤곽·얼굴형',
+    desiredMood: '자연스러운 변화',
+    privacyConsent: false,
+  });
+  const [virtualSurgeryTarget, setVirtualSurgeryTarget] = useState('oval');
   // 네일 디자인 분석(리트리벌). 인덱스·모델이 배포에 없으면 결과의 feature_available 이 false 로 온다.
   const [nailPreview, setNailPreview] = useState<string>('');
+  const [nailDragOver, setNailDragOver] = useState(false);
+  const [nailCameraOn, setNailCameraOn] = useState(false);
+  const [nailShade, setNailShade] = useState<NailShade | null>(null);
+  const [nailTryOn, setNailTryOn] = useState<string>('');
+  const [nailProducts, setNailProducts] = useState<RakutenProduct[]>([]);
+  const [nailProductsLoading, setNailProductsLoading] = useState(false);
   const [nailResult, setNailResult] = useState<AnalyzeNailDesignResponse | null>(null);
   const [nailLoading, setNailLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
@@ -917,6 +1236,11 @@ export default function App() {
   const [faceShape, setFaceShape] = useState<FaceShapeResponse | null>(null);
   const [personalColorStep, setPersonalColorStep] = useState(0);
   const [personalColorItems, setPersonalColorItems] = useState<PersonalColorItemMatchResponse | null>(null);
+  // 아이템매칭 조회 순번. 지역/플랫폼/무드를 바꾸면 새 요청이 나가는데 응답이 4~8초 걸려서,
+  // **먼저 보낸 요청이 늦게 도착해 새 결과를 덮어쓰는** 경쟁 상태가 있었다. 그러면 화면엔
+  // 이전 조건(예: 모든 플랫폼)의 카드가 남은 채 새 필터(올리브영)만 적용돼, 구매 버튼이
+  // 사라진 '죽은 카드'처럼 보인다(실측). 최신 요청의 응답만 반영한다.
+  const itemMatchRequestId = useRef(0);
   const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [moodItems, setMoodItems] = useState<PersonalColorItemMatchResponse | null>(null);
   const [moodThumbnails, setMoodThumbnails] = useState<Record<string, string>>({});
@@ -927,7 +1251,18 @@ export default function App() {
   const [myFaceError, setMyFaceError] = useState('');
   const [itemRegion, setItemRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [itemPlatform, setItemPlatform] = useState<ItemPlatform>('all');
-  const [reportProductKeys, setReportProductKeys] = useState<string[]>([]);
+  // 결과지에 담은 상품을 **객체로** 들고 있는다(키 목록이 아니라).
+  // 키(id 포함) 목록으로 들고 있으면 instant→full 교체 때 id 가 바뀌어 선택이 통째로 풀렸다.
+  // 아래 useEffect 가 새 응답에서 같은 상품(브랜드+상품명)을 찾아 최신 인스턴스로 갱신한다
+  // (검증된 링크·이미지를 반영하려면 최신 쪽이 정확하다).
+  const [reportPicks, setReportPicks] = useState<RakutenProduct[]>([]);
+  // 퍼스널컬러 결과지에서 여는 LLM 상담 패널. 결과지를 본 직후 질문하는 흐름이라 같은 화면에 편다.
+  const [pcConsultOpen, setPcConsultOpen] = useState(false);
+  // 피부 케어 결과지에 담을 상품(최대 4개). 퍼스널컬러와 상품 타입이 달라 상태를 따로 둔다.
+  const [skinReportIds, setSkinReportIds] = useState<number[]>([]);
+  // 카메라 실패는 '차단 오류'가 아니다 — 파일 업로드로 계속 진행할 수 있다.
+  // 그래서 페이지 상단 빨간 Alert(error)가 아니라 촬영 영역 옆 안내로만 띄운다.
+  const [cameraNotice, setCameraNotice] = useState('');
   const [personalColorProfile, setPersonalColorProfile] = useState({
     age: '',
     gender: 'female',
@@ -987,7 +1322,7 @@ export default function App() {
     }
 
     startCamera().catch(() => {
-      setError('카메라 접근 권한이 필요합니다. 브라우저에서 카메라 권한을 허용한 뒤 다시 시도해 주세요.');
+      setCameraNotice('카메라를 쓸 수 없어요. 아래에서 사진을 선택해 진행할 수 있습니다.');
     });
   }, [currentStep]);
 
@@ -1005,6 +1340,27 @@ export default function App() {
   useEffect(() => {
     personalColorPreviewsRef.current = personalColorPreviews;
   }, [personalColorPreviews]);
+
+  // 아이템매칭 응답이 갱신되면(즉답 → full 교체, 재조회) 담아둔 상품을 최신 인스턴스로 바꿔둔다.
+  // 담기 상태는 객체로 들고 있어 교체 자체로 사라지진 않지만, 최신 응답 쪽이 검증된 구매 링크와
+  // 살아있는 이미지를 갖고 있어 결과지·장바구니 QR 이 정확해진다. 최신 목록에 없는 상품은
+  // 사용자가 고른 그대로 남긴다(선택을 임의로 지우지 않는다).
+  useEffect(() => {
+    const latest = [...(personalColorItems?.products ?? []), ...(moodItems?.products ?? [])];
+    if (!latest.length) return;
+    setReportPicks((current) => {
+      let changed = false;
+      const next = current.map((pick) => {
+        const fresh = latest.find((product) => productIdentityKey(product) === productIdentityKey(pick));
+        if (fresh && fresh !== pick) {
+          changed = true;
+          return fresh;
+        }
+        return pick;
+      });
+      return changed ? next : current;
+    });
+  }, [personalColorItems, moodItems]);
 
   useEffect(() => {
     if (appModule !== 'personal-color' || personalColorStep !== 4 || !personalColorResult) return;
@@ -1063,7 +1419,8 @@ export default function App() {
     setCameraReady(true);
   }
 
-  async function startCamera(deviceId = selectedDeviceId) {
+  // facing: 얼굴 촬영은 전면('user'), 네일은 손·발을 찍으므로 후면('environment')이 자연스럽다.
+  async function startCamera(deviceId = selectedDeviceId, facing: 'user' | 'environment' = 'user') {
     if (!navigator.mediaDevices?.getUserMedia) {
       setError('이 브라우저는 카메라 촬영을 지원하지 않습니다.');
       return;
@@ -1073,7 +1430,7 @@ export default function App() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         deviceId: deviceId ? { exact: deviceId } : undefined,
-        facingMode: deviceId ? undefined : 'user',
+        facingMode: deviceId ? undefined : facing,
         width: { ideal: 1280 },
         height: { ideal: 720 },
       },
@@ -1117,13 +1474,67 @@ export default function App() {
     setError('');
   }
 
+  function startVirtualSurgery() {
+    stopCamera();
+    setAppModule('virtual-surgery');
+    setVirtualSurgeryStep(0);
+    setError('');
+  }
+
+  async function handleVirtualSurgeryUpload(file: File) {
+    if (!file.type.startsWith('image/')) {
+      setError('가상 성형 추천에 사용할 얼굴 사진을 선택해 주세요.');
+      return;
+    }
+    setVirtualSurgeryFile(file);
+    setVirtualSurgeryPreview(URL.createObjectURL(file));
+    setVirtualSurgeryResult(null);
+    setVirtualSurgeryLoading(true);
+    setError('');
+    try {
+      const result = await simulateVirtualSurgery(file, virtualSurgeryTuning);
+      setVirtualSurgeryResult(result);
+      if (result.detected) setVirtualSurgeryStep((step) => Math.max(step, 2));
+      if (!result.detected) setError(result.message);
+    } catch {
+      setError('가상 성형 추천을 생성하지 못했습니다. 정면 얼굴 사진과 밝은 조명의 이미지를 다시 선택해 주세요.');
+    } finally {
+      setVirtualSurgeryLoading(false);
+    }
+  }
+
+  async function rerunVirtualSurgery() {
+    if (!virtualSurgeryFile) {
+      setError('가상 성형 추천에 사용할 얼굴 사진을 먼저 선택해 주세요.');
+      return;
+    }
+    setVirtualSurgeryLoading(true);
+    setError('');
+    try {
+      const result = await simulateVirtualSurgery(virtualSurgeryFile, virtualSurgeryTuning);
+      setVirtualSurgeryResult(result);
+      if (result.detected) setVirtualSurgeryStep((step) => Math.max(step, 2));
+      if (!result.detected) setError(result.message);
+    } catch {
+      setError('가상 성형 추천을 다시 생성하지 못했습니다.');
+    } finally {
+      setVirtualSurgeryLoading(false);
+    }
+  }
+
   async function handleNailUpload(file: File) {
     setNailLoading(true);
     setError('');
     setNailResult(null);
-    setNailPreview(URL.createObjectURL(file));
+    const previewUrl = URL.createObjectURL(file);
+    setNailPreview(previewUrl);
     try {
-      setNailResult(await analyzeNailDesign(file, 5));
+      const result = await analyzeNailDesign(file, 5);
+      setNailResult(result);
+      // 예전엔 스와치를 눌러야만 미리보기·상품이 떴다 — 결과 화면이 비어 보였다(사용자 지적).
+      // 분석 직후 1순위 추천 색을 자동 적용해 바로 보이게 한다.
+      const top = result.recommended_palette?.[0];
+      if (top) void applyNailShade(top, result.detected, previewUrl);
     } catch {
       setError('네일 사진을 분석하지 못했습니다. 다른 사진으로 다시 시도해 주세요.');
     } finally {
@@ -1146,6 +1557,9 @@ export default function App() {
     setSelectedMood(null);
     setMoodItems(null);
     setFaceShape(null);
+    // 담아둔 상품도 함께 비운다. 안 그러면 앞선 진단(예: 여성)에서 담은 상품이 남아,
+    // 다음 진단(남성) 결과지에 그대로 실린다 — 컬럼 구성이 아예 다른데도.
+    setReportPicks([]);
   }
 
   function handlePersonalColorUpload(files: FileList | null) {
@@ -1308,10 +1722,26 @@ export default function App() {
   async function loadPersonalColorItems(region: ItemRegion = itemRegion, platform: ItemPlatform = itemPlatform) {
     const keywords = personalColorItemKeywords(region);
     if (!keywords.length) return;
+    const requestId = ++itemMatchRequestId.current;
+    const isStale = () => itemMatchRequestId.current !== requestId;
+    const gender = personalColorProfile.gender === 'male' ? 'male' : 'female';
     setLoading('personal-color-items');
+    // 2단계 로딩: 로컬 카탈로그만으로 만든 즉답을 먼저 그려 빈 화면 시간을 줄이고,
+    // 라이브 검색까지 끝난 full 결과가 오면 통째로 교체한다. 즉답이 실패하거나 늦으면
+    // 그냥 건너뛴다(아래 full 이 정답이므로 즉답은 어디까지나 보조).
+    matchPersonalColorItems(keywords, region, platform, gender, 'instant')
+      .then((preview) => {
+        // full 이 이미 도착했으면(partial=false 로 채워졌으면) 덮어쓰지 않는다.
+        if (isStale() || !preview.products.length) return;
+        setPersonalColorItems((current) => (current && !current.partial ? current : preview));
+      })
+      .catch(() => undefined);
     try {
-      setPersonalColorItems(await matchPersonalColorItems(keywords, region, platform, personalColorProfile.gender === 'male' ? 'male' : 'female'));
+      const data = await matchPersonalColorItems(keywords, region, platform, gender);
+      if (isStale()) return;  // 더 새 요청이 나갔다 — 이 응답은 버린다.
+      setPersonalColorItems(data);
     } catch {
+      if (isStale()) return;
       setPersonalColorItems({
         provider: 'recommender',
         configured: true,
@@ -1319,17 +1749,25 @@ export default function App() {
         message: '상품 추천 검색에 실패했습니다.',
       });
     } finally {
-      setLoading('');
+      // 늦게 끝난 옛 요청이 '로딩 중'을 꺼서 새 요청의 진행 표시를 지우면 안 된다.
+      if (!isStale()) setLoading('');
     }
   }
 
   async function selectStyleMood(mood: StyleMood, region: ItemRegion = itemRegion, platform: ItemPlatform = itemPlatform) {
     setSelectedMood(mood.id);
     setMoodItems(null);
+    // 무드 조회도 같은 순번을 쓴다 — 화면엔 둘 중 하나만 보이므로, 새 조회가 시작되면
+    // 종류와 무관하게 이전 응답은 버려야 한다.
+    const requestId = ++itemMatchRequestId.current;
+    const isStale = () => itemMatchRequestId.current !== requestId;
     setLoading('style-mood-items');
     try {
-      setMoodItems(await matchPersonalColorItems(combinedPersonalColorMoodKeywords(mood, region), region, platform, personalColorProfile.gender === 'male' ? 'male' : 'female'));
+      const data = await matchPersonalColorItems(combinedPersonalColorMoodKeywords(mood, region), region, platform, personalColorProfile.gender === 'male' ? 'male' : 'female');
+      if (isStale()) return;
+      setMoodItems(data);
     } catch {
+      if (isStale()) return;
       setMoodItems({
         provider: 'recommender',
         configured: true,
@@ -1337,7 +1775,7 @@ export default function App() {
         message: '상품 추천 검색에 실패했습니다.',
       });
     } finally {
-      setLoading('');
+      if (!isStale()) setLoading('');
     }
   }
 
@@ -1366,6 +1804,7 @@ export default function App() {
   }
 
   function addFaceFiles(files: File[]) {
+    setCameraNotice('');   // 사진을 넣었으면 카메라 안내는 더 이상 필요 없다.
     const imageFiles = files.filter((item) => item.type.startsWith('image/'));
     if (!imageFiles.length) {
       setError('이미지 파일만 업로드할 수 있습니다.');
@@ -1395,6 +1834,118 @@ export default function App() {
     setFaceFiles((current) => current.filter((_, itemIndex) => itemIndex !== index));
     setPreviewUrls((current) => current.filter((_, itemIndex) => itemIndex !== index));
     resetResults();
+  }
+
+  /** 피부케어 사진 전체 삭제(퍼스널컬러의 clearPersonalColorFiles 와 같은 역할).
+   *  미리보기 URL 을 반드시 해제한다 — 안 하면 blob 이 메모리에 남는다. */
+  function clearFaceFiles() {
+    previewUrls.forEach((url) => URL.revokeObjectURL(url));
+    setFaceFiles([]);
+    setPreviewUrls([]);
+    resetResults();
+    setError('');
+  }
+
+  // 네일 촬영: 얼굴 쪽 카메라 로직(videoRef/canvasRef/startCamera)을 그대로 재사용한다.
+  // 한 번에 한 페이지만 렌더되므로 ref 공유가 안전하다.
+  async function openNailCamera() {
+    setError('');
+    setNailCameraOn(true);
+    try {
+      await startCamera(undefined, 'environment');
+    } catch {
+      setNailCameraOn(false);
+      setError('카메라를 열지 못했습니다. 브라우저 권한을 확인해 주세요.');
+    }
+  }
+
+  function closeNailCamera() {
+    stopCamera();
+    setNailCameraOn(false);
+  }
+
+  /** 검출된 손·발톱 영역에 선택한 색을 입혀 '발색 미리보기'를 만든다.
+   *
+   * 캔버스 합성 모드 'color' 를 쓰면 **원본의 명암(광택·그림자)은 그대로 두고 색상/채도만**
+   * 교체된다 — 단색으로 덮어칠하는 것보다 훨씬 실제 발색에 가깝다. 검출 결과가 bbox 뿐이라
+   * 손톱 모양은 타원으로 근사한다(폴리곤 마스크가 생기면 그대로 교체 가능).
+   */
+  async function applyNailShade(shade: NailShade, detected?: DetectedNail[], previewUrl?: string) {
+    setNailShade(shade);
+    // ⚠ 분석 직후 자동 적용할 때는 setNailResult/setNailPreview 가 아직 이 클로저에 반영되지
+    //   않아 둘 다 비어 있다(실측: 자동 적용이 조용히 아무것도 안 했다). 그래서 호출부가
+    //   검출 결과와 사진 URL 을 직접 넘길 수 있게 한다.
+    const nails = detected ?? nailResult?.detected ?? [];
+    const source = previewUrl ?? nailPreview;
+    if (!source || !nails.length) return;
+    const image = new Image();
+    image.src = source;
+    await new Promise((resolve) => {
+      if (image.complete) resolve(null);
+      else image.onload = () => resolve(null);
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(image, 0, 0);
+    nails.forEach((nail) => {
+      const [x1, y1, x2, y2] = nail.bbox;
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      const rx = Math.max(2, (x2 - x1) / 2);
+      const ry = Math.max(2, (y2 - y1) / 2);
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.globalCompositeOperation = 'color';   // 명암 유지, 색상만 교체
+      ctx.fillStyle = shade.hex;
+      ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.globalAlpha = 0.22;                   // 발색을 살짝 진하게(젤 도포 느낌)
+      ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+      ctx.restore();
+    });
+    setNailTryOn(canvas.toDataURL('image/jpeg', 0.92));
+    void loadNailProducts(shade);
+  }
+
+  /** 선택한 색조로 실제 구매 가능한 네일 상품을 찾는다(아이템매칭 라이브 검색 재사용).
+   *  지역/플랫폼은 인자로 받는다 — 드롭다운에서 바꾼 값은 setState 직후엔 아직 반영되지 않아
+   *  itemRegion/itemPlatform 을 그대로 읽으면 '한 번 늦은' 조건으로 조회된다. */
+  async function loadNailProducts(shade: NailShade, region: ItemRegion = itemRegion, platform: ItemPlatform = itemPlatform) {
+    setNailProductsLoading(true);
+    try {
+      // ⚠ JP 는 색이름까지 일본어로 바꿔야 한다. 한글 색이름 + 일본어 카테고리어를 섞어
+      //   보내면 라쿠텐이 0건을 준다(실측: '로즈 브라운 ジェルネイル' → 0건).
+      const keywords = region === 'jp'
+        ? [`${localizeColorToJa(shade.name)} ジェルネイル`, `${localizeColorToJa(shade.name)} マニキュア`]
+        : [`${shade.name} 젤네일`, `${shade.name} 네일 폴리쉬`];
+      const data = await matchPersonalColorItems(keywords, region, platform, 'female');
+      // 네일 컬럼 상품만 남긴다(색상어가 립/블러셔 상품을 물어오는 경우 방지).
+      setNailProducts(data.products.filter((item) => itemMatchColumnFor(item) === 'nail').slice(0, 6));
+    } catch {
+      setNailProducts([]);
+    } finally {
+      setNailProductsLoading(false);
+    }
+  }
+
+  async function captureNailImage() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !cameraReady) return;
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    if (!blob) return;
+    closeNailCamera();  // 촬영 후에는 카메라를 꺼서 스트림을 놓아준다.
+    await handleNailUpload(new File([blob], `yopalette-nail-${Date.now()}.jpg`, { type: 'image/jpeg' }));
   }
 
   async function captureFaceImage() {
@@ -1493,6 +2044,28 @@ export default function App() {
     await reloadRecommendation(region, 'all');
   }
 
+  /** 퍼스널컬러 결과지에서 여는 상담. 피부 점수가 아니라 **퍼스널컬러 판정 결과**를
+   *  문맥으로 보내야 톤·팔레트에 맞는 답이 나온다. */
+  async function handlePersonalColorChat() {
+    setLoading('chat');
+    setError('');
+    try {
+      const context = {
+        ...survey,
+        personal_color: personalColorResult?.label ?? '',
+        tone: personalColorResult?.tone ?? '',
+        subtype: personalColorResult?.subtype ?? '',
+      };
+      const result = await chat(message, undefined, context as typeof survey);
+      setAnswer(result.answer);
+      setAnswerSources(result.sources);
+    } catch {
+      setError('상담 요청에 실패했습니다. 백엔드 연결을 확인해 주세요.');
+    } finally {
+      setLoading('');
+    }
+  }
+
   async function handleChat() {
     setLoading('chat');
     setError('');
@@ -1515,6 +2088,19 @@ export default function App() {
     setCurrentStep((step) => Math.min(step + 1, steps.length - 1));
   }
 
+  /** 결과지에 담을 피부 케어 상품 토글(최대 4개, 넘치면 오래된 것부터 밀어낸다). */
+  function toggleSkinReportProduct(id: number, checked: boolean) {
+    setSkinReportIds((current) => {
+      if (!checked) return current.filter((item) => item !== id);
+      if (current.includes(id)) return current;
+      // ⚠ 예전엔 `.slice(-4)` 로 잘라서, 상한을 넘기면 **먼저 고른 게 말없이 해제**됐다
+      //    (사용자 지적: "하나 더 누르면 하나가 풀려요"). 지금은 가득 차면 그냥 무시하고,
+      //    아래 체크박스를 비활성화해 왜 안 되는지 화면에서 보이게 한다.
+      if (current.length >= SKIN_REPORT_MAX) return current;
+      return [...current, id];
+    });
+  }
+
   function canGoNext() {
     if (currentStep === 0) {
       return Boolean(survey.age?.trim()) && Boolean(survey.race_identity?.trim()) && survey.privacy_consent === true;
@@ -1524,21 +2110,22 @@ export default function App() {
     }
     if (currentStep === 2) return Boolean(analysis);
     if (currentStep === 3) return Boolean(recommendation);
+    if (currentStep === 4) return Boolean(recommendation);  // 상담 → 결과지 출력
     return false;
   }
 
   function renderSurveyPage() {
     return (
       <Paper className="page-panel" elevation={0}>
-        <Typography variant="h5" fontWeight={800}>기본 정보 입력</Typography>
+        <Typography variant="h5" fontWeight={800}>{t('기본 정보 입력')}</Typography>
         <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          분석을 시작하기 전에 기본 정보와 개인정보 활용 동의를 확인합니다.
+          {t('분석을 시작하기 전에 기본 정보와 개인정보 활용 동의를 확인합니다.')}
         </Typography>
 
         <Stack spacing={3.5} sx={{ mt: 2.5 }}>
           <TextField
-            label="나이를 알려주세요"
-            placeholder="여기를 눌러서 입력"
+            label={t('나이를 알려주세요')}
+            placeholder={t('여기를 눌러서 입력')}
             value={survey.age ?? ''}
             onChange={(event) => {
               const age = event.target.value;
@@ -1549,7 +2136,7 @@ export default function App() {
           />
 
           <Box>
-            <Typography variant="body2" fontWeight={700} gutterBottom>성별</Typography>
+            <Typography variant="body2" fontWeight={700} gutterBottom>{t('성별')}</Typography>
             <ToggleButtonGroup
               value={survey.gender}
               exclusive
@@ -1557,24 +2144,25 @@ export default function App() {
               fullWidth
             >
               <ToggleButton value="female" sx={{ py: 1.5, fontWeight: 700, fontSize: '0.95rem' }}>
-                여성
+                {t('여성')}
               </ToggleButton>
               <ToggleButton value="male" sx={{ py: 1.5, fontWeight: 700, fontSize: '0.95rem' }}>
-                남성
+                {t('남성')}
               </ToggleButton>
             </ToggleButtonGroup>
           </Box>
 
           <FormControl fullWidth>
-            <InputLabel>본인이 인식하는 인종 정체성을 알려주세요</InputLabel>
+            <InputLabel>{t('본인이 인식하는 인종 정체성을 알려주세요')}</InputLabel>
             <Select
-              label="본인이 인식하는 인종 정체성을 알려주세요"
+              label={t('본인이 인식하는 인종 정체성을 알려주세요')}
               value={survey.race_identity ?? ''}
               onChange={(event) => setSurvey({ ...survey, race_identity: event.target.value })}
               displayEmpty
             >
+              {/* value 는 한국어 원문 유지(백엔드로 전송되는 값), 표시만 번역. */}
               {raceIdentityOptions.map((option) => (
-                <MenuItem key={option} value={option}>{option}</MenuItem>
+                <MenuItem key={option} value={option}>{t(option)}</MenuItem>
               ))}
             </Select>
           </FormControl>
@@ -1586,11 +2174,11 @@ export default function App() {
                 onChange={(event) => setSurvey({ ...survey, privacy_consent: event.target.checked })}
               />
             }
-            label="개인정보 활용에 동의합니다."
+            label={t('개인정보 활용에 동의합니다.')}
           />
 
           <Alert severity="info">
-            다음 단계에서 얼굴 사진을 촬영하거나 업로드합니다. 피부 고민과 메이크업 고민은 사진 분석 이후 추천 단계에서 다룹니다.
+            {t('다음 단계에서 얼굴 사진을 촬영하거나 업로드합니다. 피부 고민과 메이크업 고민은 사진 분석 이후 추천 단계에서 다룹니다.')}
           </Alert>
         </Stack>
       </Paper>
@@ -1600,61 +2188,88 @@ export default function App() {
   function renderHomePage() {
     return (
       <Box className="app-shell">
+      <AppLangToggle />
         <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
           <Paper elevation={0} className="home-hero">
             <Stack spacing={1}>
-              <Chip label="BeautyAI" color="primary" variant="outlined" sx={{ width: 'fit-content' }} />
+              <Chip label="YoPalette" color="primary" variant="outlined" sx={{ width: 'fit-content' }} />
               <Typography variant="h3" fontWeight={900}>
-                원하는 AI 뷰티 분석을 선택해 주세요.
+                {t('원하는 AI 뷰티 분석을 선택해 주세요.')}
               </Typography>
               <Typography color="text.secondary" sx={{ maxWidth: 720, lineHeight: 1.7 }}>
-                BeautyAI는 기능별로 분리된 분석 워크스페이스입니다. 지금은 피부 케어 분석을 사용할 수 있고,
-                퍼스널컬러와 추가 분석 기능은 같은 홈 화면에서 확장됩니다.
+                {t('YoPalette는 기능별로 분리된 분석 워크스페이스입니다. 지금은 피부 케어 분석을 사용할 수 있고, 퍼스널컬러와 추가 분석 기능은 같은 홈 화면에서 확장됩니다.')}
               </Typography>
+              {/* 쇼핑몰(BeautyWEB)로 나가는 입구. 화면 언어에 따라 포트가 갈린다(ko 5174 / ja 5175). */}
+              <Button
+                component="a"
+                href={WEB_URL_BY_LANG[appLang]}
+                target="_blank"
+                rel="noreferrer"
+                variant="contained"
+                endIcon={<ArrowRight size={18} />}
+                sx={{ alignSelf: 'flex-start', mt: 1 }}
+              >
+                {t('YoPalette 홈으로 이동')}
+              </Button>
             </Stack>
           </Paper>
 
           <Grid container spacing={2} sx={{ mt: 2 }}>
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} sm={6} md={3}>
               <Paper elevation={0} className="module-card active-module">
                 <Stack spacing={1.5}>
                   <Box className="module-icon"><Sparkles size={24} /></Box>
-                  <Typography variant="h5" fontWeight={900}>퍼스널컬러</Typography>
+                  <Typography variant="h5" fontWeight={900}>{t('퍼스널컬러')}</Typography>
                   <Typography color="text.secondary">
-                    얼굴 이미지를 바탕으로 톤, 팔레트, 메이크업 컬러를 추천하는 기능입니다.
+                    {t('얼굴 이미지를 바탕으로 톤, 팔레트, 메이크업 컬러를 추천하는 기능입니다.')}
                   </Typography>
                   <Button variant="contained" endIcon={<ArrowRight size={16} />} onClick={startPersonalColorAnalysis}>
-                    시작하기
+                    {t('시작하기')}
                   </Button>
                 </Stack>
               </Paper>
             </Grid>
 
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} sm={6} md={3}>
               <Paper elevation={0} className="module-card active-module">
                 <Stack spacing={1.5}>
                   <Box className="module-icon"><Camera size={24} /></Box>
-                  <Typography variant="h5" fontWeight={900}>피부 케어 분석</Typography>
+                  <Typography variant="h5" fontWeight={900}>{t('피부 케어 분석')}</Typography>
                   <Typography color="text.secondary">
-                    얼굴 피부와 바디 피부 사진을 같은 케어 흐름 안에서 분석하고, 성분과 상품을 추천합니다.
+                    {t('얼굴 피부와 바디 피부 사진을 같은 케어 흐름 안에서 분석하고, 성분과 상품을 추천합니다.')}
                   </Typography>
                   <Button variant="contained" endIcon={<ArrowRight size={16} />} onClick={startSkinCareAnalysis}>
-                    시작하기
+                    {t('시작하기')}
                   </Button>
                 </Stack>
               </Paper>
             </Grid>
 
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} sm={6} md={3}>
               <Paper elevation={0} className="module-card active-module">
                 <Stack spacing={1.5}>
                   <Box className="module-icon"><ImagePlus size={24} /></Box>
-                  <Typography variant="h5" fontWeight={900}>네일·페디 디자인</Typography>
+                  <Typography variant="h5" fontWeight={900}>{t('네일·페디 디자인')}</Typography>
                   <Typography color="text.secondary">
-                    손·발 사진에서 네일을 찾아 비슷한 디자인을 검색하고, 퍼스널컬러 시즌 적합도를 알려줍니다.
+                    {t('손·발 사진에서 네일을 찾아 비슷한 디자인을 검색하고, 퍼스널컬러 시즌 적합도를 알려줍니다.')}
                   </Typography>
                   <Button variant="contained" endIcon={<ArrowRight size={16} />} onClick={startNailDesign}>
-                    시작하기
+                    {t('시작하기')}
+                  </Button>
+                </Stack>
+              </Paper>
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={3}>
+              <Paper elevation={0} className="module-card active-module virtual-module-card">
+                <Stack spacing={1.5}>
+                  <Box className="module-icon"><ScanFace size={24} /></Box>
+                  <Typography variant="h5" fontWeight={900}>{t('가상 성형 추천')}</Typography>
+                  <Typography color="text.secondary">
+                    {t('얼굴 비율과 고민 부위를 읽고, 과하지 않은 변화 방향과 점 제거·윤곽 미리보기를 추천합니다.')}
+                  </Typography>
+                  <Button variant="contained" endIcon={<ArrowRight size={16} />} onClick={startVirtualSurgery}>
+                    {t('시작하기')}
                   </Button>
                 </Stack>
               </Paper>
@@ -1710,50 +2325,31 @@ export default function App() {
               { key: 'nail', label: '네일', values: personalColorResult.makeup.nail ?? [], showColor: true },
             ]
         : [];
+    // 네일 화면과 같은 컴포넌트를 쓴다(선택지·번역이 한쪽만 바뀌는 걸 막는다).
     const itemPlatformFilter = (
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-        <FormControl size="small" sx={{ minWidth: 140 }}>
-          <InputLabel>지역</InputLabel>
-          <Select
-            label="지역"
-            value={itemRegion}
-            onChange={(event) => {
-              setItemRegion(event.target.value as ItemRegion);
-              setItemPlatform('all');
-              setPersonalColorItems(null);
-              setMoodItems(null);
-              setReportProductKeys([]);
-            }}
-          >
-            {ITEM_REGION_FILTERS.map((region) => (
-              <MenuItem key={region.value} value={region.value}>{region.label}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>구매 플랫폼</InputLabel>
-          <Select
-            label="구매 플랫폼"
-            value={itemPlatform}
-            onChange={(event) => {
-              setItemPlatform(event.target.value as ItemPlatform);
-              setPersonalColorItems(null);
-              setMoodItems(null);
-              setReportProductKeys([]);
-            }}
-          >
-            {(itemRegion === 'jp' ? JP_ITEM_PLATFORM_FILTERS : KR_ITEM_PLATFORM_FILTERS).map((platform) => (
-              <MenuItem key={platform.value} value={platform.value}>{platform.label}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-      </Stack>
+      <ItemMarketFilter
+        region={itemRegion}
+        platform={itemPlatform}
+        onRegionChange={(next) => {
+          setItemRegion(next);
+          setItemPlatform('all');
+          setPersonalColorItems(null);
+          setMoodItems(null);
+          setReportPicks([]);
+        }}
+        onPlatformChange={(next) => {
+          setItemPlatform(next);
+          setPersonalColorItems(null);
+          setMoodItems(null);
+          setReportPicks([]);
+        }}
+      />
     );
     const personalColorSteps = [
       '개인정보 입력',
       'AI 퍼스널컬러 분석',
       '얼굴형 분석',
-      'AI 스타일 컨설팅',
+      '메이크업 무드 선택',
       '아이템 매칭',
       '결과지 출력',
     ];
@@ -1769,17 +2365,26 @@ export default function App() {
     };
 
     const reportSourceProducts = (selectedMood && moodItems?.products.length ? moodItems.products : personalColorItems?.products) ?? [];
-    const pickedReportProducts = reportProductKeys
-      .map((key) => reportSourceProducts.find((product) => productPickKey(product) === key))
-      .filter((product): product is RakutenProduct => Boolean(product));
-    const fallbackReportProducts = reportSourceProducts.filter((product) => !reportProductKeys.includes(productPickKey(product)));
-    const reportItems = [...pickedReportProducts, ...fallbackReportProducts].slice(0, 4);
+    const pickedIdentities = new Set(reportPicks.map(productIdentityKey));
+    // 담을 수 있는 최대 개수 = **컬럼 수**. 남성은 4컬럼(베이스/브로우/컨실러/립밤)이라 4개다.
+    // 컬럼 수보다 크게 두면 사용자가 다 담아도 칸이 남아, 아래 자동 채우기가 '담지 않은 상품'을
+    // 결과지에 올린다(실측: 남성이 4개를 담았는데 5번째로 엉뚱한 쿠션팩트가 실렸다).
+    const reportMax = Math.min(PC_REPORT_MAX, itemMatchGroups.length || PC_REPORT_MAX);
+    // 자동 채우기는 **하나도 안 담았을 때만** 한다. 예전엔 모자란 칸을 늘 추천 상위로 채워서,
+    // 담은 적 없는 상품이 '내가 고른 것'처럼 결과지에 섞였다(사용자 지적 2026-07-30).
+    const reportItems = reportPicks.length
+      ? reportPicks.slice(0, reportMax)
+      : reportSourceProducts.slice(0, reportMax);
+    const isPicked = (product: RakutenProduct) => pickedIdentities.has(productIdentityKey(product));
     const toggleReportProduct = (product: RakutenProduct, checked: boolean) => {
-      const key = productPickKey(product);
-      setReportProductKeys((current) => {
-        if (!checked) return current.filter((item) => item !== key);
-        if (current.includes(key)) return current;
-        return [...current, key].slice(-4);
+      const identity = productIdentityKey(product);
+      setReportPicks((current) => {
+        if (!checked) return current.filter((item) => productIdentityKey(item) !== identity);
+        if (current.some((item) => productIdentityKey(item) === identity)) return current;
+        // 상한을 넘으면 **추가하지 않는다**. 예전엔 slice(-4) 로 첫 선택을 조용히 버려서,
+        // 5번째를 체크하면 이미 담아둔 카드의 체크가 저절로 풀렸다(체크포인트 없이 사라짐).
+        if (current.length >= reportMax) return current;
+        return [...current, product];
       });
     };
 
@@ -1790,9 +2395,9 @@ export default function App() {
             <Grid item xs={12} md={5}>
               <Box className="kiosk-device-panel">
                 <Typography variant="overline">Beauty diagnosis</Typography>
-                <Typography variant="h4" fontWeight={900}>뷰티 진단서 받기</Typography>
+                <Typography variant="h4" fontWeight={900}>{t('뷰티 진단서 받기')}</Typography>
                 <Typography color="text.secondary" sx={{ mt: 1 }}>
-                  퍼스널컬러, 메이크업, 헤어컬러, 주얼리, 스타일 컨설팅을 한 흐름으로 확인합니다.
+                  {t('퍼스널컬러, 메이크업, 헤어컬러, 주얼리, 스타일 컨설팅을 한 흐름으로 확인합니다.')}
                 </Typography>
                 <Box className="kiosk-face-placeholder">
                   <Sparkles size={34} />
@@ -1802,12 +2407,12 @@ export default function App() {
             </Grid>
             <Grid item xs={12} md={7}>
               <Stack spacing={2}>
-                <Typography variant="h5" fontWeight={900}>개인정보 입력</Typography>
+                <Typography variant="h5" fontWeight={900}>{t('개인정보 입력')}</Typography>
                 <Grid container spacing={1.5}>
                   <Grid item xs={12}>
                     <TextField
                       fullWidth
-                      label="나이"
+                      label={t('나이')}
                       value={personalColorProfile.age}
                       onChange={(event) => setProfile('age', event.target.value)}
                     />
@@ -1819,18 +2424,24 @@ export default function App() {
                       fullWidth
                       value={personalColorProfile.gender}
                       onChange={(_event, value) => {
-                        if (value) setProfile('gender', value);
+                        if (!value || value === personalColorProfile.gender) return;
+                        setProfile('gender', value);
+                        // 성별이 바뀌면 컬럼 구성(여성 5 / 남성 4)과 추천 상품이 통째로 달라진다.
+                        // 담아둔 상품·조회 결과를 비워 이전 성별 상품이 섞이지 않게 한다.
+                        setPersonalColorItems(null);
+                        setMoodItems(null);
+                        setReportPicks([]);
                       }}
                     >
-                      <ToggleButton value="female">여성</ToggleButton>
-                      <ToggleButton value="male">남성</ToggleButton>
+                      <ToggleButton value="female">{t('여성')}</ToggleButton>
+                      <ToggleButton value="male">{t('남성')}</ToggleButton>
                     </ToggleButtonGroup>
                   </Grid>
                   <Grid item xs={12}>
                     <FormControl fullWidth>
-                      <InputLabel>인종정체성</InputLabel>
+                      <InputLabel>{t('인종정체성')}</InputLabel>
                       <Select
-                        label="인종정체성"
+                        label={t('인종정체성')}
                         value={personalColorProfile.raceIdentity}
                         onChange={(event) => setProfile('raceIdentity', event.target.value)}
                       >
@@ -1858,10 +2469,10 @@ export default function App() {
                       onChange={(event) => setProfile('consent', event.target.checked)}
                     />
                   }
-                  label="분석을 위한 이미지 및 입력 정보 활용에 동의합니다."
+                  label={t('분석을 위한 이미지 및 입력 정보 활용에 동의합니다.')}
                 />
                 <Alert severity="info">
-                  문서의 키오스크처럼 개인정보 입력 후 AI 퍼스널컬러 분석 단계로 이동합니다.
+                  {t('문서의 키오스크처럼 개인정보 입력 후 AI 퍼스널컬러 분석 단계로 이동합니다.')}
                 </Alert>
               </Stack>
             </Grid>
@@ -1874,10 +2485,9 @@ export default function App() {
           <Grid container spacing={2}>
             <Grid item xs={12} md={5}>
               <Stack spacing={2}>
-                <Typography variant="h5" fontWeight={900}>Step 1. AI 퍼스널컬러 분석</Typography>
+                <Typography variant="h5" fontWeight={900}>{t('Step 1. AI 퍼스널컬러 분석')}</Typography>
                 <Typography color="text.secondary">
-                  정면 얼굴 사진을 넣으면 피부 밝기, 웜쿨, 채도 경향을 분석해 타입을 판정합니다.
-                  여러 장(다른 각도·조명)을 함께 넣으면 결과가 더 안정적입니다.
+                  {t('정면 얼굴 사진을 넣으면 피부 밝기, 웜쿨, 채도 경향을 분석해 타입을 판정합니다. 여러 장(다른 각도·조명)을 함께 넣으면 결과가 더 안정적입니다.')}
                 </Typography>
                 <Box className="personal-color-preview kiosk-preview" sx={{ position: 'relative' }}>
                   {personalColorPreview ? (
@@ -1886,7 +2496,7 @@ export default function App() {
                       {personalColorCount > 1 && (
                         <>
                           <IconButton
-                            aria-label="이전 사진"
+                            aria-label={t('이전 사진')}
                             onClick={() => stepPersonalColorImage(-1)}
                             sx={{
                               position: 'absolute', top: '50%', left: 8, transform: 'translateY(-50%)',
@@ -1896,7 +2506,7 @@ export default function App() {
                             <ArrowLeft size={20} />
                           </IconButton>
                           <IconButton
-                            aria-label="다음 사진"
+                            aria-label={t('다음 사진')}
                             onClick={() => stepPersonalColorImage(1)}
                             sx={{
                               position: 'absolute', top: '50%', right: 8, transform: 'translateY(-50%)',
@@ -1917,7 +2527,7 @@ export default function App() {
                         {safePersonalColorIndex + 1} / {personalColorCount}
                       </Box>
                       <IconButton
-                        aria-label="이 사진 삭제"
+                        aria-label={t('이 사진 삭제')}
                         onClick={() => removePersonalColorFile(safePersonalColorIndex)}
                         sx={{
                           position: 'absolute', top: 8, right: 8,
@@ -1930,7 +2540,7 @@ export default function App() {
                   ) : (
                     <Stack alignItems="center" spacing={1}>
                       <ImagePlus size={34} />
-                      <Typography>얼굴 사진을 선택해 주세요.</Typography>
+                      <Typography>{t('얼굴 사진을 선택해 주세요.')}</Typography>
                     </Stack>
                   )}
                 </Box>
@@ -1989,7 +2599,7 @@ export default function App() {
                       {personalColorCount}/{PERSONAL_COLOR_MAX}장 선택됨{personalColorCount === 1 ? ' · 2~3장을 함께 넣으면 판정이 더 안정적입니다.' : ' · 여러 장 평균으로 판정합니다.'}
                     </Typography>
                     <Button size="small" color="inherit" startIcon={<Trash2 size={14} />} onClick={clearPersonalColorFiles}>
-                      전체 삭제
+                      {t('전체 삭제')}
                     </Button>
                   </Stack>
                 )}
@@ -1999,9 +2609,9 @@ export default function App() {
             <Grid item xs={12} md={7}>
               {!personalColorResult ? (
                 <Box className="kiosk-result-empty">
-                  <Typography variant="h5" fontWeight={900}>내 퍼스널 컬러</Typography>
+                  <Typography variant="h5" fontWeight={900}>{t('내 퍼스널 컬러')}</Typography>
                   <Typography color="text.secondary" sx={{ mt: 1 }}>
-                    분석 결과가 나오면 문서 예시처럼 타입, 팔레트, 메이크업 컬러가 표시됩니다.
+                    {t('분석 결과가 나오면 문서 예시처럼 타입, 팔레트, 메이크업 컬러가 표시됩니다.')}
                   </Typography>
                 </Box>
               ) : (
@@ -2043,7 +2653,7 @@ export default function App() {
                       return (
                         <Box sx={{ mt: 1.5 }}>
                           <Typography sx={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', mb: 0.5 }}>
-                            가장 가까운 타입
+                            {t('가장 가까운 타입')}
                           </Typography>
                           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
                             <Chip
@@ -2054,7 +2664,7 @@ export default function App() {
                             {personalColorResult.alternate_label && (
                               <>
                                 <Typography component="span" sx={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>
-                                  또는
+                                  {t('또는')}
                                 </Typography>
                                 <Chip
                                   size="small"
@@ -2067,7 +2677,7 @@ export default function App() {
                           </Stack>
                           {personalColorResult.alternate_label && (
                             <Typography sx={{ mt: 0.75, fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>
-                              두 타입 중 하나예요 — 둘 다 대보고 더 어울리는 쪽을 고르세요.
+                              {t('두 타입 중 하나예요 — 둘 다 대보고 더 어울리는 쪽을 고르세요.')}
                             </Typography>
                           )}
                         </Box>
@@ -2105,7 +2715,7 @@ export default function App() {
                   </Box>
 
                   <Box>
-                    <Typography variant="h6" fontWeight={900} sx={{ mb: 1 }}>추천 팔레트</Typography>
+                    <Typography variant="h6" fontWeight={900} sx={{ mb: 1 }}>{t('추천 팔레트')}</Typography>
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                       {personalColorResult.palette.map((color) => (
                         <Box className="palette-swatch" key={color} sx={{ backgroundColor: color }}>
@@ -2117,10 +2727,10 @@ export default function App() {
 
                   <Grid container spacing={1.5}>
                     {makeupGroups.map((group) => (
-                      <Grid item xs={12} sm={6} key={group.label}>
+                      <Grid item xs={12} sm={6} key={t(group.label)}>
                         <Box className="makeup-box">
-                          <Typography fontWeight={900}>{group.label}</Typography>
-                          <Typography color="text.secondary">{group.values.join(', ')}</Typography>
+                          <Typography fontWeight={900}>{t(group.label)}</Typography>
+                          <Typography color="text.secondary">{group.values.map(tPhrase).join(', ')}</Typography>
                         </Box>
                       </Grid>
                     ))}
@@ -2161,8 +2771,8 @@ export default function App() {
           : '턱선 양옆과 광대 외곽에 부드럽게 넣어 얼굴 윤곽을 자연스럽게 정리해 보세요.';
 
         const toneMatchLabel = personalColorResult
-          ? `${personalColorResult.label} 매치`
-          : '추천';
+          ? `${t(personalColorResult.label)} ${t('매치')}`
+          : t('추천');
         const blushColors = personalColorResult?.makeup.blush ?? [];
         const blusherRows = (blushColors.length ? blushColors.slice(0, 2) : ['생기 코랄', '맑은 핑크']).map(
           (color, i) => ({
@@ -2179,15 +2789,15 @@ export default function App() {
           <Box className="face-shape-screen">
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
               <Stack direction="row" spacing={1} className="kiosk-sub-tabs">
-                {['내 퍼스널 컬러', '내 얼굴형 분석', 'AI 스타일 컨설팅', '아이템 매칭'].map((tab) => (
+                {['내 퍼스널 컬러', '내 얼굴형 분석', '메이크업 무드 선택', '아이템 매칭'].map((tab) => (
                   <Chip key={tab} label={tab} className={tab === '내 얼굴형 분석' ? 'selected' : ''} />
                 ))}
               </Stack>
-              <Button variant="text" color="inherit">나가기</Button>
+              <Button variant="text" color="inherit">{t('나가기')}</Button>
             </Stack>
 
             <Box sx={{ mt: 3 }}>
-              <Typography variant="caption" color="primary" fontWeight={900}>내 얼굴형 분석</Typography>
+              <Typography variant="caption" color="primary" fontWeight={900}>{t('내 얼굴형 분석')}</Typography>
               <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
                 {shapeTags ? `내 얼굴형 유형은 ${shapeTags}` : '내 얼굴형 분석'}
               </Typography>
@@ -2216,10 +2826,10 @@ export default function App() {
               </Grid>
               <Grid item xs={12} md={8}>
                 <Box className="face-ratio-panel">
-                  <Typography fontWeight={900}>얼굴 비율 측정</Typography>
+                  <Typography fontWeight={900}>{t('얼굴 비율 측정')}</Typography>
                   {ratioRows.map((row) => (
-                    <Box className="face-ratio-row" key={row.label}>
-                      <Typography variant="body2">{row.label}</Typography>
+                    <Box className="face-ratio-row" key={t(row.label)}>
+                      <Typography variant="body2">{t(row.label)}</Typography>
                       <Box className="face-ratio-track">
                         <Box sx={{ width: `${row.width}%` }} />
                       </Box>
@@ -2230,14 +2840,14 @@ export default function App() {
             </Grid>
 
             <Box sx={{ mt: 3 }}>
-              <Typography variant="h5" fontWeight={900}>얼굴형에 맞춘 메이크업 제안이에요!</Typography>
+              <Typography variant="h5" fontWeight={900}>{t('얼굴형에 맞춘 메이크업 제안이에요!')}</Typography>
               <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                AI가 얼굴형이나 피부톤에 맞는 메이크업 팁과 추천템을 제안해드려요.
+                {t('AI가 얼굴형이나 피부톤에 맞는 메이크업 팁과 추천템을 제안해드려요.')}
               </Typography>
 
               <Stack direction="row" spacing={1} sx={{ mt: 2 }} className="makeup-tabs">
-                <Chip label="블러셔" className="selected" />
-                <Chip label="쉐딩" />
+                <Chip label={t('블러셔')} className="selected" />
+                <Chip label={t('쉐딩')} />
               </Stack>
 
               <Grid container spacing={2} sx={{ mt: 0.5 }}>
@@ -2245,7 +2855,7 @@ export default function App() {
                   <Box className="face-makeup-section">
                     <Stack direction="row" spacing={1} alignItems="center">
                       <Box className="section-index">1</Box>
-                      <Typography fontWeight={900}>블러셔</Typography>
+                      <Typography fontWeight={900}>{t('블러셔')}</Typography>
                     </Stack>
                     <Typography color="text.secondary" sx={{ mt: 1 }}>
                       {blusherTip}
@@ -2268,7 +2878,7 @@ export default function App() {
                   <Box className="face-makeup-section">
                     <Stack direction="row" spacing={1} alignItems="center">
                       <Box className="section-index">2</Box>
-                      <Typography fontWeight={900}>쉐딩</Typography>
+                      <Typography fontWeight={900}>{t('쉐딩')}</Typography>
                     </Stack>
                     <Typography color="text.secondary" sx={{ mt: 1 }}>
                       {shadingTip}
@@ -2291,7 +2901,7 @@ export default function App() {
             </Box>
 
             <Button fullWidth variant="contained" className="print-card-button" sx={{ mt: 3 }}>
-              진단카드 출력하기
+              {t('진단카드 출력하기')}
             </Button>
           </Box>
         );
@@ -2303,11 +2913,11 @@ export default function App() {
         const activeMood = activeRecommendation?.mood ?? null;
         return (
           <Box className="style-consult-screen">
-            <Typography variant="caption" color="primary" fontWeight={900}>AI 스타일 컨설팅</Typography>
+            <Typography variant="caption" color="primary" fontWeight={900}>{t('메이크업 무드 선택')}</Typography>
             <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
               AI 스타일 컨설턴트가<br />추천하는 메이크업 무드에요!
             </Typography>
-            <Chip className="style-consult-hint" label="퍼스널컬러 분석 결과로 상위 3개 무드를 골랐습니다" sx={{ mt: 2 }} />
+            <Chip className="style-consult-hint" label={t('퍼스널컬러 분석 결과로 상위 3개 무드를 골랐습니다')} sx={{ mt: 2 }} />
 
             <Grid container spacing={2} sx={{ mt: 0.5 }}>
               {styleMoodRecommendations.map(({ mood, reason }, index) => (
@@ -2326,12 +2936,12 @@ export default function App() {
                   >
                     {moodThumbnails[mood.id] ? (
                       <Box className="style-mood-thumb photo">
-                        <img src={moodThumbnails[mood.id]} alt={`${mood.label} 적용`} />
+                        <img src={moodThumbnails[mood.id]} alt={`${t(mood.label)} 적용`} />
                       </Box>
                     ) : (
                       <Box className={`style-mood-thumb ${mood.thumbClass}`} />
                     )}
-                    <Typography className="style-mood-label" fontWeight={900}>{mood.label}</Typography>
+                    <Typography className="style-mood-label" fontWeight={900}>{t(mood.label)}</Typography>
                     <Typography variant="caption" color="text.secondary">
                       {index + 1}순위 · {reason}
                     </Typography>
@@ -2343,7 +2953,7 @@ export default function App() {
             {activeMood && (
               <Box sx={{ mt: 3 }}>
                 <Alert severity="success" icon={<Sparkles size={18} />}>
-                  AI가 ‘{activeMood.label}’ 무드를 우선 추천했어요. {activeRecommendation?.reason ?? activeMood.vibe}
+                  {t('AI가')} ‘{t(activeMood.label)}’ {t('무드를 우선 추천했어요.')} {t(activeRecommendation?.reason ?? activeMood.vibe)}
                 </Alert>
 
                 <Button
@@ -2371,19 +2981,21 @@ export default function App() {
         const refreshItems = () => (activeMood ? selectStyleMood(activeMood) : loadPersonalColorItems());
         const isJapanRegion = itemRegion === 'jp';
         const groupedProducts = groupItemMatchProducts(items?.products ?? [], isMaleItems);
+        // 영어 키워드로 매칭된 카드의 배지를 한국어로 되돌린다(KR 한/영 쌍 검색의 부작용).
+        const koBadgeByEn = koreanKeywordByEnglish(personalColorItemKeywords(itemRegion));
         return (
           <Box>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
               <Box>
-                <Typography variant="h5" fontWeight={900}>Step 4. 아이템 매칭</Typography>
+                <Typography variant="h5" fontWeight={900}>{t('Step 4. 아이템 매칭')}</Typography>
                 <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                  {isJapanRegion
+                  {t(isJapanRegion
                     ? itemPlatform === 'matsukiyo'
                       ? '마츠키요 상품 연동은 준비 중입니다. 실제 입점 확인 후 이 탭에만 표시합니다.'
                       : itemPlatform === 'oliveyoung'
                         ? '올리브영 글로벌 상품 연동은 준비 중입니다. 일본/한국 양쪽에서 선택할 수 있게 열어두었습니다.'
                         : '얼굴분석(퍼스널컬러) 결과에 맞춰 일본 라쿠텐 뷰티 상품을 추천합니다.'
-                    : '얼굴분석(퍼스널컬러) 결과에 맞춰 한국(네이버) 뷰티 상품을 추천합니다.'}
+                    : '얼굴분석(퍼스널컬러) 결과에 맞춰 한국(네이버) 뷰티 상품을 추천합니다.')}
                 </Typography>
               </Box>
               <Stack direction="row" spacing={1.5} alignItems="center">
@@ -2393,19 +3005,21 @@ export default function App() {
                   onClick={refreshItems}
                   disabled={!personalColorResult || itemsLoading}
                 >
-                  상품 새로고침
+                  {t('상품 불러오기')}
                 </Button>
               </Stack>
             </Stack>
 
             {activeMood && personalColorResult && (
               <Alert severity="success" sx={{ mt: 2 }}>
-                {personalColorResult.label} 분석 결과와 ‘{activeMood.label}’ 무드를 함께 반영해 색상 적합도 순으로 추천합니다.
+                {t(displaySeasonLabel(personalColorResult.label))}{t('분석 결과와')} ‘{t(activeMood.label)}’ {t('무드를 함께 반영해 색상 적합도 순으로 추천합니다.')}
               </Alert>
             )}
 
+            {/* 상한은 컬럼 수를 따르므로(남성 4 / 여성 5) 문구도 숫자를 박지 않고 조립한다. */}
             <Alert severity="info" sx={{ mt: 2 }}>
-              결과지에 담을 상품을 최대 4개까지 체크할 수 있어요. 현재 {pickedReportProducts.length}개 선택됨.
+              {t('결과지에 담을 상품을 최대')} {reportMax}{t('개까지 체크할 수 있어요.')}{' '}
+              {t('현재')} {reportPicks.length}{t('개 선택됨.')}
             </Alert>
 
             <Grid container spacing={1.5} className="item-match-columns" sx={{ mt: 2 }}>
@@ -2413,8 +3027,8 @@ export default function App() {
                 <Grid item xs={12} sm={6} md={12 / itemMatchGroups.length} key={group.key}>
                   <Box className="item-match-column">
                     <Box className="kiosk-match-card compact">
-                      <Typography fontWeight={900}>{group.label}{group.showColor ? ' color' : ''}</Typography>
-                      <Typography color="text.secondary" sx={{ mt: 1 }}>{group.values.join(', ')}</Typography>
+                      <Typography fontWeight={900}>{t(group.label)}{group.showColor ? ' color' : ''}</Typography>
+                      <Typography color="text.secondary" sx={{ mt: 1 }}>{group.values.map(tPhrase).join(', ')}</Typography>
                     </Box>
                     <Stack spacing={2} className="item-match-product-stack">
                       {groupedProducts[group.key].map((product) => (
@@ -2422,8 +3036,10 @@ export default function App() {
                           key={`${product.id}-${product.keyword}`}
                           product={product}
                           selectedPlatform={itemPlatform}
-                          region={itemRegion}
-                          checked={reportProductKeys.includes(productPickKey(product))}
+                          badgeLabel={itemMatchBadgeFor(product, koBadgeByEn, itemRegion)}
+                          checked={isPicked(product)}
+                          // 상한에 도달하면 새 체크를 막는다(피부케어 결과지와 동일 UX).
+                          disabled={!isPicked(product) && reportPicks.length >= reportMax}
                           onCheckedChange={(checked) => toggleReportProduct(product, checked)}
                         />
                       ))}
@@ -2437,7 +3053,7 @@ export default function App() {
 
             {items && !items.configured && (
               <Alert severity="warning" sx={{ mt: 2 }}>
-                라쿠텐 API 키가 백엔드에 설정되지 않았습니다. Docker 재시작 시 .env 값이 전달되는지 확인해 주세요.
+                {t('라쿠텐 API 키가 백엔드에 설정되지 않았습니다. Docker 재시작 시 .env 값이 전달되는지 확인해 주세요.')}
               </Alert>
             )}
 
@@ -2455,7 +3071,11 @@ export default function App() {
       const seasonTag = displaySeasonLabel(personalColorResult?.label);
       const faceTag = faceShapeLabel(faceShape?.detected ? faceShape.shape : undefined);
       const reportProfile = reportSeasonProfile(personalColorResult);
-      const faceTypeTags = [`#${seasonTag.replace(/\s+/g, '')}`, faceImpressionTag(faceShape), `#${faceTag}`];
+      const faceTypeTags = [
+        `#${t(seasonTag).replace(/\s+/g, '')}`,
+        t(faceImpressionTag(faceShape)),
+        `#${t(faceTag)}`,
+      ];
       const moodCopy = reportMoodCopy(activeMood);
       const reportMakeupRows = [
         { label: '립 메이크업', values: personalColorResult?.makeup.lip ?? ['와인 로즈', '말린 장미', '뮤트 플럼'] },
@@ -2476,31 +3096,31 @@ export default function App() {
                 <Typography className="report-kicker">Face Type /</Typography>
                 <Typography className="report-face">{faceTypeTags.join(' ')}</Typography>
               </Box>
-              <Typography className="report-brand">BeautyAI</Typography>
+              <Typography className="report-brand">YoPalette</Typography>
             </Box>
 
             <Box className="report-grid">
               <Box className="report-left">
                 <Box className="report-photo">
-                  {personalColorPreview ? <img src={personalColorPreview} alt="분석 사진" /> : <Sparkles size={34} />}
+                  {personalColorPreview ? <img src={personalColorPreview} alt={t('분석 사진')} /> : <Sparkles size={34} />}
                 </Box>
-                <Typography className="report-section-title">진단 요약</Typography>
+                <Typography className="report-section-title">{t('진단 요약')}</Typography>
                 <Typography className="report-copy">
-                  {reportProfile.moodLine}
+                  {t(reportProfile.moodLine)}
                 </Typography>
                 <Box className="report-tags">
                   {reportProfile.tags.map((tag) => (
-                    <span key={tag}>{tag}</span>
+                    <span key={tag}>{t(tag)}</span>
                   ))}
                 </Box>
                 <Typography className="report-copy">
-                  {personalColorResult?.advice?.[0] ?? reportProfile.colorLine}
+                  {personalColorResult?.advice?.[0] ?? t(reportProfile.colorLine)}
                 </Typography>
                 <Stack direction="row" spacing={0.8} sx={{ mt: 1.2 }} flexWrap="wrap" useFlexGap>
                   {personalColorResult?.alternate_label && (
-                    <Chip size="small" label={`또는 ${personalColorResult.alternate_label}`} />
+                    <Chip size="small" label={`${t('또는')} ${t(personalColorResult.alternate_label)}`} />
                   )}
-                  <Chip size="small" label={`품질 ${quality}%`} variant="outlined" />
+                  <Chip size="small" label={`${t('품질')} ${quality}%`} variant="outlined" />
                 </Stack>
                 <Box className="report-palette">
                   {(personalColorResult?.palette ?? ['#E0A6B1', '#C95C7E', '#A9B5C8', '#4D5D77']).map((color) => (
@@ -2512,8 +3132,10 @@ export default function App() {
               <Box className="report-main">
                 <Box className="report-title-row">
                   <Box>
-                    <Typography className="report-section-title">선택한 무드</Typography>
-                    <Typography className="report-title">{moodCopy.label}</Typography>
+                    <Typography className="report-section-title">{t('선택한 무드')}</Typography>
+                    <Typography className="report-title">
+                      {moodCopy.composed ? `${t(moodCopy.label)} ${t('무드 메이크업')}` : t(moodCopy.label)}
+                    </Typography>
                   </Box>
                   <Box>
                     <Box className="report-mood-thumb">
@@ -2548,26 +3170,28 @@ export default function App() {
                   </Box>
                 </Box>
                 <Typography className="report-copy strong">
-                  {moodCopy.description}
+                  {moodCopy.composed
+                    ? `${t(moodCopy.description)} ${t('분위기를 살려 퍼스널 컬러와 어울리는 메이크업으로 정리했어요.')}`
+                    : t(moodCopy.description)}
                 </Typography>
                 <Typography className="report-copy">
-                  {seasonTag} 타입의 특성과 선택한 무드를 바탕으로 {reportProfile.finishLine}
+                  {t(seasonTag)} {t('타입의 특성과 선택한 무드를 바탕으로')} {t(reportProfile.finishLine)}
                 </Typography>
 
                 <Divider sx={{ my: 1.6 }} />
 
-                <Typography className="report-section-title">메이크업 톤</Typography>
+                <Typography className="report-section-title">{t('메이크업 톤')}</Typography>
                 <Box className="report-makeup-grid">
                   {reportMakeupRows.map((group) => (
-                    <Box key={group.label}>
-                      <Typography className="report-mini-title">{group.label}</Typography>
-                      <Typography className="report-copy">{group.values.slice(0, 3).join(' / ')}</Typography>
+                    <Box key={t(group.label)}>
+                      <Typography className="report-mini-title">{t(group.label)}</Typography>
+                      <Typography className="report-copy">{group.values.slice(0, 3).map(tPhrase).join(' / ')}</Typography>
                     </Box>
                   ))}
                 </Box>
 
-                <Typography className="report-section-title product-title">메이크업 룩 추천상품</Typography>
-                <Box className="report-product-grid">
+                <Typography className="report-section-title product-title">{t('장바구니')}</Typography>
+                <Box className={`report-product-grid${reportItems.length > 4 ? ' dense' : ''}`}>
                   {reportItems.length ? reportItems.map((product, index) => (
                     <Box className="report-product" key={`${product.id}-${product.keyword}-${index}`}>
                       <Box className="report-product-image">
@@ -2601,45 +3225,101 @@ export default function App() {
                       component="img"
                       className="report-qr-img"
                       src={qrImageUrl(`${window.location.origin}/#report`)}
-                      alt="모바일 레포트 QR"
+                      alt={t('모바일 레포트 QR')}
                       sx={{ width: 74, height: 74, display: 'block', border: '6px solid #fff', background: '#fff', borderRadius: '4px' }}
                     />
-                    <Typography className="report-qr-label">모바일 레포트에서 자세한 진단결과 보기</Typography>
+                    <Typography className="report-qr-label">{t('모바일 레포트에서 자세한 진단결과 보기')}</Typography>
                   </Box>
                   <Box>
                     <Box
                       component="img"
                       className="report-qr-img"
-                      src={qrImageUrl('http://localhost:5174/cart')}
-                      alt="장바구니 QR"
+                      src={qrImageUrl(webCartDeepLink(reportItems))}
+                      alt={t('장바구니 QR')}
                       sx={{ width: 74, height: 74, display: 'block', border: '6px solid #fff', background: '#fff', borderRadius: '4px' }}
                     />
-                    <Typography className="report-qr-label">Java WEB 장바구니에 선택 상품 담기</Typography>
+                    <Typography className="report-qr-label">{t('Java WEB 장바구니에 선택 상품 담기')}</Typography>
                   </Box>
                 </Box>
               </Box>
             </Box>
           </Box>
           <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
-            Step 4에서 체크한 상품이 우선 표시되고, 선택이 부족하면 추천 목록에서 자동으로 채워집니다.
+            {t(reportPicks.length
+              ? 'Step 4에서 결과지에 담은 상품만 표시됩니다.'
+              : 'Step 4에서 상품을 담으면 그 상품이 표시됩니다. 지금은 추천 상위를 보여줍니다.')}
           </Typography>
+
+          {/* 결과지를 본 뒤 바로 질문할 수 있게 상담을 같은 화면에서 연다. */}
+          <Stack alignItems="center" sx={{ mt: 2 }}>
+            <Button
+              variant={pcConsultOpen ? 'outlined' : 'contained'}
+              startIcon={<MessageSquare size={18} />}
+              onClick={() => setPcConsultOpen((open) => !open)}
+            >
+              {pcConsultOpen ? t('상담 닫기') : t('AI 상담하기')}
+            </Button>
+          </Stack>
+
+          {pcConsultOpen && (
+            <Paper elevation={0} className="pc-consult" sx={{ mt: 2 }}>
+              <Typography variant="h6" fontWeight={800}>{t('AI 뷰티 상담')}</Typography>
+              <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>
+                {t('진단 결과를 바탕으로 메이크업, 컬러 활용, 제품 사용법을 질문할 수 있습니다.')}
+              </Typography>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 2 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                  placeholder={t('예: 이 퍼스널컬러에 어울리는 립 발색은 어떻게 고르나요?')}
+                />
+                <Button
+                  variant="contained"
+                  startIcon={<Send size={16} />}
+                  onClick={handlePersonalColorChat}
+                  disabled={loading === 'chat'}
+                >
+                  {t('질문')}
+                </Button>
+              </Stack>
+              {loading === 'chat' && <LinearProgress sx={{ mt: 1.5 }} />}
+              {answer && (
+                <Stack spacing={1} sx={{ mt: 2 }}>
+                  <Alert icon={<MessageSquare size={18} />} severity="success">{answer}</Alert>
+                  {!!answerSources.length && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">{t('참고 근거')}</Typography>
+                      <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.5 }}>
+                        {answerSources.map((source) => (
+                          <Chip key={source} label={source} size="small" variant="outlined" />
+                        ))}
+                      </Stack>
+                    </Box>
+                  )}
+                </Stack>
+              )}
+            </Paper>
+          )}
         </Box>
       );
     };
 
     return (
       <Box className="app-shell">
+      <AppLangToggle />
         <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
           <Paper elevation={0} className="page-panel kiosk-header">
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
               <Box>
-                <Chip label="twinit style flow" color="primary" variant="outlined" sx={{ width: 'fit-content', mb: 1 }} />
-                <Typography variant="h4" fontWeight={900}>뷰티 진단서 받기</Typography>
+                <Chip label="YoPalette" color="primary" variant="outlined" sx={{ width: 'fit-content', mb: 1 }} />
+                <Typography variant="h4" fontWeight={900}>{t('뷰티 진단서 받기')}</Typography>
                 <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                  문서의 키오스크 화면 순서에 맞춰 개인정보 입력부터 퍼스널컬러, 얼굴형, 스타일, 아이템, 출력까지 이어집니다.
+                  {t('문서의 키오스크 화면 순서에 맞춰 개인정보 입력부터 퍼스널컬러, 얼굴형, 스타일, 아이템, 출력까지 이어집니다.')}
                 </Typography>
               </Box>
-              <Button variant="outlined" onClick={goHome}>홈으로</Button>
+              <Button variant="outlined" onClick={goHome}>{t('홈으로')}</Button>
             </Stack>
             <Stepper activeStep={personalColorStep} alternativeLabel sx={{ mt: 3 }}>
               {personalColorSteps.map((step, index) => (
@@ -2652,7 +3332,7 @@ export default function App() {
                     }}
                     sx={{ cursor: index <= personalColorStep + 1 ? 'pointer' : 'default' }}
                   >
-                    {step}
+                    {t(step)}
                   </StepLabel>
                 </Step>
               ))}
@@ -2673,7 +3353,7 @@ export default function App() {
                 disabled={personalColorStep === 0}
                 onClick={() => setPersonalColorStep((step) => Math.max(step - 1, 0))}
               >
-                이전
+                {t('이전')}
               </Button>
               <Typography variant="body2" color="text.secondary">
                 {personalColorStep + 1} / {personalColorSteps.length}
@@ -2684,7 +3364,7 @@ export default function App() {
                 disabled={personalColorStep >= personalColorSteps.length - 1 || !canMoveNext}
                 onClick={() => setPersonalColorStep((step) => Math.min(step + 1, personalColorSteps.length - 1))}
               >
-                다음
+                {t('다음')}
               </Button>
             </Stack>
           </Paper>
@@ -2701,14 +3381,14 @@ export default function App() {
             <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
               <Box>
                 <Typography variant="h5" fontWeight={800}>
-                  피부 케어 입력
+                  {t('피부 케어 입력')}
                 </Typography>
                 <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                  분석할 부위를 선택하고 사진을 1~5장 등록해 주세요.
+                  {t('분석할 부위를 선택하고 사진을 1~5장 등록해 주세요.')}
                 </Typography>
               </Box>
               <Button size="small" variant="outlined" startIcon={<RefreshCcw size={14} />} onClick={() => startCamera()}>
-                새로고침
+                {t('새로고침')}
               </Button>
             </Stack>
 
@@ -2723,8 +3403,8 @@ export default function App() {
               }}
               sx={{ mt: 2 }}
             >
-              <ToggleButton value="face">얼굴 피부 케어</ToggleButton>
-              <ToggleButton value="body">바디 피부 케어</ToggleButton>
+              <ToggleButton value="face">{t('얼굴 피부 케어')}</ToggleButton>
+              <ToggleButton value="body">{t('바디 피부 케어')}</ToggleButton>
             </ToggleButtonGroup>
 
             <Box className="camera-box large-camera" sx={{ mt: 2 }}>
@@ -2741,7 +3421,7 @@ export default function App() {
               {!cameraReady && (
                 <Stack className="camera-empty" alignItems="center" spacing={1}>
                   <Camera size={32} />
-                  <Typography variant="body2" color="text.secondary">카메라 권한을 기다리는 중입니다</Typography>
+                  <Typography variant="body2" color="text.secondary">{t('카메라 권한을 기다리는 중입니다')}</Typography>
                 </Stack>
               )}
             </Box>
@@ -2754,9 +3434,9 @@ export default function App() {
             <Stack spacing={1.5}>
               {cameraDevices.length > 1 && (
                 <FormControl fullWidth size="small">
-                  <InputLabel>카메라</InputLabel>
+                  <InputLabel>{t('카메라')}</InputLabel>
                   <Select
-                    label="카메라"
+                    label={t('카메라')}
                     value={selectedDeviceId}
                     onChange={(event) => handleCameraChange(event.target.value)}
                   >
@@ -2776,8 +3456,11 @@ export default function App() {
                   onClick={captureFaceImage}
                   disabled={!cameraReady || faceFiles.length >= 5}
                 >
-                  웹캠으로 촬영
+                  {t('웹캠으로 촬영')}
                 </Button>
+                {cameraNotice && (
+                  <Alert severity="info" sx={{ py: 0.4 }}>{t(cameraNotice)}</Alert>
+                )}
                 <Button
                   fullWidth
                   component="label"
@@ -2785,7 +3468,7 @@ export default function App() {
                   startIcon={<ImagePlus size={16} />}
                   disabled={faceFiles.length >= 5}
                 >
-                  사진 업로드
+                  {t('사진 업로드')}
                   <input
                     hidden
                     accept="image/*"
@@ -2801,6 +3484,18 @@ export default function App() {
               <Alert severity={faceFiles.length >= 3 ? 'success' : 'info'}>
                 현재 {faceFiles.length}/5장 선택됨. 분석에는 최소 1장이 필요합니다.
               </Alert>
+              {!!faceFiles.length && (
+                <Stack direction="row" justifyContent="flex-end">
+                  <Button
+                    size="small"
+                    color="inherit"
+                    startIcon={<Trash2 size={14} />}
+                    onClick={clearFaceFiles}
+                  >
+                    {t('전체 삭제')}
+                  </Button>
+                </Stack>
+              )}
               {!!previewUrls.length && (
                 <Box className="photo-grid">
                   {previewUrls.map((url, index) => (
@@ -2834,11 +3529,11 @@ export default function App() {
   function renderAnalysisPage() {
     return (
       <Paper className="page-panel" elevation={0}>
-        <Typography variant="h5" fontWeight={800}>피부 분석</Typography>
+        <Typography variant="h5" fontWeight={800}>{t('피부 분석')}</Typography>
         {loading === 'analyzing' && (
           <Stack spacing={2} sx={{ mt: 3 }}>
             <LinearProgress />
-            <Typography color="text.secondary">등록한 피부 사진을 분석하고 추천 후보를 계산하는 중입니다.</Typography>
+            <Typography color="text.secondary">{t('등록한 피부 사진을 분석하고 추천 후보를 계산하는 중입니다.')}</Typography>
           </Stack>
         )}
         {!loading && analysis ? (
@@ -2849,16 +3544,16 @@ export default function App() {
                   <Box />
                   <Box />
                   <Typography variant="caption" color="text.secondary" textAlign="right" fontWeight={700}>
-                    심각도
+                    {t('심각도')}
                   </Typography>
                 </Box>
                 {(Object.entries(analysis.scores) as [keyof SkinScores, number][]).map(([key, value]) => {
                   const band = scoreBand(value);
                   return (
                     <Box className="score-row" key={key}>
-                      <Typography variant="body2">{scoreLabels[key]}</Typography>
+                      <Typography variant="body2">{t(scoreLabels[key])}</Typography>
                       <LinearProgress variant="determinate" value={value} color={band.color} sx={{ height: 10, borderRadius: 1 }} />
-                      <Typography variant="body2" textAlign="right" color={`${band.color}.main`} fontWeight={700}>{band.label}</Typography>
+                      <Typography variant="body2" textAlign="right" color={`${band.color}.main`} fontWeight={700}>{t(band.label)}</Typography>
                     </Box>
                   );
                 })}
@@ -2866,7 +3561,7 @@ export default function App() {
             )}
             {analysis.analysis_mode === 'body' && analysis.body_conditions.map((item) => (
               <Box className="score-row" key={item.condition}>
-                <Typography variant="body2">{item.label}</Typography>
+                <Typography variant="body2">{t(item.label)}</Typography>
                 <LinearProgress variant="determinate" value={item.probability} sx={{ height: 10, borderRadius: 1 }} />
                 <Typography variant="body2" textAlign="right">{item.probability}%</Typography>
               </Box>
@@ -2877,7 +3572,7 @@ export default function App() {
             )}
           </Stack>
         ) : !loading ? (
-          <Alert severity="info" sx={{ mt: 3 }}>피부 사진을 등록한 뒤 분석을 실행해 주세요.</Alert>
+          <Alert severity="info" sx={{ mt: 3 }}>{t('피부 사진을 등록한 뒤 분석을 실행해 주세요.')}</Alert>
         ) : null}
       </Paper>
     );
@@ -2893,12 +3588,12 @@ export default function App() {
         <Grid item xs={12}>
           <Paper className="page-panel" elevation={0}>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} gap={1.5}>
-              <Typography variant="h5" fontWeight={800}>맞춤 추천</Typography>
+              <Typography variant="h5" fontWeight={800}>{t('맞춤 추천')}</Typography>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
                 <FormControl size="small" sx={{ minWidth: 130 }}>
-                  <InputLabel>지역</InputLabel>
+                  <InputLabel>{t('지역')}</InputLabel>
                   <Select
-                    label="지역"
+                    label={t('지역')}
                     value={skinRegion}
                     onChange={(event) => handleSkinRegionChange(event.target.value as ItemRegion)}
                     disabled={loading === 'recommend' || loading === 'analyzing'}
@@ -2909,9 +3604,9 @@ export default function App() {
                   </Select>
                 </FormControl>
                 <FormControl size="small" sx={{ minWidth: 160 }}>
-                  <InputLabel>구매 플랫폼</InputLabel>
+                  <InputLabel>{t('구매 플랫폼')}</InputLabel>
                   <Select
-                    label="구매 플랫폼"
+                    label={t('구매 플랫폼')}
                     value={selectedPlatform}
                     onChange={(event) => handlePlatformChange(event.target.value as ItemPlatform)}
                     disabled={loading === 'recommend' || loading === 'analyzing'}
@@ -2929,7 +3624,7 @@ export default function App() {
                 <Alert severity={analysis?.urgent ? 'error' : analysis?.analysis_mode === 'body' && !recommendation.products.length ? 'warning' : 'success'}>{recommendation.explanation}</Alert>
                 {recommendation.ingredients.length > 0 && (
                   <Box>
-                    <Typography variant="subtitle2" gutterBottom>추천 성분</Typography>
+                    <Typography variant="subtitle2" gutterBottom>{t('추천 성분')}</Typography>
                     <Stack direction="row" flexWrap="wrap" gap={1}>
                       {recommendation.ingredients.map((ingredient) => (
                         <Chip key={ingredient.id} label={ingredient.name} color="primary" variant="outlined" />
@@ -2941,14 +3636,20 @@ export default function App() {
                 {/* 상품 카테고리 컬럼(퍼스널컬러 립/아이/베이스처럼): 카테고리별 추천 상품 여러 개. */}
                 {showColumns && (
                   <Box>
-                    <Typography variant="subtitle2" gutterBottom>카테고리별 추천 상품</Typography>
+                    <Typography variant="subtitle2" gutterBottom>{t('카테고리별 추천 상품')}</Typography>
+                    <Alert severity="info" sx={{ mb: 1.5, py: 0.4 }}>
+                      {t('결과지에 담을 상품을 최대 5개까지 체크할 수 있어요.')}{' '}
+                      {t('현재')} {skinReportIds.length}{t('개 선택됨.')}
+                    </Alert>
                     <Grid container spacing={1.5} className="item-match-columns">
                       {recommendation.product_columns!.map((col) => (
                         <Grid item xs={12} sm={6} md={12 / recommendation.product_columns!.length} key={col.key}>
                           <Box className="item-match-column">
                             <Box className="kiosk-match-card compact" sx={{ minHeight: 66 }}>
-                              <Typography fontWeight={900}>{col.label}</Typography>
-                              {col.reason && <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>{col.reason}</Typography>}
+                              <Typography fontWeight={900}>{t(col.label)}</Typography>
+                              <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>
+                                {col.reason || t(SKIN_COLUMN_HINT[col.key] ?? '')}
+                              </Typography>
                             </Box>
                             <Stack spacing={2} className="item-match-product-stack">
                               {col.products.length ? col.products.map((rp) => {
@@ -2959,13 +3660,26 @@ export default function App() {
                                   .map((key) => ITEM_PLATFORM_META[key]);
                                 return (
                                   <Box className="rakuten-product-card" key={rp.id}>
+                                    <FormControlLabel
+                                      className="report-pick-control"
+                                      control={
+                                        <Checkbox
+                                          size="small"
+                                          checked={skinReportIds.includes(rp.id)}
+                                          disabled={!skinReportIds.includes(rp.id) && skinReportIds.length >= SKIN_REPORT_MAX}
+                                          onChange={(event) => toggleSkinReportProduct(rp.id, event.target.checked)}
+                                        />
+                                      }
+                                      label={t('결과지에 담기')}
+                                    />
                                     <Box className="rakuten-product-image">
                                       <ProductImage src={rp.image_url} alt={rp.name} fallback={<Sparkles size={26} />} />
                                     </Box>
                                     <Typography fontWeight={900} className="rakuten-product-title">{rp.name}</Typography>
+                                    {/* 가격 미표시 — 아이템매칭 카드와 같은 이유(카드 하나에 판매처가
+                                        여럿이라 표시가가 어느 곳에서도 맞지 않는다). */}
                                     <Typography variant="body2" color="text.secondary" noWrap>
                                       {rp.brand}
-                                      {rp.price > 0 && ` · $${(rp.price / 100).toFixed(2)}`}
                                     </Typography>
                                     {rp.avg_rating != null && (
                                       <Typography variant="caption" color="text.secondary">
@@ -3005,7 +3719,7 @@ export default function App() {
                                   </Box>
                                 );
                               }) : (
-                                <Typography variant="body2" color="text.secondary">이 카테고리에 맞는 상품이 없어요.</Typography>
+                                <Typography variant="body2" color="text.secondary">{t('이 카테고리에 맞는 상품이 없어요.')}</Typography>
                               )}
                             </Stack>
                           </Box>
@@ -3016,7 +3730,7 @@ export default function App() {
                 )}
                 {/* body(피부질환) 안내형은 의도적으로 상품이 없으므로 '카탈로그 부족' 문구를 띄우지 않는다. */}
                 {!recommendation.products.length && analysis?.analysis_mode !== 'body' && (
-                  <Alert severity="info">선택한 플랫폼에 맞는 추천 후보가 아직 부족합니다. 모든 플랫폼으로 넓혀 보거나 상품 카탈로그를 보강해 주세요.</Alert>
+                  <Alert severity="info">{t('선택한 플랫폼에 맞는 추천 후보가 아직 부족합니다. 모든 플랫폼으로 넓혀 보거나 상품 카탈로그를 보강해 주세요.')}</Alert>
                 )}
                 <Grid container spacing={1.5}>
                   {/* 컬럼이 있으면 위 카테고리 컬럼으로 통일하고 평면 그리드는 비운다(중복 방지). */}
@@ -3042,9 +3756,9 @@ export default function App() {
                             <Chip size="small" label={`${product.score ?? 0}`} color="secondary" />
                           </Stack>
                           <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
+                          {/* 가격 미표시 — 위와 동일한 이유. */}
                           <Typography variant="body2" color="text.secondary" noWrap>
                             {product.brand}
-                            {product.price > 0 && ` · $${(product.price / 100).toFixed(2)}`}
                           </Typography>
                           {product.avg_rating != null && (
                             <Typography variant="caption" color="text.secondary">
@@ -3103,7 +3817,7 @@ export default function App() {
                 </Grid>
               </Stack>
             ) : (
-              <Alert severity="info" sx={{ mt: 2 }}>분석 후 추천 상품이 표시됩니다.</Alert>
+              <Alert severity="info" sx={{ mt: 2 }}>{t('분석 후 추천 상품이 표시됩니다.')}</Alert>
             )}
           </Paper>
         </Grid>
@@ -3111,7 +3825,7 @@ export default function App() {
           <Paper className="page-panel" elevation={0}>
             <Stack direction="row" spacing={1} alignItems="center">
               <History size={18} />
-              <Typography variant="h6">추천 기록</Typography>
+              <Typography variant="h6">{t('추천 기록')}</Typography>
             </Stack>
             <Stack spacing={1.5} sx={{ mt: 2 }}>
               {history.slice(0, 5).map((item) => (
@@ -3120,7 +3834,7 @@ export default function App() {
                   <Typography variant="caption" color="text.secondary">{new Date(item.created_at).toLocaleString('ko-KR')}</Typography>
                 </Box>
               ))}
-              {!history.length && <Typography color="text.secondary" variant="body2">아직 추천 기록이 없습니다.</Typography>}
+              {!history.length && <Typography color="text.secondary" variant="body2">{t('아직 추천 기록이 없습니다.')}</Typography>}
             </Stack>
           </Paper>
         </Grid>
@@ -3131,14 +3845,14 @@ export default function App() {
   function renderConsultPage() {
     return (
       <Paper className="page-panel" elevation={0}>
-        <Typography variant="h5" fontWeight={800}>AI 피부 상담</Typography>
+        <Typography variant="h5" fontWeight={800}>{t('AI 피부 상담')}</Typography>
         <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          분석 점수를 바탕으로 루틴, 성분 사용 순서, 주의점을 질문할 수 있습니다.
+          {t('분석 점수를 바탕으로 루틴, 성분 사용 순서, 주의점을 질문할 수 있습니다.')}
         </Typography>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 3 }}>
           <TextField fullWidth size="small" value={message} onChange={(event) => setMessage(event.target.value)} />
           <Button variant="contained" startIcon={<Send size={16} />} onClick={handleChat} disabled={loading === 'chat'}>
-            질문
+            {t('질문')}
           </Button>
         </Stack>
         {answer && (
@@ -3146,7 +3860,7 @@ export default function App() {
             <Alert icon={<MessageSquare size={18} />} severity="success">{answer}</Alert>
             {!!answerSources.length && (
               <Box>
-                <Typography variant="caption" color="text.secondary">참고 근거</Typography>
+                <Typography variant="caption" color="text.secondary">{t('참고 근거')}</Typography>
                 <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.5 }}>
                   {answerSources.map((source) => (
                     <Chip key={source} label={source} size="small" variant="outlined" />
@@ -3160,50 +3874,863 @@ export default function App() {
     );
   }
 
+  function renderVirtualSurgeryPage() {
+    const tuningItems = [
+      { key: 'faceLine', label: '얼굴 프레임', helper: '광대와 얼굴 폭을 자연스럽게 정리' },
+      { key: 'jawBalance', label: '턱 밸런스', helper: '하관 길이와 턱끝 인상을 부드럽게 조정' },
+      { key: 'noseContour', label: '코 라인', helper: '콧대와 코끝의 입체감을 과하지 않게 제안' },
+      { key: 'blemishCare', label: '점·잡티 제거', helper: '클릭 제거형 피부 보정 후보로 분리' },
+    ] as const;
+
+    const recommendationCards = [
+      ['01', '얼굴형 균형', '얼굴 폭 대비 하관 비율을 먼저 확인하고, 과한 축소보다 윤곽 정리 중심으로 추천합니다.'],
+      ['02', '포인트 보정', '점·잡티처럼 되돌릴 수 있는 보정부터 보여주고, 시술성 변화는 참고 단계로 분리합니다.'],
+      ['03', '자연스러움 점수', '변화 강도가 올라갈수록 원래 인상과의 차이를 표시해 소비자가 직접 조절하게 합니다.'],
+    ];
+
+    const previewStyle = {
+      '--face-line': `${virtualSurgeryTuning.faceLine}%`,
+      '--jaw-balance': `${virtualSurgeryTuning.jawBalance}%`,
+      '--nose-contour': `${virtualSurgeryTuning.noseContour}%`,
+      '--blemish-care': `${virtualSurgeryTuning.blemishCare}%`,
+    } as CSSProperties;
+    const displayedRecommendationCards = virtualSurgeryResult?.recommendations.length
+      ? virtualSurgeryResult.recommendations.map((item, index) => [
+          String(index + 1).padStart(2, '0'),
+          item.title,
+          item.summary,
+          item.score,
+        ] as const)
+      : recommendationCards.map(([no, title, copy]) => [no, title, copy, null] as const);
+
+    return (
+      <Box className="app-shell">
+        <AppLangToggle />
+        <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
+          <Stack spacing={3}>
+            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }} spacing={2}>
+              <Box>
+                <Chip label="Beauty Plan Lab" color="primary" variant="outlined" sx={{ mb: 1 }} />
+                <Typography variant="h4" fontWeight={900}>{t('가상 성형 추천 시스템')}</Typography>
+                <Typography color="text.secondary">
+                  {t('사진을 올리기 전에도 추천 흐름을 이해할 수 있도록, 얼굴 비율 분석·자연스러운 변화 강도·점 제거 후보를 한 화면에서 보여줍니다.')}
+                </Typography>
+              </Box>
+              <Button startIcon={<ArrowLeft size={16} />} onClick={goHome}>{t('홈으로')}</Button>
+            </Stack>
+
+            <Paper elevation={0} className="virtual-upload-panel">
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={5}>
+                  <Box
+                    component="label"
+                    className={`virtual-upload-drop${virtualSurgeryDragOver ? ' is-over' : ''}`}
+                    onDragOver={(event: React.DragEvent) => { event.preventDefault(); setVirtualSurgeryDragOver(true); }}
+                    onDragLeave={() => setVirtualSurgeryDragOver(false)}
+                    onDrop={(event: React.DragEvent) => {
+                      event.preventDefault();
+                      setVirtualSurgeryDragOver(false);
+                      const file = event.dataTransfer.files?.[0];
+                      if (file) void handleVirtualSurgeryUpload(file);
+                    }}
+                  >
+                    {virtualSurgeryPreview ? (
+                      <img src={virtualSurgeryPreview} alt={t('가상 성형 추천에 사용할 얼굴 사진')} />
+                    ) : (
+                      <Stack alignItems="center" spacing={1.2} sx={{ textAlign: 'center', px: 2 }}>
+                        <Box className="nail-dropzone-icon"><ImagePlus size={30} /></Box>
+                        <Typography variant="h6" fontWeight={900}>{t('얼굴 사진 업로드')}</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {t('정면 얼굴과 밝은 조명의 JPG·PNG 사진을 권장합니다.')}
+                        </Typography>
+                      </Stack>
+                    )}
+                    <input
+                      hidden
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void handleVirtualSurgeryUpload(file);
+                        event.target.value = '';
+                      }}
+                    />
+                  </Box>
+                </Grid>
+                <Grid item xs={12} md={7}>
+                  <Stack spacing={1.5}>
+                    <Typography variant="h6" fontWeight={900}>{t('내 얼굴 기준 추천 생성')}</Typography>
+                    <Typography color="text.secondary">
+                      {t('업로드하면 얼굴형 지표, 자연스러움 점수, 점·잡티 후보와 전후 미리보기를 생성합니다.')}
+                    </Typography>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                      <Button
+                        variant="contained"
+                        component="label"
+                        startIcon={<ImagePlus size={18} />}
+                        disabled={virtualSurgeryLoading}
+                      >
+                        {virtualSurgeryPreview ? t('다른 사진 선택') : t('사진 선택')}
+                        <input
+                          hidden
+                          type="file"
+                          accept="image/*"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void handleVirtualSurgeryUpload(file);
+                            event.target.value = '';
+                          }}
+                        />
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        startIcon={<RefreshCcw size={18} />}
+                        disabled={!virtualSurgeryFile || virtualSurgeryLoading}
+                        onClick={() => void rerunVirtualSurgery()}
+                      >
+                        {t('현재 강도로 다시 생성')}
+                      </Button>
+                    </Stack>
+                    {virtualSurgeryLoading && <LinearProgress />}
+                    {virtualSurgeryResult && (
+                      <Alert severity={virtualSurgeryResult.detected ? 'success' : 'warning'}>
+                        {virtualSurgeryResult.message}
+                      </Alert>
+                    )}
+                  </Stack>
+                </Grid>
+              </Grid>
+            </Paper>
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={7}>
+                <Paper elevation={0} className="virtual-preview-panel">
+                  {virtualSurgeryResult?.detected ? (
+                    <Grid container spacing={1.5}>
+                      <Grid item xs={12} sm={6}>
+                        <Box className="virtual-result-image">
+                          <span>Before</span>
+                          <img src={virtualSurgeryResult.original_image} alt={t('원본 얼굴 사진')} />
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <Box className="virtual-result-image">
+                          <span>Recommended</span>
+                          <img src={virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12}>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          {virtualSurgeryResult.face_shape?.shape && (
+                            <Chip label={virtualSurgeryResult.face_shape.shape} color="primary" variant="outlined" />
+                          )}
+                          <Chip label={`자연스러움 ${virtualSurgeryResult.metrics.naturalness_score ?? '-'}점`} variant="outlined" />
+                          <Chip label={`점·잡티 후보 ${virtualSurgeryResult.metrics.blemish_candidates ?? 0}개`} variant="outlined" />
+                        </Stack>
+                      </Grid>
+                    </Grid>
+                  ) : (
+                    <Box className="virtual-face-stage" style={previewStyle}>
+                      <Box className="virtual-before">
+                        <span>Before</span>
+                      </Box>
+                      <Box className="virtual-after">
+                        <span>Recommended</span>
+                      </Box>
+                      <Box className="virtual-face-outline">
+                        <Box className="virtual-eye virtual-eye-left" />
+                        <Box className="virtual-eye virtual-eye-right" />
+                        <Box className="virtual-nose" />
+                        <Box className="virtual-mouth" />
+                        <Box className="virtual-blemish one" />
+                        <Box className="virtual-blemish two" />
+                      </Box>
+                      <Box className="virtual-scan-line" />
+                    </Box>
+                  )}
+                </Paper>
+              </Grid>
+
+              <Grid item xs={12} md={5}>
+                <Paper elevation={0} className="virtual-control-panel">
+                  <Stack spacing={2.25}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Box className="module-icon"><SlidersHorizontal size={22} /></Box>
+                      <Box>
+                        <Typography variant="h6" fontWeight={900}>{t('추천 강도')}</Typography>
+                        <Typography variant="body2" color="text.secondary">{t('의료 판단이 아닌 비의료 미용 시뮬레이션 기준입니다.')}</Typography>
+                      </Box>
+                    </Stack>
+                    {tuningItems.map((item) => (
+                      <Box key={item.key}>
+                        <Stack direction="row" justifyContent="space-between" spacing={1}>
+                          <Typography fontWeight={800}>{t(item.label)}</Typography>
+                          <Typography color="primary" fontWeight={900}>{virtualSurgeryTuning[item.key]}%</Typography>
+                        </Stack>
+                        <Slider
+                          size="small"
+                          value={virtualSurgeryTuning[item.key]}
+                          min={0}
+                          max={100}
+                          onChange={(_, value) => setVirtualSurgeryTuning((prev) => ({ ...prev, [item.key]: value as number }))}
+                        />
+                        <Typography variant="caption" color="text.secondary">{t(item.helper)}</Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Paper>
+              </Grid>
+            </Grid>
+
+            <Grid container spacing={2}>
+              {displayedRecommendationCards.map(([no, title, copy, score]) => (
+                <Grid item xs={12} md={4} key={no}>
+                  <Paper elevation={0} className="virtual-reco-card">
+                    <span className="virtual-reco-no">{no}</span>
+                    {score !== null && (
+                      <Chip label={`${score}점`} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
+                    )}
+                    <Typography variant="h6" fontWeight={900}>{t(title)}</Typography>
+                    <Typography color="text.secondary">{t(copy)}</Typography>
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
+
+            <Alert severity="info">
+              {t('다음 단계에서는 얼굴 사진 업로드 후 기존 Face Mesh 분석을 연결해 사용자별 추천과 전후 비교 이미지를 생성할 수 있습니다.')}
+            </Alert>
+          </Stack>
+        </Container>
+      </Box>
+    );
+  }
+
+  function renderVirtualSurgeryFlowPage() {
+    const flowSteps = ['개인정보 입력', 'AI 성형 분석', '얼굴형 분석결과', '개선 얼굴형 선택', '비율 조절', '결과지 출력'];
+    const targetCards = [
+      {
+        id: 'oval',
+        title: '계란형 밸런스',
+        copy: '전체 얼굴선은 유지하면서 턱선과 광대 폭을 부드럽게 정리합니다.',
+        tuning: { faceLine: 44, jawBalance: 32, noseContour: 28, blemishCare: 50 },
+      },
+      {
+        id: 'vline',
+        title: 'V라인 윤곽',
+        copy: '하관과 턱끝 중심으로 갸름한 인상을 강조합니다.',
+        tuning: { faceLine: 68, jawBalance: 64, noseContour: 32, blemishCare: 45 },
+      },
+      {
+        id: 'soft',
+        title: '부드러운 동안형',
+        copy: '각진 인상을 줄이고 볼륨감과 부드러운 얼굴선을 우선합니다.',
+        tuning: { faceLine: 34, jawBalance: 22, noseContour: 24, blemishCare: 58 },
+      },
+      {
+        id: 'defined',
+        title: '입체 세련형',
+        copy: '코 라인과 중안부 입체감을 살려 또렷한 인상을 만듭니다.',
+        tuning: { faceLine: 46, jawBalance: 34, noseContour: 62, blemishCare: 42 },
+      },
+    ] as const;
+    const concernOptions = [
+      '윤곽·얼굴형',
+      '턱끝·하관',
+      '광대·볼 폭',
+      '코 라인',
+      '중안부 비율',
+      '점·잡티 제거',
+    ];
+    const desiredMoodOptions = [
+      '자연스러운 변화',
+      'V라인처럼 갸름하게',
+      '부드러운 동안 이미지',
+      '또렷하고 세련된 인상',
+      '좌우 균형 개선',
+      '피부결까지 깨끗하게',
+    ];
+    const tuningItems = [
+      { key: 'faceLine', label: '얼굴 프레임', helper: '광대와 얼굴 폭을 자연스럽게 정리' },
+      { key: 'jawBalance', label: '턱 밸런스', helper: '하관 길이와 턱끝 인상을 부드럽게 조정' },
+      { key: 'noseContour', label: '코 라인', helper: '콧대와 코끝의 입체감을 과하지 않게 제안' },
+      { key: 'blemishCare', label: '점·잡티 제거', helper: '클릭 제거형 피부 보정 후보로 분리' },
+    ] as const;
+    const selectedTarget = targetCards.find((item) => item.id === virtualSurgeryTarget) ?? targetCards[0];
+    const resultCards = virtualSurgeryResult?.recommendations.length
+      ? virtualSurgeryResult.recommendations
+      : [
+          { title: '윤곽 균형 추천', score: 80, summary: selectedTarget.copy, category: 'face_frame' },
+          { title: '자연스러움 기준', score: 76, summary: '변화 강도를 높일수록 전후 차이는 커지고 원래 인상 보존 점수는 낮아집니다.', category: 'naturalness' },
+          { title: '점·잡티 제거 후보', score: 70, summary: '사진 분석 후 작은 점과 잡티 후보를 분리해 사용자가 확인할 수 있게 합니다.', category: 'blemish' },
+        ];
+
+    const canContinue =
+      virtualSurgeryStep === 0 ? virtualSurgeryProfile.privacyConsent
+      : virtualSurgeryStep === 1 ? Boolean(virtualSurgeryResult?.detected)
+      : virtualSurgeryStep === 2 ? Boolean(virtualSurgeryResult?.detected)
+      : virtualSurgeryStep === 3 ? Boolean(virtualSurgeryTarget)
+      : virtualSurgeryStep === 4 ? Boolean(virtualSurgeryResult?.detected)
+      : true;
+
+    const goNextVirtualStep = () => setVirtualSurgeryStep((step) => Math.min(step + 1, flowSteps.length - 1));
+    const goPrevVirtualStep = () => setVirtualSurgeryStep((step) => Math.max(step - 1, 0));
+
+    const uploadBox = (
+      <Box
+        component="label"
+        className={`virtual-upload-drop${virtualSurgeryDragOver ? ' is-over' : ''}`}
+        onDragOver={(event: React.DragEvent) => { event.preventDefault(); setVirtualSurgeryDragOver(true); }}
+        onDragLeave={() => setVirtualSurgeryDragOver(false)}
+        onDrop={(event: React.DragEvent) => {
+          event.preventDefault();
+          setVirtualSurgeryDragOver(false);
+          const file = event.dataTransfer.files?.[0];
+          if (file) void handleVirtualSurgeryUpload(file);
+        }}
+      >
+        {virtualSurgeryPreview ? (
+          <img src={virtualSurgeryPreview} alt={t('가상 성형 분석용 얼굴 사진')} />
+        ) : (
+          <Stack alignItems="center" spacing={1.2} sx={{ textAlign: 'center', px: 2 }}>
+            <Box className="nail-dropzone-icon"><ImagePlus size={30} /></Box>
+            <Typography variant="h6" fontWeight={900}>{t('얼굴 사진 업로드')}</Typography>
+            <Typography variant="body2" color="text.secondary">{t('정면 얼굴과 밝은 조명의 JPG·PNG 사진을 권장합니다.')}</Typography>
+          </Stack>
+        )}
+        <input
+          hidden
+          type="file"
+          accept="image/*"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void handleVirtualSurgeryUpload(file);
+            event.target.value = '';
+          }}
+        />
+      </Box>
+    );
+
+    const beforeAfter = virtualSurgeryResult?.detected ? (
+      <Grid container spacing={1.5}>
+        <Grid item xs={12} sm={6}>
+          <Box className="virtual-result-image">
+            <span>Before</span>
+            <img src={virtualSurgeryResult.original_image} alt={t('원본 얼굴 사진')} />
+          </Box>
+        </Grid>
+        <Grid item xs={12} sm={6}>
+          <Box className="virtual-result-image">
+            <span>Recommended</span>
+            <img src={virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
+          </Box>
+        </Grid>
+      </Grid>
+    ) : uploadBox;
+
+    const renderFlowStep = () => {
+      if (virtualSurgeryStep === 0) {
+        return (
+          <Paper elevation={0} className="virtual-upload-panel">
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <Stack spacing={2}>
+                  <Typography variant="h5" fontWeight={900}>{t('개인정보 입력')}</Typography>
+                  <Typography color="text.secondary">{t('성형 추천은 얼굴 비율과 사용자가 원하는 개선 방향을 함께 봅니다.')}</Typography>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>{t('성별')}</InputLabel>
+                      <Select
+                        label={t('성별')}
+                        value={virtualSurgeryProfile.gender}
+                        onChange={(event) => setVirtualSurgeryProfile((prev) => ({ ...prev, gender: event.target.value }))}
+                      >
+                        <MenuItem value="female">{t('여성')}</MenuItem>
+                        <MenuItem value="male">{t('남성')}</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>{t('나이대')}</InputLabel>
+                      <Select
+                        label={t('나이대')}
+                        value={virtualSurgeryProfile.ageGroup}
+                        onChange={(event) => setVirtualSurgeryProfile((prev) => ({ ...prev, ageGroup: event.target.value }))}
+                      >
+                        {ageGroups.filter((item) => !['baby', 'child'].includes(item.value)).map((item) => (
+                          <MenuItem key={item.value} value={item.value}>{t(item.label)}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Stack>
+                  <Box>
+                    <Typography fontWeight={900} sx={{ mb: 1 }}>{t('가장 개선하고 싶은 부위')}</Typography>
+                    <Box className="virtual-choice-grid">
+                      {concernOptions.map((option) => (
+                        <Button
+                          key={option}
+                          variant={virtualSurgeryProfile.concern === option ? 'contained' : 'outlined'}
+                          onClick={() => setVirtualSurgeryProfile((prev) => ({ ...prev, concern: option }))}
+                        >
+                          {t(option)}
+                        </Button>
+                      ))}
+                    </Box>
+                  </Box>
+                  <Box>
+                    <Typography fontWeight={900} sx={{ mb: 1 }}>{t('원하는 변화 이미지')}</Typography>
+                    <Box className="virtual-choice-grid">
+                      {desiredMoodOptions.map((option) => (
+                        <Button
+                          key={option}
+                          variant={virtualSurgeryProfile.desiredMood === option ? 'contained' : 'outlined'}
+                          onClick={() => setVirtualSurgeryProfile((prev) => ({ ...prev, desiredMood: option }))}
+                        >
+                          {t(option)}
+                        </Button>
+                      ))}
+                    </Box>
+                  </Box>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={virtualSurgeryProfile.privacyConsent}
+                        onChange={(event) => setVirtualSurgeryProfile((prev) => ({ ...prev, privacyConsent: event.target.checked }))}
+                      />
+                    }
+                    label={t('비의료 참고용 가상 성형 분석 및 이미지 처리에 동의합니다.')}
+                  />
+                </Stack>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <Paper elevation={0} className="virtual-step-guide">
+                  <Typography variant="h6" fontWeight={900}>{t('분석 기준')}</Typography>
+                  <Stack spacing={1.2} sx={{ mt: 2 }}>
+                    {['얼굴형과 상·중·하안부 비율', '턱·광대·코 라인 개선 후보', '원하는 얼굴형 카드 기반 추천', '결과지 출력용 Before / After'].map((item, index) => (
+                      <Stack direction="row" spacing={1} alignItems="center" key={item}>
+                        <span className="virtual-reco-no">{String(index + 1).padStart(2, '0')}</span>
+                        <Typography>{t(item)}</Typography>
+                      </Stack>
+                    ))}
+                  </Stack>
+                </Paper>
+              </Grid>
+            </Grid>
+          </Paper>
+        );
+      }
+
+      if (virtualSurgeryStep === 1) {
+        return (
+          <Paper elevation={0} className="virtual-upload-panel">
+            <Grid container spacing={2} alignItems="center">
+              <Grid item xs={12} md={5}>{uploadBox}</Grid>
+              <Grid item xs={12} md={7}>
+                <Stack spacing={1.5}>
+                  <Typography variant="h5" fontWeight={900}>{t('AI 성형 분석')}</Typography>
+                  <Typography color="text.secondary">{t('얼굴 사진을 업로드하면 얼굴형, 비율, 윤곽 추천 후보를 분석합니다.')}</Typography>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                    <Button variant="contained" component="label" startIcon={<ImagePlus size={18} />} disabled={virtualSurgeryLoading}>
+                      {virtualSurgeryPreview ? t('다른 사진 선택') : t('사진 선택')}
+                      <input hidden type="file" accept="image/*" onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void handleVirtualSurgeryUpload(file);
+                        event.target.value = '';
+                      }} />
+                    </Button>
+                    <Button variant="outlined" startIcon={<RefreshCcw size={18} />} disabled={!virtualSurgeryFile || virtualSurgeryLoading} onClick={() => void rerunVirtualSurgery()}>
+                      {t('AI 성형 분석 실행')}
+                    </Button>
+                  </Stack>
+                  {virtualSurgeryLoading && <LinearProgress />}
+                  {virtualSurgeryResult && <Alert severity={virtualSurgeryResult.detected ? 'success' : 'warning'}>{virtualSurgeryResult.message}</Alert>}
+                </Stack>
+              </Grid>
+            </Grid>
+          </Paper>
+        );
+      }
+
+      if (virtualSurgeryStep === 2) {
+        const ratios = virtualSurgeryResult?.face_shape?.ratios ?? [];
+        return (
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={6}>
+              <Paper elevation={0} className="virtual-preview-panel">{beforeAfter}</Paper>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Paper elevation={0} className="virtual-control-panel">
+                <Typography variant="h5" fontWeight={900}>{t('얼굴형 분석결과')}</Typography>
+                <Typography color="text.secondary" sx={{ mt: 1 }}>{virtualSurgeryResult?.face_shape?.summary}</Typography>
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 2 }}>
+                  <Chip label={virtualSurgeryResult?.face_shape?.shape || '분석 전'} color="primary" variant="outlined" />
+                  <Chip label={`자연스러움 ${virtualSurgeryResult?.metrics.naturalness_score ?? '-'}점`} variant="outlined" />
+                  <Chip label={`점·잡티 후보 ${virtualSurgeryResult?.metrics.blemish_candidates ?? 0}개`} variant="outlined" />
+                </Stack>
+                <Stack spacing={1.3} sx={{ mt: 2 }}>
+                  {ratios.map((ratio) => (
+                    <Box key={ratio.label}>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="body2" fontWeight={800}>{ratio.label}</Typography>
+                        <Typography variant="body2" color="text.secondary">{ratio.width}%</Typography>
+                      </Stack>
+                      <LinearProgress variant="determinate" value={Math.min(100, ratio.width)} sx={{ height: 8, borderRadius: 4 }} />
+                    </Box>
+                  ))}
+                </Stack>
+              </Paper>
+            </Grid>
+          </Grid>
+        );
+      }
+
+      if (virtualSurgeryStep === 3) {
+        return (
+          <Paper elevation={0} className="virtual-upload-panel">
+            <Typography variant="h5" fontWeight={900}>{t('원하는 개선된 얼굴형 카드 선택')}</Typography>
+            <Typography color="text.secondary" sx={{ mt: 0.5 }}>{t('부위별 슬라이더보다 먼저 목표 얼굴형을 고르면 추천 방향이 더 직관적입니다.')}</Typography>
+            <Grid container spacing={2} sx={{ mt: 1 }}>
+              {targetCards.map((card) => (
+                <Grid item xs={12} sm={6} md={3} key={card.id}>
+                  <Paper
+                    elevation={0}
+                    className={`virtual-target-card${virtualSurgeryTarget === card.id ? ' selected' : ''}`}
+                    onClick={() => {
+                      setVirtualSurgeryTarget(card.id);
+                      setVirtualSurgeryTuning(card.tuning);
+                    }}
+                  >
+                    <Box className={`virtual-target-face ${card.id}`} />
+                    <Typography variant="h6" fontWeight={900}>{t(card.title)}</Typography>
+                    <Typography variant="body2" color="text.secondary">{t(card.copy)}</Typography>
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
+          </Paper>
+        );
+      }
+
+      if (virtualSurgeryStep === 4) {
+        return (
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={7}>
+              <Paper elevation={0} className="virtual-preview-panel">{beforeAfter}</Paper>
+            </Grid>
+            <Grid item xs={12} md={5}>
+              <Paper elevation={0} className="virtual-control-panel">
+                <Stack spacing={2.25}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Box className="module-icon"><SlidersHorizontal size={22} /></Box>
+                    <Box>
+                      <Typography variant="h6" fontWeight={900}>{t('비율, 게이지 퍼센티지 조절')}</Typography>
+                      <Typography variant="body2" color="text.secondary">{t(`선택한 목표: ${selectedTarget.title}`)}</Typography>
+                    </Box>
+                  </Stack>
+                  {tuningItems.map((item) => (
+                    <Box key={item.key}>
+                      <Stack direction="row" justifyContent="space-between" spacing={1}>
+                        <Typography fontWeight={800}>{t(item.label)}</Typography>
+                        <Typography color="primary" fontWeight={900}>{virtualSurgeryTuning[item.key]}%</Typography>
+                      </Stack>
+                      <Slider
+                        size="small"
+                        value={virtualSurgeryTuning[item.key]}
+                        min={0}
+                        max={100}
+                        onChange={(_, value) => setVirtualSurgeryTuning((prev) => ({ ...prev, [item.key]: value as number }))}
+                      />
+                      <Typography variant="caption" color="text.secondary">{t(item.helper)}</Typography>
+                    </Box>
+                  ))}
+                  <Button variant="contained" startIcon={<RefreshCcw size={18} />} disabled={!virtualSurgeryFile || virtualSurgeryLoading} onClick={() => void rerunVirtualSurgery()}>
+                    {t('현재 비율로 다시 생성')}
+                  </Button>
+                  {virtualSurgeryLoading && <LinearProgress />}
+                </Stack>
+              </Paper>
+            </Grid>
+          </Grid>
+        );
+      }
+
+      return (
+        <Box>
+          <Box className="virtual-report-stage">
+            <Paper elevation={0} className="virtual-report-card">
+              <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
+                <Box>
+                  <Typography className="report-brand">YoPalette</Typography>
+                  <Typography variant="h4" fontWeight={900}>{t('성형 밸런스 결과지')}</Typography>
+                  <Typography color="text.secondary">{new Date().toISOString().slice(0, 10)}</Typography>
+                </Box>
+                <Chip label={t('비의료 참고용')} color="primary" variant="outlined" sx={{ alignSelf: { xs: 'flex-start', md: 'center' } }} />
+              </Stack>
+              <Grid container spacing={2} sx={{ mt: 1 }}>
+                <Grid item xs={12} md={7}>{beforeAfter}</Grid>
+                <Grid item xs={12} md={5}>
+                  <Stack spacing={1.5}>
+                    <Paper elevation={0} className="virtual-report-summary">
+                      <Typography fontWeight={900}>{t('선택한 개선 얼굴형')}</Typography>
+                      <Typography variant="h6" fontWeight={900}>{t(selectedTarget.title)}</Typography>
+                      <Typography color="text.secondary">{t(selectedTarget.copy)}</Typography>
+                    </Paper>
+                    <Paper elevation={0} className="virtual-report-summary">
+                      <Typography fontWeight={900}>{t('조절 퍼센티지')}</Typography>
+                      {tuningItems.map((item) => (
+                        <Stack key={item.key} direction="row" justifyContent="space-between">
+                          <Typography variant="body2">{t(item.label)}</Typography>
+                          <Typography variant="body2" fontWeight={900}>{virtualSurgeryTuning[item.key]}%</Typography>
+                        </Stack>
+                      ))}
+                    </Paper>
+                  </Stack>
+                </Grid>
+              </Grid>
+              <Grid container spacing={1.5} sx={{ mt: 1 }}>
+                {resultCards.map((card, index) => (
+                  <Grid item xs={12} md={4} key={`${card.category}-${index}`}>
+                    <Paper elevation={0} className="virtual-reco-card">
+                      <span className="virtual-reco-no">{String(index + 1).padStart(2, '0')}</span>
+                      <Chip label={`${card.score}점`} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
+                      <Typography variant="h6" fontWeight={900}>{t(card.title)}</Typography>
+                      <Typography color="text.secondary">{t(card.summary)}</Typography>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+              <Alert severity="info" sx={{ mt: 2 }}>{virtualSurgeryResult?.disclaimer || t('비의료 참고용 가상 성형 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.')}</Alert>
+            </Paper>
+          </Box>
+        </Box>
+      );
+    };
+
+    return (
+      <Box className="app-shell">
+        <AppLangToggle />
+        <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
+          <Stack spacing={2}>
+            <Paper elevation={0} className="virtual-flow-header">
+              <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
+                <Box>
+                  <Chip label="AI Surgery Plan" color="primary" variant="outlined" sx={{ mb: 1 }} />
+                  <Typography variant="h4" fontWeight={900}>{t('가상 성형 추천 시스템')}</Typography>
+                  <Typography color="text.secondary">{t('개인정보 입력부터 성형 밸런스 결과지까지 단계별로 진행합니다.')}</Typography>
+                </Box>
+                <Button startIcon={<ArrowLeft size={16} />} onClick={goHome}>{t('홈으로')}</Button>
+              </Stack>
+              <Stepper activeStep={virtualSurgeryStep} alternativeLabel sx={{ mt: 3 }}>
+                {flowSteps.map((step, index) => (
+                  <Step key={step} completed={index < virtualSurgeryStep}>
+                    <StepLabel
+                      onClick={() => {
+                        if (index <= virtualSurgeryStep || (index === 1 && virtualSurgeryProfile.privacyConsent) || (index <= 5 && virtualSurgeryResult?.detected)) {
+                          setVirtualSurgeryStep(index);
+                        }
+                      }}
+                      sx={{ cursor: index <= virtualSurgeryStep || virtualSurgeryResult?.detected ? 'pointer' : 'default' }}
+                    >
+                      {t(step)}
+                    </StepLabel>
+                  </Step>
+                ))}
+              </Stepper>
+            </Paper>
+            {error && <Alert severity="error">{error}</Alert>}
+            {renderFlowStep()}
+            <Paper elevation={0} className="virtual-flow-footer">
+              <Stack direction="row" justifyContent="space-between" alignItems="center">
+                <Button variant="outlined" startIcon={<ArrowLeft size={16} />} disabled={virtualSurgeryStep === 0} onClick={goPrevVirtualStep}>
+                  {t('이전')}
+                </Button>
+                <Typography variant="body2" color="text.secondary">{virtualSurgeryStep + 1} / {flowSteps.length}</Typography>
+                <Button variant="contained" endIcon={<ArrowRight size={16} />} disabled={!canContinue || virtualSurgeryStep === flowSteps.length - 1} onClick={goNextVirtualStep}>
+                  {t('다음')}
+                </Button>
+              </Stack>
+            </Paper>
+          </Stack>
+        </Container>
+      </Box>
+    );
+  }
+
   function renderNailDesignPage() {
     const primary = nailResult?.detected?.[0];
     const bestSeason = nailResult?.season_fit?.[0];
     return (
       <Box className="app-shell">
+      <AppLangToggle />
         <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
           <Stack spacing={3}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Box>
-                <Typography variant="h4" fontWeight={900}>네일·페디 디자인</Typography>
+                <Typography variant="h4" fontWeight={900}>{t('네일·페디 디자인')}</Typography>
                 <Typography color="text.secondary">
-                  손이나 발 사진을 올리면 비슷한 네일 디자인을 찾아 주고, 퍼스널컬러 시즌과 얼마나 맞는지 알려줍니다.
+                  {t('손이나 발 사진을 올리면 비슷한 네일 디자인을 찾아 주고, 퍼스널컬러 시즌과 얼마나 맞는지 알려줍니다.')}
                 </Typography>
               </Box>
-              <Button startIcon={<ArrowLeft size={16} />} onClick={goHome}>홈으로</Button>
+              <Button startIcon={<ArrowLeft size={16} />} onClick={goHome}>{t('홈으로')}</Button>
             </Stack>
 
             {error && <Alert severity="error">{error}</Alert>}
 
-            <Paper elevation={0} sx={{ p: 3, border: '1px solid #e1e7ef' }}>
-              <Stack spacing={2}>
-                <Button variant="contained" component="label" startIcon={<ImagePlus size={18} />} disabled={nailLoading}>
-                  사진 선택
-                  <input
-                    hidden
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
+            {/* 업로드 영역. 예전엔 전폭 버튼 하나만 있어 결과 전 화면이 텅 비어 보였다(사용자 지적)
+                → 드롭존 + 사용법/촬영팁/시즌 안내로 '결과 전에도 읽을 것'이 있게 만든다. */}
+            {/* 퍼스널컬러 Step1 과 같은 2단 구성: 왼쪽=입력(미리보기+버튼), 오른쪽=안내/결과.
+                예전엔 전폭 드롭존 하나뿐이라 업로드 후 사진만 덩그러니 남아 어색했다(사용자 지적). */}
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={5}>
+                <Stack spacing={2}>
+                  <Box
+                    component="label"
+                    className={`nail-preview kiosk-preview${nailDragOver ? ' is-over' : ''}`}
+                    onDragOver={(event: React.DragEvent) => { event.preventDefault(); setNailDragOver(true); }}
+                    onDragLeave={() => setNailDragOver(false)}
+                    onDrop={(event: React.DragEvent) => {
+                      event.preventDefault();
+                      setNailDragOver(false);
+                      const file = event.dataTransfer.files?.[0];
                       if (file) void handleNailUpload(file);
                     }}
-                  />
-                </Button>
-                {nailLoading && <LinearProgress />}
-                {nailPreview && (
-                  <Box
-                    component="img"
-                    src={nailPreview}
-                    alt="업로드한 네일 사진"
-                    sx={{ maxWidth: 320, borderRadius: 2, border: '1px solid #e1e7ef' }}
-                  />
+                  >
+                    {nailPreview ? (
+                      <img src={nailPreview} alt={t('업로드한 네일 사진')} />
+                    ) : (
+                      <Stack alignItems="center" spacing={1} sx={{ px: 2, textAlign: 'center' }}>
+                        <Box className="nail-dropzone-icon"><ImagePlus size={30} /></Box>
+                        <Typography variant="h6" fontWeight={900}>{t('손·발 사진을 올려 주세요')}</Typography>
+                        <Typography color="text.secondary" variant="body2">
+                          {t('여기로 끌어다 놓거나 눌러서 사진을 선택할 수 있어요. JPG·PNG')}
+                        </Typography>
+                      </Stack>
+                    )}
+                    <input
+                      hidden
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void handleNailUpload(file);
+                        event.target.value = '';
+                      }}
+                    />
+                  </Box>
+
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      component="label"
+                      startIcon={<ImagePlus size={18} />}
+                      disabled={nailLoading}
+                    >
+                      {nailPreview ? t('다른 사진 선택') : t('사진 선택')}
+                      <input
+                        hidden
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void handleNailUpload(file);
+                          event.target.value = '';
+                        }}
+                      />
+                    </Button>
+                    <Button
+                      fullWidth
+                      variant="contained"
+                      startIcon={<Camera size={18} />}
+                      disabled={nailLoading}
+                      onClick={() => void openNailCamera()}
+                    >
+                      {t('카메라로 촬영')}
+                    </Button>
+                  </Stack>
+
+                  {nailCameraOn && (
+                    <Box className="nail-camera">
+                      <Box component="video" ref={videoRef} className="nail-camera-view" autoPlay muted playsInline />
+                      <Stack direction="row" spacing={1} justifyContent="center" sx={{ mt: 1.5 }}>
+                        <Button
+                          variant="contained"
+                          startIcon={<Camera size={18} />}
+                          disabled={!cameraReady || nailLoading}
+                          onClick={() => void captureNailImage()}
+                        >
+                          {t('촬영하기')}
+                        </Button>
+                        <Button variant="outlined" onClick={closeNailCamera}>{t('닫기')}</Button>
+                      </Stack>
+                      {!cameraReady && (
+                        <Typography color="text.secondary" variant="body2" align="center" sx={{ mt: 1 }}>
+                          {t('카메라 권한을 기다리는 중입니다')}
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
+                  <Box component="canvas" ref={canvasRef} sx={{ display: 'none' }} />
+                  {nailLoading && <LinearProgress />}
+                </Stack>
+              </Grid>
+
+              <Grid item xs={12} md={7}>
+                {primary ? (
+                  <Paper elevation={0} className="nail-guide">
+                    <Typography variant="h6" fontWeight={900}>{t('사진 속 컬러')}</Typography>
+                    <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 2 }}>
+                      <Box sx={{ width: 56, height: 56, borderRadius: 2, bgcolor: primary.color_hex, border: '1px solid var(--yp-line)' }} />
+                      <Box>
+                        <Typography fontWeight={700}>{primary.color_hex}</Typography>
+                        <Typography color="text.secondary" variant="body2">
+                          네일 {nailResult.detected.length}개 검출 · 신뢰도 {Math.round(primary.confidence * 100)}%
+                        </Typography>
+                      </Box>
+                    </Stack>
+                    {bestSeason && <Alert severity="success" sx={{ mt: 2 }}>{nailResult.note}</Alert>}
+                  </Paper>
+                ) : (
+                  <Paper elevation={0} className="nail-guide">
+                    <Typography variant="h6" fontWeight={900}>{t('이렇게 동작해요')}</Typography>
+                    <Stack spacing={1.5} sx={{ mt: 2 }}>
+                      {[
+                        ['1', t('사진 업로드'), t('손톱이 잘 보이는 사진 한 장이면 됩니다.')],
+                        ['2', t('네일 검출·대표색 추출'), t('AI가 손톱 영역을 찾아 젤 광택을 뺀 대표 색을 뽑습니다.')],
+                        ['3', t('비슷한 디자인·시즌 적합도'), t('닮은 디자인을 찾아 주고, 7개 퍼스널컬러 시즌과의 궁합을 점수로 보여줍니다.')],
+                      ].map(([no, title, body]) => (
+                        <Stack key={no} direction="row" spacing={1.5} alignItems="flex-start">
+                          <Box className="nail-step-no">{no}</Box>
+                          <Box>
+                            <Typography fontWeight={800}>{title}</Typography>
+                            <Typography color="text.secondary" variant="body2">{body}</Typography>
+                          </Box>
+                        </Stack>
+                      ))}
+                    </Stack>
+                    <Typography variant="body2" fontWeight={800} sx={{ mt: 3 }}>{t('사진 촬영 팁')}</Typography>
+                    <Stack spacing={1} sx={{ mt: 1 }}>
+                      {[
+                        t('밝은 곳에서 그림자 없이 찍어 주세요.'),
+                        t('손 전체보다 손톱이 크게 나오게 찍으면 정확합니다.'),
+                        t('색이 잘 보이도록 정면에서 찍어 주세요.'),
+                      ].map((tip) => (
+                        <Stack key={tip} direction="row" spacing={1} alignItems="flex-start">
+                          <Box className="nail-tip-dot" />
+                          <Typography color="text.secondary" variant="body2">{tip}</Typography>
+                        </Stack>
+                      ))}
+                    </Stack>
+                    <Typography variant="body2" fontWeight={800} sx={{ mt: 2.5 }}>{t('확인할 수 있는 시즌')}</Typography>
+                    <Stack direction="row" flexWrap="wrap" gap={0.8} sx={{ mt: 1 }}>
+                      {['봄 웜 라이트', '봄 웜 브라이트', '여름 쿨 라이트', '여름 쿨 뮤트',
+                        '가을 웜 뮤트', '가을 웜 딥', '겨울 쿨 딥'].map((season) => (
+                        <Chip key={season} label={t(season)} size="small" variant="outlined" />
+                      ))}
+                    </Stack>
+                  </Paper>
                 )}
-              </Stack>
-            </Paper>
+              </Grid>
+            </Grid>
 
             {nailResult && !nailResult.feature_available && (
               <Alert severity="info">{nailResult.note}</Alert>
@@ -3215,25 +4742,103 @@ export default function App() {
 
             {primary && (
               <>
-                <Paper elevation={0} sx={{ p: 3, border: '1px solid #e1e7ef' }}>
-                  <Stack spacing={2}>
-                    <Typography variant="h6" fontWeight={800}>사진 속 컬러</Typography>
-                    <Stack direction="row" spacing={2} alignItems="center">
-                      <Box sx={{ width: 56, height: 56, borderRadius: 2, bgcolor: primary.color_hex, border: '1px solid #e1e7ef' }} />
+                {/* 발색 미리보기 — 추천 색을 고르면 검출된 손·발톱에 그 색을 입혀 보여준다. */}
+                {!!nailResult.recommended_palette?.length && (
+                  <Paper elevation={0} sx={{ p: 3, border: '1px solid var(--yp-line)' }}>
+                    <Stack spacing={2}>
                       <Box>
-                        <Typography fontWeight={700}>{primary.color_hex}</Typography>
+                        <Typography variant="h6" fontWeight={800}>{t('발라보기')}</Typography>
                         <Typography color="text.secondary" variant="body2">
-                          네일 {nailResult.detected.length}개 검출 · 신뢰도 {Math.round(primary.confidence * 100)}%
+                          {t('추천 색을 고르면 사진 속 손톱에 그 색을 입혀 보여드려요.')}
                         </Typography>
                       </Box>
+                      <Stack direction="row" flexWrap="wrap" gap={1}>
+                        {nailResult.recommended_palette.map((shade) => (
+                          <Stack
+                            key={shade.name}
+                            alignItems="center"
+                            spacing={0.5}
+                            className={`nail-swatch${nailShade?.name === shade.name ? ' is-active' : ''}`}
+                            onClick={() => void applyNailShade(shade)}
+                          >
+                            <Box className="nail-swatch-dot" sx={{ bgcolor: shade.hex }} />
+                            <Typography variant="caption">{t(shade.name)}</Typography>
+                          </Stack>
+                        ))}
+                      </Stack>
+                      {nailTryOn && (
+                        <Grid container spacing={2}>
+                          <Grid item xs={12} sm={6}>
+                            <Typography variant="caption" color="text.secondary">{t('원본')}</Typography>
+                            <Box component="img" src={nailPreview} alt={t('업로드한 네일 사진')} className="nail-tryon-img" />
+                          </Grid>
+                          <Grid item xs={12} sm={6}>
+                            <Typography variant="caption" color="text.secondary">
+                              {t('발색 미리보기')}{nailShade ? ` · ${t(nailShade.name)}` : ''}
+                            </Typography>
+                            <Box component="img" src={nailTryOn} alt={t('발색 미리보기')} className="nail-tryon-img" />
+                          </Grid>
+                        </Grid>
+                      )}
+                      {nailTryOn && (
+                        <Alert severity="info" sx={{ py: 0.5 }}>
+                          {t('검출된 손톱 영역을 타원으로 근사해 색을 입힌 결과라 실제 발색과 다를 수 있어요.')}
+                        </Alert>
+                      )}
                     </Stack>
-                    {bestSeason && <Alert severity="success">{nailResult.note}</Alert>}
-                  </Stack>
-                </Paper>
+                  </Paper>
+                )}
+
+                {/* 선택한 색으로 살 수 있는 실제 상품 */}
+                {/* 분석 결과가 있으면 항상 노출한다 — 예전엔 0건일 때 영역째 사라져
+                    '상품추천이 아예 없는 화면'처럼 보였다. */}
+                {(nailProductsLoading || nailShade !== null) && (
+                  <Paper elevation={0} sx={{ p: 3, border: '1px solid var(--yp-line)' }}>
+                    <Stack spacing={2}>
+                      <Stack
+                        direction={{ xs: 'column', sm: 'row' }}
+                        justifyContent="space-between"
+                        alignItems={{ xs: 'stretch', sm: 'center' }}
+                        spacing={1.5}
+                      >
+                        <Typography variant="h6" fontWeight={800}>
+                          {t('이 컬러로 살 수 있는 상품')}
+                        </Typography>
+                        {/* 지역/플랫폼을 바꾸면 선택한 색으로 즉시 다시 조회한다. */}
+                        <ItemMarketFilter
+                          region={itemRegion}
+                          platform={itemPlatform}
+                          onRegionChange={(next) => {
+                            setItemRegion(next);
+                            setItemPlatform('all');
+                            if (nailShade) void loadNailProducts(nailShade, next, 'all');
+                          }}
+                          onPlatformChange={(next) => {
+                            setItemPlatform(next);
+                            if (nailShade) void loadNailProducts(nailShade, itemRegion, next);
+                          }}
+                        />
+                      </Stack>
+                      {nailProductsLoading && <LinearProgress />}
+                      <Grid container spacing={1.5}>
+                        {nailProducts.map((product) => (
+                          <Grid item xs={12} sm={6} md={4} key={product.id}>
+                            <RakutenProductCard product={product} selectedPlatform={itemPlatform} />
+                          </Grid>
+                        ))}
+                      </Grid>
+                      {!nailProductsLoading && !nailProducts.length && (
+                        <Typography color="text.secondary" variant="body2">
+                          {t('이 카테고리에 맞는 상품이 없어요.')}
+                        </Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                )}
 
                 <Paper elevation={0} sx={{ p: 3, border: '1px solid #e1e7ef' }}>
                   <Stack spacing={2}>
-                    <Typography variant="h6" fontWeight={800}>비슷한 디자인</Typography>
+                    <Typography variant="h6" fontWeight={800}>{t('비슷한 디자인')}</Typography>
                     {nailResult.detected.map((nail) => (
                       <Stack key={nail.index} spacing={1}>
                         <Typography variant="body2" color="text.secondary">
@@ -3265,7 +4870,7 @@ export default function App() {
 
                 <Paper elevation={0} sx={{ p: 3, border: '1px solid #e1e7ef' }}>
                   <Stack spacing={2}>
-                    <Typography variant="h6" fontWeight={800}>퍼스널컬러 시즌 적합도</Typography>
+                    <Typography variant="h6" fontWeight={800}>{t('퍼스널컬러 시즌 적합도')}</Typography>
                     <Stack spacing={1}>
                       {nailResult.season_fit.map((fit) => (
                         <Stack key={fit.label} direction="row" spacing={2} alignItems="center">
@@ -3288,7 +4893,7 @@ export default function App() {
                     {nailResult.recommended_shades.length > 0 && (
                       <Box>
                         <Typography variant="body2" color="text.secondary" gutterBottom>
-                          이 시즌에 어울리는 네일 컬러
+                          {t('이 시즌에 어울리는 네일 컬러')}
                         </Typography>
                         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                           {nailResult.recommended_shades.map((shade) => (
@@ -3307,11 +4912,135 @@ export default function App() {
     );
   }
 
+  /** 피부 케어 결과지. 퍼스널컬러 결과지와 같은 카드 레이아웃을 쓰되 내용은 피부 기준
+   *  (진단 요약·추천 성분·선택 상품·QR)으로 채운다. */
+  /** 피부 케어 결과지. 퍼스널컬러 결과지와 **같은 클래스 체계**를 쓴다
+   *  (print-report-stage > print-report-card > report-top / report-grid).
+   *  자체 클래스를 만들면 CSS 가 없어 사진이 원본 크기로 터진다 — 실제로 그랬다. */
+  function renderSkinReportPage() {
+    const allProducts = [
+      ...(recommendation?.product_columns?.flatMap((col) => col.products) ?? []),
+      ...(recommendation?.products ?? []),
+    ];
+    const picked = skinReportIds
+      .map((id) => allProducts.find((product) => product.id === id))
+      .filter((product): product is Product => Boolean(product));
+    // 담은 게 하나라도 있으면 **담은 것만** 싣는다(퍼스널컬러 결과지와 같은 규칙).
+    // 모자란 칸을 추천 상위로 채우면, 담은 적 없는 상품이 '내가 고른 것'처럼 결과지에 섞인다
+    // (사용자 지적 2026-07-30). 하나도 안 담았을 때만 추천 상위로 채워 빈 결과지를 막는다.
+    const hasPicked = picked.length > 0;
+    const reportProducts = (hasPicked ? picked : allProducts).slice(0, SKIN_REPORT_MAX);
+    const reportDate = new Date().toISOString().slice(0, 10);
+
+    return (
+      <Box>
+        <Box className="print-report-stage">
+          <Box className="print-report-card">
+            <Box className="report-top">
+              <Box>
+                <Typography className="report-kicker">Date /</Typography>
+                <Typography className="report-date">{reportDate}</Typography>
+              </Box>
+              <Box>
+                <Typography className="report-kicker">Skin /</Typography>
+                <Typography className="report-face">
+                  {analysis?.analysis_mode === 'body' ? t('바디 피부 케어') : t('얼굴 피부 케어')}
+                </Typography>
+              </Box>
+              <Typography className="report-brand">YoPalette</Typography>
+            </Box>
+
+            <Box className="report-grid">
+              <Box className="report-left">
+                <Box className="report-photo">
+                  {previewUrls[0] ? <img src={previewUrls[0]} alt={t('분석 사진')} /> : <Sparkles size={34} />}
+                </Box>
+                <Typography className="report-section-title">{t('진단 요약')}</Typography>
+                <Typography className="report-copy">{analysis?.summary || '-'}</Typography>
+                {analysis?.scores && (
+                  <Stack spacing={0.5} sx={{ mt: 1 }}>
+                    {scoreKeys.map((key) => (
+                      <Box key={key} className="score-row">
+                        <Typography variant="caption">{t(scoreLabels[key])}</Typography>
+                        <LinearProgress
+                          variant="determinate"
+                          value={Math.min(100, analysis.scores![key])}
+                          sx={{ height: 6, borderRadius: 3 }}
+                        />
+                        <Typography variant="caption">{Math.round(analysis.scores![key])}</Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
+              </Box>
+
+              <Box className="report-main">
+                <Typography className="report-kicker">{t('추천 성분')}</Typography>
+                <Box className="report-tags" sx={{ mb: 2 }}>
+                  {(recommendation?.ingredients ?? []).slice(0, 6).map((ing) => (
+                    <Chip key={ing.id} size="small" label={ing.name} variant="outlined" />
+                  ))}
+                </Box>
+
+                <Typography className="report-section-title">
+                  {t(hasPicked ? '장바구니' : '추천 상품')}
+                </Typography>
+                <Box className="report-products">
+                  {reportProducts.map((product, index) => (
+                    <Box className="report-product" key={product.id}>
+                      <Box className="report-product-thumb">
+                        <ProductImage src={product.image_url} alt={product.name} fallback={<Sparkles size={18} />} />
+                      </Box>
+                      <Box className="report-product-body">
+                        <span className="report-product-no">{String(index + 1).padStart(2, '0')}</span>
+                        <Typography className="report-product-name">{product.name}</Typography>
+                        <Typography className="report-product-brand">{product.brand}</Typography>
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
+
+                <Box className="report-bottom">
+                  <Box>
+                    <Box
+                      component="img"
+                      className="report-qr-img"
+                      src={qrImageUrl(`${window.location.origin}/#report`)}
+                      alt={t('모바일 레포트 QR')}
+                      sx={{ width: 74, height: 74, display: 'block', border: '6px solid #fff', background: '#fff', borderRadius: '4px' }}
+                    />
+                    <Typography className="report-qr-label">{t('모바일 레포트에서 자세한 진단결과 보기')}</Typography>
+                  </Box>
+                  <Box>
+                    <Box
+                      component="img"
+                      className="report-qr-img"
+                      src={qrImageUrl(webCartDeepLinkFromProducts(reportProducts))}
+                      alt={t('장바구니 QR')}
+                      sx={{ width: 74, height: 74, display: 'block', border: '6px solid #fff', background: '#fff', borderRadius: '4px' }}
+                    />
+                    <Typography className="report-qr-label">{t('Java WEB 장바구니에 선택 상품 담기')}</Typography>
+                  </Box>
+                </Box>
+              </Box>
+            </Box>
+          </Box>
+        </Box>
+        <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
+          {t(hasPicked
+            ? '추천 단계에서 결과지에 담은 상품만 표시됩니다.'
+            : '추천 단계에서 상품을 담으면 그 상품이 표시됩니다. 지금은 추천 상위를 보여줍니다.')}
+        </Typography>
+      </Box>
+    );
+  }
+
   const pages = [
     renderSurveyPage,
     renderFacePage,
     renderAnalysisPage,
     renderRecommendationPage,
+    renderSkinReportPage,
     renderConsultPage,
   ];
   const CurrentPage = pages[currentStep];
@@ -3328,18 +5057,23 @@ export default function App() {
     return renderNailDesignPage();
   }
 
+  if (appModule === 'virtual-surgery') {
+    return renderVirtualSurgeryFlowPage();
+  }
+
   return (
     <Box className="app-shell">
+      <AppLangToggle />
       <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
         <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, border: '1px solid #e1e7ef' }}>
           <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
             <Box>
-              <Typography variant="h4">BeautyAI</Typography>
-              <Typography color="text.secondary">피부 케어 분석 워크스페이스</Typography>
+              <Typography variant="h4">YoPalette</Typography>
+              <Typography color="text.secondary">{t('피부 케어 분석 워크스페이스')}</Typography>
             </Box>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
               <Button variant="outlined" onClick={goHome}>
-                홈으로
+                {t('홈으로')}
               </Button>
               <Button
                 variant="contained"
@@ -3347,7 +5081,7 @@ export default function App() {
                 disabled={!canGoNext()}
                 onClick={goNext}
               >
-                {currentStep === 1 ? '분석 시작' : currentStep === 4 ? '완료' : '다음'}
+                {currentStep === 1 ? '분석 시작' : currentStep === 5 ? '완료' : '다음'}
               </Button>
             </Stack>
           </Stack>
@@ -3360,7 +5094,7 @@ export default function App() {
                   }}
                   sx={{ cursor: index <= highestReadyStep + 1 ? 'pointer' : 'default' }}
                 >
-                  {step}
+                  {t(step)}
                 </StepLabel>
               </Step>
             ))}
@@ -3381,7 +5115,7 @@ export default function App() {
               disabled={currentStep === 0}
               onClick={() => setCurrentStep((step) => Math.max(step - 1, 0))}
             >
-              이전
+              {t('이전')}
             </Button>
             <Typography variant="body2" color="text.secondary">
               {currentStep + 1} / {steps.length}
@@ -3392,7 +5126,7 @@ export default function App() {
               disabled={!canGoNext()}
               onClick={goNext}
             >
-              {currentStep === 1 ? '분석 시작' : currentStep === 4 ? '완료' : '다음'}
+              {currentStep === 1 ? '분석 시작' : currentStep === 5 ? '완료' : '다음'}
             </Button>
           </Stack>
         </Paper>

@@ -88,6 +88,11 @@ class RakutenProductOut(BaseModel):
     score: float | None = None
     platform_links: dict[str, str] = Field(default_factory=dict)
     matched_platforms: list[str] = Field(default_factory=list)
+    # 이 상품이 들어갈 아이템매칭 컬럼(lip|blush|eye|base|nail|brow|concealer|lipbalm).
+    # 백엔드가 **컬럼 배분에 쓴 그 판정**을 그대로 실어 보낸다. 예전엔 프론트가 같은 규칙을
+    # TS 로 다시 구현했는데, 한쪽만 고치면 배분(백엔드)과 표시(프론트)가 어긋나 '배분은 됐는데
+    # 다른 컬럼에 뜨거나 아예 안 뜨는' 컬럼 빔이 생겼다. 단일 출처로 통일한다.
+    column: str | None = None
 
 
 class PersonalColorItemMatchRequest(BaseModel):
@@ -96,6 +101,9 @@ class PersonalColorItemMatchRequest(BaseModel):
     region: str = Field(default="jp")
     platform: str = Field(default="all")
     gender: str = Field(default="female")          # "female" | "male" — 카테고리/밸런싱 분기
+    # "instant" = 라이브 검색·네트워크 검증을 건너뛰고 로컬(DB·큐레이션 카탈로그)만으로 즉답한다.
+    # 프론트가 먼저 이걸 띄우고, 이어서 "full" 결과로 교체해 체감 대기를 없앤다.
+    stage: str = Field(default="full")             # "full" | "instant"
 
 
 class PersonalColorItemMatchResponse(BaseModel):
@@ -103,6 +111,8 @@ class PersonalColorItemMatchResponse(BaseModel):
     configured: bool
     products: list[RakutenProductOut]
     message: str
+    # 이 응답이 즉답(로컬 전용)인지. True 면 프론트는 뒤이어 오는 full 응답으로 교체한다.
+    partial: bool = False
 
 
 class MakeupPreviewRequest(BaseModel):
@@ -135,6 +145,24 @@ class FaceShapeResponse(BaseModel):
     blusher_tip: str
     shading_tip: str
     metrics: dict[str, object] = Field(default_factory=dict)
+
+
+class VirtualSurgeryRecommendation(BaseModel):
+    title: str
+    category: str
+    score: int
+    summary: str
+
+
+class VirtualSurgeryResponse(BaseModel):
+    detected: bool
+    message: str
+    original_image: str
+    preview_image: str
+    face_shape: FaceShapeResponse | None = None
+    recommendations: list[VirtualSurgeryRecommendation] = Field(default_factory=list)
+    metrics: dict[str, object] = Field(default_factory=dict)
+    disclaimer: str
 
 
 class RecommendationRequest(BaseModel):
@@ -243,6 +271,13 @@ class DetectedNail(BaseModel):
     matches: list[NailDesignMatch] = Field(default_factory=list)
 
 
+class NailShade(BaseModel):
+    """추천 네일 색조. 프론트가 스와치 표시와 '발색 미리보기'에 hex 를 그대로 쓴다."""
+
+    name: str
+    hex: str
+
+
 class AnalyzeNailDesignResponse(BaseModel):
     feature_available: bool          # 모델·인덱스가 없으면 False(에러 대신 비활성 응답)
     index_size: int
@@ -251,5 +286,7 @@ class AnalyzeNailDesignResponse(BaseModel):
     season_fit: list[NailSeasonFit] = Field(default_factory=list)
     # PROFILES 의 네일 색이름 그대로라 item-match 라이브 검색 키워드로 바로 넘길 수 있다.
     recommended_shades: list[str] = Field(default_factory=list)
+    # 위와 같은 색조에 hex 를 붙인 것(스와치·미리보기용). 이름만으로는 색을 칠할 수 없다.
+    recommended_palette: list[NailShade] = Field(default_factory=list)
     note: str = ""
 

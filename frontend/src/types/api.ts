@@ -81,6 +81,9 @@ export type RakutenProduct = {
   score?: number | null;
   platform_links?: Record<string, string>;
   matched_platforms?: string[];
+  // 백엔드가 정한 아이템매칭 컬럼(lip|blush|eye|base|nail|brow|concealer|lipbalm).
+  // 컬럼 배분과 표시가 같은 판정을 쓰도록 백엔드에서 내려준다(itemMatchColumnFor 주석 참고).
+  column?: string | null;
 };
 
 export type PersonalColorItemMatchResponse = {
@@ -88,6 +91,8 @@ export type PersonalColorItemMatchResponse = {
   configured: boolean;
   products: RakutenProduct[];
   message: string;
+  // true = 라이브 검색·입점 검증을 건너뛴 즉답. 뒤이어 오는 full 응답으로 교체된다.
+  partial?: boolean;
 };
 
 export type Ingredient = {
@@ -155,6 +160,31 @@ export type FaceShapeResponse = {
   metrics: Record<string, unknown>;
 };
 
+export type VirtualSurgeryTuning = {
+  faceLine: number;
+  jawBalance: number;
+  noseContour: number;
+  blemishCare: number;
+};
+
+export type VirtualSurgeryRecommendation = {
+  title: string;
+  category: string;
+  score: number;
+  summary: string;
+};
+
+export type VirtualSurgeryResponse = {
+  detected: boolean;
+  message: string;
+  original_image: string;
+  preview_image: string;
+  face_shape?: FaceShapeResponse | null;
+  recommendations: VirtualSurgeryRecommendation[];
+  metrics: Record<string, unknown>;
+  disclaimer: string;
+};
+
 export type ProductColumn = {
   key: string;           // cleanser|toner|serum|moisturizer|sunscreen
   label: string;         // 클렌저/토너/세럼/보습/선크림
@@ -210,6 +240,8 @@ export type DetectedNail = {
   matches: NailDesignMatch[];
 };
 
+export type NailShade = { name: string; hex: string };
+
 export type AnalyzeNailDesignResponse = {
   // 모델·인덱스가 배포에 빠지면 false로 온다(에러가 아니라 비활성).
   feature_available: boolean;
@@ -218,5 +250,6 @@ export type AnalyzeNailDesignResponse = {
   season_fit: NailSeasonFit[];
   // PROFILES의 네일 색이름 그대로라 item-match 검색어로 바로 넘길 수 있다.
   recommended_shades: string[];
+  recommended_palette?: NailShade[];
   note: string;
 };

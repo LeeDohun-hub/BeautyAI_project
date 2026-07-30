@@ -48,6 +48,13 @@ RUNTIME_MANIFESTS = (
     "oliveyoung_global_products.csv",  # oliveyoung_catalog
     "matsukiyo_products.csv",          # matsukiyo_matcher
     "rakuten_jp_ingredients.csv",      # rakuten_body_links
+    # ⚠ 아래 둘이 빠지면 아마존 버튼이 조용히 무너진다(2026-07-30 배포 직전 발견).
+    #   - amazon_dead_asins.txt : 404 나는 ASIN 블록리스트. 없으면 죽은 링크가 그대로 나간다.
+    #   - amazon_asin_status.json : HTTP 검증 결과("ok"). amazon_catalog 가 사망률 높은 HF 행을
+    #     '검증된 것만' 쓰도록 게이트하는데, 이 파일이 없으면 전부 미검증 취급이라
+    #     아마존 매칭 커버리지가 18.8% → 5% 수준으로 떨어진다(실측 기준).
+    "amazon_dead_asins.txt",           # amazon_catalog (_dead_asins)
+    "amazon_asin_status.json",         # amazon_catalog (_verified_alive_asins)
 )
 
 

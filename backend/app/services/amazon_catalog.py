@@ -14,7 +14,9 @@ Kaggle 'amazon-products-dataset-2023-1.4M'(amazon.com/US)에서 Beauty 상품만
 from __future__ import annotations
 
 import csv
+import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -50,7 +52,9 @@ _KO_TO_EN_BRAND = {
     "자빈드서울": "javin de seoul", "어바웃톤": "about tone", "정샘물": "jung saem mool",
     "무칸": "mukan", "아이소이": "isoi", "오브제": "obge", "다슈": "dashu", "그라펜": "grafen",
     "비올리코": "bioliko", "머지": "merzy", "멀지": "merzy", "멘소래담": "mentholatum",
-    "레브론": "revlon", "바비브라운": "bobbi brown", "삐아": "peripera",
+    # ⚠ 삐아는 BBIA 다. 예전에 "peripera"(페리페라)로 잘못 매핑돼 있어 삐아 블러셔가
+    #   'peripera cheek' 로 질의되고 매칭에 실패했다(KR 아마존 블러셔 컬럼이 0이던 원인 중 하나).
+    "레브론": "revlon", "바비브라운": "bobbi brown", "삐아": "bbia",
     "클럽클리오": "clio", "포멘트": "forment", "투쿨포스쿨": "too cool for school",
     "포니이펙트": "pony effect", "힌스": "hince", "아이디얼포맨": "ideal for men",
     "나인위시스": "ninewishes", "우르오스": "uruos", "블랙몬스터": "black monster",
@@ -63,6 +67,11 @@ _KO_TO_EN_BRAND = {
     "소피나": "sofina", "로토": "rohto", "멜라노씨씨": "melano cc", "나튜리에": "naturie",
     "트란시노": "transino", "굿달": "goodal", "메디큐브": "medicube", "달바": "dalba",
     "닥터지": "dr.g",
+    # 네일 브랜드(2026-07-29 보강). 맵에 없으면 amazon_search_query 가 한글 브랜드를 통째로
+    # 떨어뜨려 질의가 'nail' 같은 일반어만 남고, match_amazon 은 브랜드 일치를 요구하므로
+    # 무조건 실패한다 — 아마존 탭 네일 컬럼이 0이던 원인. 카탈로그 실재 확인 후 추가:
+    # dashing diva(US 20건) · ohora(US 26건/JP 9건) · le ment(JP 4건).
+    "데싱디바": "dashing diva", "오호라": "ohora", "르멘트": "le ment",
 }
 
 # 한국어 화장품 용어 → 영문(아마존 영문 검색용). 색상/제품종류 + 흔한 음차 형용사.
@@ -90,6 +99,16 @@ _KO_TO_EN_TERM = {
     "스킨": "skin", "핏": "fit", "리퀴드": "liquid", "오일": "oil", "밤": "balm",
     "크림": "cream", "세럼": "serum", "에센스": "essence", "선샤인": "sunshine", "글로이": "glowy",
     "쥬시": "juicy", "글래스팅": "glasting", "누디": "nudie", "멜팅": "melting", "슈가": "sugar",
+    # 네일·블러셔 라인어 보강(2026-07-29, 아마존 탭 블러셔·네일 0 건 조사).
+    # 이 토큰들이 없으면 '삐아 레디 투 웨어 다우니 치크'가 'bbia cheek' 두 단어로 줄어,
+    # 카탈로그에 **정확히 같은 상품**('BBIA Ready To Wear Downy Cheek Cream Blush 3.5g')이
+    # 있는데도 라인 유사도가 문턱을 못 넘어 매칭에 실패했다.
+    "레디": "ready", "투": "to", "웨어": "wear", "다우니": "downy", "블러": "blur",
+    "샤벳": "sherbet", "러브": "love", "빔": "beam", "블렌딩": "blending",
+    "매직": "magic", "프레스": "press", "매직프레스": "magic press", "스트립": "strip",
+    "시럽": "syrup", "강화제": "strengthener", "하드너": "hardener", "영양제": "treatment",
+    "탑코트": "top coat", "베이스코트": "base coat", "컬러": "color", "빌더": "builder",
+    "리무버": "remover", "큐티클": "cuticle", "페디큐어": "pedicure", "페디": "pedi",
     # 제품 라인/타입어 보강(실측 미매칭: 미샤 타임레볼루션, 큐렐 인텐시브 모이스처, 홀리카 알로에 젤 등).
     "타임": "time", "리볼루션": "revolution", "타임레볼루션": "time revolution",
     "알로에": "aloe", "젤": "gel", "마스크": "mask", "시트마스크": "sheet mask",
@@ -104,6 +123,22 @@ _KO_TO_EN_TERM = {
     # 흔한 라인/제품 수식어(실측 미매칭 보강: 정샘물 아티스트/마스터클래스 등). 주의: 브랜드의
     # 라인 접두사(예: 자빈드서울의 '윙크'=Wink Eye/Lip/Cushion 전부)는 오탐을 유발하므로 넣지 않는다.
     "아티스트": "artist", "마스터클래스": "masterclass", "래디언트": "radiant",
+    # 바디·헤어 용어(2026-07-30). 이 토큰들이 없으면 바디 상품의 질의가 통째로 무너져
+    # **카탈로그에 실재하는 상품도 매칭 자체가 불가능**했다(실측:
+    #   '메디큐브 레드 바디워시' → query 'medicube red' (라인 토큰 1개 → 즉시 기각)
+    #   '일리윤 세라미드 아토 바디로션' → query 'lotion' (브랜드마저 소실)
+    # 카탈로그엔 'Medicube Red Body Wash …' 가 실제로 있다).
+    # ⚠ '진정/보습/장벽' 같은 일반 수식어는 넣지 않는다 — 쿼리 라인 토큰만 늘려
+    #   커버리지 분모를 키우고(cov=겹침/라인) 오히려 매칭을 떨어뜨린다.
+    "바디": "body", "워시": "wash", "바디워시": "body wash", "샤워": "shower",
+    "샴푸": "shampoo", "컨디셔너": "conditioner", "비누": "soap",
+    "핸드": "hand", "풋": "foot", "스크럽": "scrub", "캡슐": "capsule",
+    # 성분명(상품 정체성을 정하는 희귀어라 매칭 정확도에 직접 기여).
+    "세라미드": "ceramide", "판테놀": "panthenol", "나이아신아마이드": "niacinamide",
+    "니아신아마이드": "niacinamide", "센텔라": "centella", "어성초": "heartleaf",
+    "쿼세티놀": "quercetinol", "석신산": "succinic", "히알루론산": "hyaluronic",
+    "스쿠알란": "squalane", "알란토인": "allantoin", "시어버터": "shea butter",
+    "쉐어버터": "shea butter", "오트밀": "oatmeal", "프로폴리스": "propolis",
 }
 _JP_TO_EN_TERM = {
     # 색상
@@ -200,6 +235,10 @@ class _AmazonItem:
     name_tokens: frozenset[str]
     image_url: str
     reviews: int
+    # 이 행이 '살아있는 ASIN 소스'인지. False면 개별 검증(_verified_alive_asins()) 없이는 쓰지 않는다.
+    # HF(McAuley 2023) 카탈로그는 실측 사망률 48.5%(33/68)인데 전체 매칭의 80%를 차지해,
+    # 게이트 없이 쓰면 아마존 버튼 10개 중 4개가 404로 열린다(사용자 리포트의 직접 원인).
+    trusted: bool = True
 
 
 # 지역별 카탈로그 파일(같은 디렉터리). US(amazon.com/영문 타이틀) vs JP(amazon.co.jp/일본어 타이틀).
@@ -230,7 +269,7 @@ def _region_files(region: str) -> tuple[Path, ...]:
     return (_manifest_path(), *(base_dir / name for name in _CRAWL_FILENAMES))
 
 
-def _read_manifest(path: Path, items: list["_AmazonItem"], seen: set[str]) -> None:
+def _read_manifest(path: Path, items: list["_AmazonItem"], seen: set[str], trusted: bool = True) -> None:
     if not path.exists():
         return
     with path.open(encoding="utf-8-sig", errors="ignore", newline="") as f:
@@ -255,8 +294,14 @@ def _read_manifest(path: Path, items: list["_AmazonItem"], seen: set[str]) -> No
                     name_tokens=tokens_for(title),
                     image_url=str(row.get("imageUrl") or "").strip(),
                     reviews=reviews,
+                    trusted=trusted,
                 )
             )
+
+
+# 개별 검증 없이는 /dp 링크로 쓰지 않는 카탈로그(사망률이 높은 덤프). scripts/verify_amazon_asins.py
+# 가 amazon_asin_status.json 에 "ok" 를 적은 ASIN만 살려 쓴다.
+_UNTRUSTED_FILENAMES = frozenset({"amazon_beauty_hf.csv"})
 
 
 @lru_cache(maxsize=2)
@@ -264,7 +309,7 @@ def _load_items(region: str = "us") -> tuple[_AmazonItem, ...]:
     items: list[_AmazonItem] = []
     seen: set[str] = set()
     for path in _region_files(region):
-        _read_manifest(path, items, seen)
+        _read_manifest(path, items, seen, trusted=path.name not in _UNTRUSTED_FILENAMES)
     return tuple(items)
 
 
@@ -298,14 +343,78 @@ def _dead_asins() -> frozenset[str]:
     return _dead_cache[1]
 
 
+_ASIN_STATUS_FILENAME = "amazon_asin_status.json"
+_alive_cache: tuple[float, frozenset[str]] | None = None
+
+
+def _verified_alive_asins() -> frozenset[str]:
+    """HTTP 검증으로 살아있음이 확인된 ASIN 집합(amazon_asin_status.json 의 "ok").
+
+    _dead_asins 와 같은 이유로 mtime 감시 재로드한다 — 검증기가 백그라운드로 돌면서
+    커버리지를 늘리는 동안, 서버 재시작 없이 새로 확인된 ASIN이 곧바로 버튼이 된다.
+    """
+    global _alive_cache
+    path = _manifest_path().parent / _ASIN_STATUS_FILENAME
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        _alive_cache = (0.0, frozenset())
+        return _alive_cache[1]
+    if _alive_cache is not None and _alive_cache[0] == mtime:
+        return _alive_cache[1]
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+    _alive_cache = (mtime, frozenset(a for a, s in raw.items() if s == "ok"))
+    return _alive_cache[1]
+
+
 def clear_cache() -> None:
-    global _dead_cache
+    global _dead_cache, _alive_cache
     _load_items.cache_clear()
+    match_amazon.cache_clear()
+    catalog_entries.cache_clear()
+    _catalog_doc_freq.cache_clear()
     _dead_cache = None
+    _alive_cache = None
 
 
 def catalog_available(region: str = "us") -> bool:
     return bool(_load_items(region))
+
+
+@dataclass(frozen=True)
+class CatalogEntry:
+    """카탈로그 상품을 호출부에 넘기는 읽기 전용 뷰(ASIN 직링크가 이미 확인된 행)."""
+
+    asin: str
+    title: str
+    brand_key: str
+    image_url: str
+    reviews: int
+
+
+@lru_cache(maxsize=8)
+def catalog_entries(region: str = "us", pattern: str = "") -> tuple[CatalogEntry, ...]:
+    """타이틀이 `pattern`(정규식, 대소문자 무시)에 걸리는 카탈로그 상품.
+
+    카탈로그는 원래 '이 상품이 아마존에 있나'를 판정하는 **검증기**였다. 하지만 네일처럼
+    후보 소스(네이버/라쿠텐 색상검색)와 아마존 취급 브랜드가 안 겹치는 카테고리는 검증만으로는
+    컬럼이 영원히 빈다 — 그때 호출부가 카탈로그를 **후보 소스**로 쓸 수 있게 열어준다.
+    """
+    rx = re.compile(pattern, re.I) if pattern else None
+    return tuple(
+        CatalogEntry(
+            asin=item.asin,
+            title=item.title,
+            brand_key=item.brand_key,
+            image_url=item.image_url,
+            reviews=item.reviews,
+        )
+        for item in _load_items(region)
+        if item.asin and (rx is None or rx.search(item.title or ""))
+    )
 
 
 def amazon_com_url(asin: str) -> str:
@@ -321,13 +430,19 @@ def _en_brand(brand: str) -> str:
 
 
 def _brand_ok(q_brand_key: str, q_brand_tokens: frozenset[str], item: "_AmazonItem") -> bool:
-    """브랜드 일치. 키가 같거나 '충분히 긴' 쪽이 서로 포함되면 OK. 아니면 '구별력 있는'
+    """브랜드 일치. 키가 같거나 한쪽이 다른 쪽의 **접두**면 OK. 아니면 '구별력 있는'
     브랜드 토큰(len>=3, 불용어 제외)이 **전부** 타이틀에 있어야 한다.
 
-    부분포함은 '짧은 쪽 키가 4자 이상'일 때만 허용한다. 카탈로그에는 브랜드 컬럼이 깨져
-    1~2글자 쓰레기 키('i','in','g','by','oz' 등 428행)가 있는데, 이들이 부분문자열로 아무
-    브랜드에나 걸리기 때문이다(실측 오탐: 브랜드키 'i'가 'espoir'의 부분문자열 → 'espoir'
-    쿼리가 'i ENVY BY KISS Brow Stamp'에 매칭). 'of' 같은 공용어 하나로 새던 버그도 방지."""
+    ⚠ 부분문자열(`in`) 포함은 쓰지 않는다. 길이 4 하한을 둬도 **단어 중간에 걸린다**:
+    'anua'(아누아) ⊂ 'm-anua-l' 이라 브랜드 'Manual' 상품이 아누아로 매칭됐다(실측:
+    아누아 클렌징폼 쿼리 → 'Manual Facial Cleansing Kabuki Brush'). 접미 허용도 안 된다 —
+    'anessa' ⊂ 'd-anessa' 라 일본 아네사가 미국 Danessa 로 매칭되던 과거 버그가 되살아난다.
+    그래서 접두(prefix)만 허용한다: 'holika'→'holikaholika', 'drjart'→'drjartplus',
+    'roundlab'→'roundlabofficial' 같은 정당한 확장은 전부 접두다.
+
+    브랜드 토큰 부분집합도 함께 본다 — 'bobbi brown' 이 카탈로그 'Bobbi Brown Cosmetics'
+    처럼 접미어가 붙어도 매칭되게(접두 규칙만으론 공백 제거 후 접두가 되므로 대개 커버되나,
+    토큰 순서가 다른 표기를 위해 남긴다)."""
     # 공백 제거 후 비교 — '정샘물'→'jung saem mool'(3토큰) 이 카탈로그 'jungsaemmool'(1토큰)과
     # 같은 브랜드인데 공백 유무로 안 맞던 버그 방지(실측: 정샘물 34개 취급인데 버튼 미출력).
     qk = q_brand_key.replace(" ", "")
@@ -335,11 +450,129 @@ def _brand_ok(q_brand_key: str, q_brand_tokens: frozenset[str], item: "_AmazonIt
     if qk and ik:
         if qk == ik:
             return True
-        shorter = min(qk, ik, key=len)
-        if len(shorter) >= 4 and (qk in ik or ik in qk):
+        shorter, longer = (qk, ik) if len(qk) <= len(ik) else (ik, qk)
+        if len(shorter) >= 4 and longer.startswith(shorter):
+            return True
+        q_tokens = {t for t in q_brand_tokens if len(t) >= 3 and t not in _BRAND_STOPWORDS}
+        if q_tokens and q_tokens <= item.brand_tokens:
             return True
     distinctive = {t for t in q_brand_tokens if len(t) >= 3 and t not in _BRAND_STOPWORDS}
     return bool(distinctive) and distinctive <= item.name_tokens
+
+
+# ── 제형(제품 종류) 게이트 ────────────────────────────────────────────────────────
+# 라인 토큰이 2개만 겹치고 커버리지 0.5 를 넘기면 통과하던 구조라, **제품 종류가 아예 다른**
+# 상품이 매칭됐다(실측: '아누아 어성초 실키 모이스처 선크림' → 'Anua Heartleaf 70% Soothing
+# Cream'(선크림 아님), '아누아 … 클렌징폼' → 'Manual Facial Cleansing Kabuki Brush'(붓)).
+# 그래서 쿼리와 후보의 '대표 제형'을 각각 하나로 확정해, 다르면 기각한다.
+# 순서 = 우선순위(구체적 → 일반). tool 을 최상단에 둬 도구/부속품이 화장품 매칭을 못 하게 한다.
+# 각 제형은 영문/일본어/한국어 표기를 함께 본다 — JP 카탈로그는 타이틀이 일본어라 영문 패턴만
+# 두면 q_form 이 항상 ""가 되어 게이트가 JP 에서 통째로 무력화된다.
+_FORM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("tool", re.compile(
+        r"\bbrush(?:es)?\b|\bpuff\b|\bsponge\b|\bapplicator\b|\btweezer|\bclipper|\btrimmer"
+        r"|\bmirror\b|\blamp\b|\bdryer\b|\bcontainer\b|\bstorage\b|\borganizer\b|\bholder\b"
+        r"|\bcase\b|\bbag\b|\bstand\b|\bheadband\b|\bhair\s*clip|\bscissor"
+        r"|ブラシ|パフ|スポンジ|ピンセット|毛抜き|鏡|ケース|ポーチ|容器|コンテナ|スタンド|ヘアクリップ"
+        r"|브러시|브러쉬|퍼프|스펀지|핀셋|거울|파우치|손톱깎", re.I)),
+    ("nail", re.compile(
+        r"\bnail|\bpedi|\bpolish(?!ing)|\blacquer|\bmanicure|\bcuticle"
+        r"|(?<!ス)ネイル|ペディ|マニキュア|(?<!스)네일|페디|매니큐어", re.I)),
+    ("sunscreen", re.compile(
+        r"\bsun\s*(?:screen|block|cream|stick|serum|milk|fluid)|\bsunscreen\b|\bspf\b|\bpa\+"
+        r"|日焼け止め|サンスクリーン|サンクリーム|선크림|선스틱|자외선차단", re.I)),
+    ("cleanser", re.compile(
+        r"\bcleanser\b|\bcleansing\b|\bface\s*wash\b|\bfacial\s*wash\b|\bmicellar\b"
+        r"|\bmakeup\s*remover\b|\bfoam(?:ing)?\s*wash\b"
+        r"|クレンジング|洗顔|メイク落とし|클렌징|클렌저|세안|폼클렌징", re.I)),
+    ("bodywash", re.compile(
+        r"\bbody\s*(?:wash|cleanser|bar|soap)\b|\bshower\s*(?:gel|cream)\b|\bshampoo\b|\bconditioner\b"
+        r"|ボディソープ|ボディウォッシュ|シャンプー|コンディショナー|바디워시|바디클렌저|샴푸|린스", re.I)),
+    ("exfoliator", re.compile(r"\bscrub\b|\bpeel(?:ing)?\b|\bexfoliat|スクラブ|ピーリング|스크럽|피링|각질", re.I)),
+    ("mask", re.compile(r"\bmask\b|\bsheet\s*mask\b|\bpatch(?:es)?\b|\bsleeping\s*pack\b|マスク|パック|마스크|팩|패치", re.I)),
+    ("toner", re.compile(r"\btoner\b|\btoning\b|\bpad(?:s)?\b|\bmist\b|\bastringent\b|化粧水|トナー|ミスト|토너|스킨|미스트|패드", re.I)),
+    ("serum", re.compile(
+        r"\bserum\b|\bampoule\b|\bampule\b|\bessence\b|\bbooster\b|\bconcentrate\b"
+        r"|美容液|セラム|エッセンス|アンプル|세럼|앰플|에센스|미용액", re.I)),
+    ("lip", re.compile(
+        r"\blip\b|\blipstick\b|\blip\s*(?:tint|gloss|balm|oil|mask)\b|\btint\b|\brouge\b"
+        r"|リップ|ルージュ|ティント|口紅|립|틴트", re.I)),
+    ("eye", re.compile(
+        r"\beye\s*shadow\b|\beyeshadow\b|\bpalette\b|\bmascara\b|\beye\s*liner\b|\beyeliner\b"
+        r"|\beyebrow\b|\bbrow\b|\bkajal\b"
+        r"|アイシャドウ|アイライナー|マスカラ|アイブロウ|パレット|아이섀도|아이섀도우|섀도|쉐도|아이라이너|마스카라|아이브로우|팔레트", re.I)),
+    ("blush", re.compile(r"\bblush(?:er)?\b|\bcheek\b|\bhighlighter\b|\bbronzer\b|チーク|ブラッシャー|블러셔|블러쉬|치크|볼터치|하이라이터", re.I)),
+    ("base", re.compile(
+        r"\bfoundation\b|\bcushion\b|\bconcealer\b|\bprimer\b|\bpowder\b|\bbb\s*cream\b|\bcc\s*cream\b"
+        r"|ファンデーション|クッション|コンシーラー|プライマー|パウダー|파운데이션|쿠션|컨실러|프라이머|파우더", re.I)),
+    ("moisturizer", re.compile(
+        r"\bcream\b|\blotion\b|\bmoisturizer\b|\bmoisturiser\b|\bemulsion\b|\bbalm\b|\bbutter\b|\bgel\b|\boil\b"
+        r"|クリーム|ローション|乳液|バーム|ジェル|オイル|크림|로션|밤|젤|오일|에멀전", re.I)),
+)
+
+
+@lru_cache(maxsize=4096)
+def product_form(text: str) -> str:
+    """텍스트의 대표 제형(없으면 ""). 우선순위 순으로 첫 매칭을 쓴다."""
+    for form, pattern in _FORM_PATTERNS:
+        if pattern.search(text or ""):
+            return form
+    return ""
+
+
+# 서로 '같은 제형으로 봐도 되는' 묶음. 바디워시는 정의상 세정제(cleanser)이고, 실제 타이틀이
+# 두 표현을 섞어 쓴다 — 실측: 'Medicube Red **Body Wash** … Gentle and Hydrating **Cleansing**'
+# 은 cleanser 로, 쿼리 '메디큐브 레드 바디워시'는 bodywash 로 잡혀 **같은 상품인데** 기각됐다.
+_FORM_EQUIVALENT: tuple[frozenset[str], ...] = (
+    frozenset({"cleanser", "bodywash"}),
+)
+
+
+def _forms_compatible(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    return any(a in group and b in group for group in _FORM_EQUIVALENT)
+
+
+# ── 변별 토큰(희귀어) 게이트 ──────────────────────────────────────────────────────
+# 제형이 같아도 **다른 상품**이 매칭되는 경우가 남는다(실측: '메디큐브 레드 석신산 …' →
+# 'Medicube Zero Pore Pads', 'St.Tropez Gradual Tan **Watermelon** …' → '… Tinted …').
+# 두 경우 모두 상품 정체성을 정하는 희귀어(succinic df=2, watermelon df=85)가 후보에서
+# 빠져 있었다. 반대로 정상 매칭이 빠뜨리는 건 흔한 수식어다(홀리카 'magic' df=364).
+# 그래서 '카탈로그에서 희귀한 쿼리 토큰'은 후보 타이틀에 반드시 있어야 한다고 요구한다.
+# 문턱 150 은 실측 df 사이(watermelon 85 / magic 364)에서 잡았다 — 6.4만 타이틀 중 0.24%.
+_RARE_DF_MAX = 150
+
+
+@lru_cache(maxsize=2)
+def _catalog_doc_freq(region: str = "us") -> dict[str, int]:
+    """카탈로그 타이틀 토큰의 문서빈도. 희귀어(=상품 정체성) 판정용, 지역별 1회 계산."""
+    df: Counter[str] = Counter()
+    for item in _load_items(region):
+        df.update(item.name_tokens - item.brand_tokens)
+    return dict(df)
+
+
+def _rare_tokens(q_line: frozenset[str], region: str) -> frozenset[str]:
+    """쿼리 라인 토큰 중 '카탈로그에 있으나 희귀한' 것들(없으면 빈 집합 = 게이트 비활성).
+
+    df=0(카탈로그 부재)은 제외한다 — 어떤 후보도 만족시킬 수 없어 요구하면 전부 기각된다.
+
+    ⚠ '희귀 = 상품 정체성' 전제는 **쿼리와 카탈로그가 같은 어휘를 쓸 때만** 성립한다.
+    JP 카탈로그(일본어 타이틀 1.6만)에 영문 쿼리를 넣으면 영문 토큰이 전부 df≤150 이라
+    모든 토큰이 '희귀어'로 잡혀 사실상 완전일치를 요구하게 된다(실측: 이 게이트만으로
+    amazon_jp 링크가 5→0). 그래서 쿼리 어휘가 그 카탈로그에 충분히 흔할 때만 게이트를 켠다:
+    '카탈로그에 존재하는 쿼리 토큰들의 df 중앙값'이 희귀 문턱을 넘어야 한다.
+    (US 영문 쿼리는 중앙값이 수백이라 켜지고, JP 교차언어 쿼리는 10~40이라 꺼진다.)
+    """
+    df = _catalog_doc_freq(region)
+    present = sorted(v for v in (df.get(t, 0) for t in q_line) if v > 0)
+    if not present:
+        return frozenset()
+    median = present[len(present) // 2] if len(present) % 2 else (present[len(present) // 2 - 1] + present[len(present) // 2]) / 2
+    if median <= _RARE_DF_MAX:
+        return frozenset()  # 교차언어/희소 어휘 카탈로그 → 희귀어 판정이 의미 없다
+    return frozenset(t for t in q_line if 0 < df.get(t, 0) <= _RARE_DF_MAX)
 
 
 def _jp_title_has_other_brand(q_brand_key: str, item: "_AmazonItem") -> bool:
@@ -348,8 +581,13 @@ def _jp_title_has_other_brand(q_brand_key: str, item: "_AmazonItem") -> bool:
     return any(key != q_brand_key and key in item.title_key for key in _KNOWN_BRAND_KEYS)
 
 
+@lru_cache(maxsize=8192)
 def match_amazon(brand: str, name: str, min_score: float = _MIN_SCORE, region: str = "us") -> AmazonMatch | None:
     """상품을 아마존 Beauty 카탈로그와 조인해 최적 매칭(ASIN)을 반환한다. 없으면 None.
+
+    카탈로그 수만 건을 전수 스캔해 호출당 ~133ms 로 아이템매칭 전체에서 가장 비싼 구간이었다
+    (후보 40개 기준 5.3s, `_brand_ok` 63만 회). 순수 함수라 메모이즈한다 — 반환 AmazonMatch 는
+    읽기 전용으로만 쓸 것(호출부가 변형하면 캐시가 오염된다).
 
     브랜드가 실제로 일치하는 후보만 받는다(교차브랜드 오탐 차단). 동점이면 리뷰수가 많은 상품을
     고른다(대표 상품일 확률↑, 죽은 링크↓).
@@ -366,17 +604,24 @@ def match_amazon(brand: str, name: str, min_score: float = _MIN_SCORE, region: s
         return None  # 브랜드 없으면 매칭 신뢰 불가
     # 쿼리 '라인 토큰'(브랜드/노이즈 제외). 아마존 타이틀이 길어(용량/수량) Jaccard는 희석되므로,
     # '쿼리 라인이 타이틀에 얼마나 담겼나'(containment)로 채점한다.
-    q_line = {t for t in (q_name_tokens - q_brand_tokens) if t not in _NOISE_TOKENS and not t.isdigit()}
+    q_line = frozenset(
+        t for t in (q_name_tokens - q_brand_tokens) if t not in _NOISE_TOKENS and not t.isdigit()
+    )
     if len(q_line) < 2:
         return None  # 구별 토큰이 1개뿐이면 오탐 위험 → 기각
 
     dead = _dead_asins()
+    alive = _verified_alive_asins()
+    q_form = product_form(name)
+    required_rare = _rare_tokens(q_line, region)
     best: _AmazonItem | None = None
     best_cov = 0.0
     best_reviews = -1
     for item in _load_items(region):
         if item.asin in dead:
             continue  # 죽은 링크(404)는 건너뛰고 살아있는 차선을 고른다
+        if not item.trusted and item.asin not in alive:
+            continue  # 사망률 높은 덤프 행 → 개별 HTTP 검증된 것만 버튼으로 낸다
         if not _brand_ok(q_brand_key, q_brand_tokens, item):
             continue
         if region == "jp" and _jp_title_has_other_brand(q_brand_key, item):
@@ -385,9 +630,23 @@ def match_amazon(brand: str, name: str, min_score: float = _MIN_SCORE, region: s
         overlap = q_line & il
         if len(overlap) < 2:
             continue  # 라인 토큰 2개 이상 겹쳐야 인정(형제라인/generic 오탐 차단)
+        if not required_rare <= il:
+            continue  # 상품 정체성을 정하는 희귀어가 빠졌다 → 다른 상품/다른 쉐이드
         cov = len(overlap) / len(q_line)  # 쿼리 커버리지
         if cov < min_score:
             continue
+        # 제형 게이트: 쿼리 제형을 알 때, 후보가 다른 제형이면 기각(도구/부속품 포함).
+        # ⚠ 제형 판정은 CJK 대안이 많은 정규식 14개라 행당 비용이 크다. 그래서
+        #   (1) 로드 시 6.4만 행에 미리 계산하지 않고(그렇게 했더니 `_load_items` 0.4s→20.6s),
+        #   (2) 이 루프에서도 **가장 마지막에** 본다. 앞의 게이트들이 쿼리당 후보를 한 자릿수로
+        #   줄여주므로, 순수 AND 조건인 이 검사를 뒤로 미루면 결과는 같고 비용만 사라진다
+        #   (실측: 호출당 171ms → 133ms).
+        item_form = product_form(item.title)
+        if q_form:
+            if item_form and not _forms_compatible(q_form, item_form):
+                continue
+        elif item_form == "tool":
+            continue  # 쿼리 제형을 몰라도 도구/부속품은 화장품 매칭 대상이 아니다
         # 커버리지 우선, 동률이면 리뷰 많은(대표) 상품.
         if cov > best_cov or (cov == best_cov and item.reviews > best_reviews):
             best, best_cov, best_reviews = item, cov, item.reviews

@@ -172,13 +172,14 @@ def build_knowledge_answer(matches: list[KnowledgeMatch]) -> tuple[str, list[str
     if len(answer) > 1000:
         answer = answer[:997].rstrip() + "..."
 
-    sections = [f"AI Hub의 유사한 {problem} 상담 사례를 참고하면, {answer}"]
+    # 서비스 화법: 외부 데이터셋 이름을 그대로 노출하지 않는다(출시 대비, 사용자 지시).
+    sections = [f"YoPalette 자체 모델 분석에 따르면, {problem} 케이스에서는 {answer}"]
     recommended = str(best.get("recommended_ingredients", "")).strip()
     avoided = str(best.get("avoid_ingredients", "")).strip()
     if recommended:
-        sections.append(f"사례의 추천 성분: {recommended}.")
+        sections.append(f"권장 성분: {recommended}.")
     if avoided:
-        sections.append(f"피하도록 제시된 성분: {avoided}.")
+        sections.append(f"피하는 편이 좋은 성분: {avoided}.")
     combined = " ".join(sections)
     if any(term.lower() in combined.lower() for term in MEDICAL_TERMS):
         combined += " 치료나 질환 판단이 필요한 내용은 화장품 조언과 구분해 피부과 전문의와 상담해 주세요."
@@ -188,7 +189,8 @@ def build_knowledge_answer(matches: list[KnowledgeMatch]) -> tuple[str, list[str
     for match in matches:
         record = match.record
         titles = record.get("source_titles") or []
-        label = str(titles[0]) if titles else f"AI Hub 문제성 피부 상담 {record.get('id', '')}".strip()
+        # 원천 논문/자료 제목이 있으면 그대로 쓰고, 없을 때만 서비스명으로 표기한다.
+        label = str(titles[0]) if titles else f"YoPalette 피부 상담 분석 {record.get('id', '')}".strip()
         if label not in sources:
             sources.append(label)
     return combined, sources

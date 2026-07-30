@@ -41,11 +41,13 @@ services:
       # 슬림 번들이 그 레이아웃(models/, rag/)을 그대로 갖고 있다. 읽기전용으로 충분하다.
       - ./dist/runtime_data:/data:ro
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
-      interval: 15s
+      # ⚠ /health(생존) 가 아니라 /ready(준비) 를 본다. 워밍(카탈로그·모델 로딩 ≈20초)이
+      # 끝나기 전에 healthy 로 뜨면, 프론트가 먼저 뜨고 **첫 사용자가 30초를 기다린다**(실측).
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/ready')\""]
+      interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 12          # 워밍이 느린 환경(원격 DB 지연)에서도 재시작으로 빠지지 않게 넉넉히
+      start_period: 90s
     depends_on:
       redis:
         condition: service_started

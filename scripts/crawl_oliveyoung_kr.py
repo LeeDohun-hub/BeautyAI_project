@@ -94,6 +94,29 @@ BODY_BRANDS = [
 ]
 
 
+# 네일/페디 시드. CATEGORY_TERMS 에 네일 관련어가 하나도 없어서(틴트~마스크팩 26개) 지금까지
+# 네일을 **한 번도 크롤한 적이 없다** — 보유 7건은 브랜드 검색에 우연히 딸려온 웨이크메이크·
+# 위드샨뿐이었다. 그 탓에 퍼스널컬러 아이템매칭의 KR 올리브영 네일 컬럼이 상시 비었다.
+# 남성/바디와 같은 이유로 브랜드×term 확장을 쓰지 않는다 — '젤네일' 같은 카테고리 쿼리가
+# top~20에 올영 실제 베스트셀러를 그대로 담아준다(올영 네일 대카테고리 dispCatNo=10000010012).
+NAIL_QUERIES = [
+    # 색상(아이템매칭이 실제로 쓰는 축)
+    "네일", "젤네일", "매니큐어", "네일컬러", "컬러젤", "셀프네일", "원커버젤",
+    # 형태
+    "네일팁", "네일스티커", "붙이는 네일", "젤네일스티커", "페디큐어", "페디큐어 스티커",
+    # 베이스/마감·도구
+    "탑코트", "베이스코트", "네일리무버", "네일램프", "네일아트",
+    # 케어(손톱 영양·큐티클)
+    "큐티클오일", "네일강화제", "손톱영양제",
+]
+# 올영 네일 카테고리 상위 노출 브랜드 시드. 확신이 낮은 이름은 넣지 않았고, 실제 취급 여부는
+# 크롤 결과(top~20)가 판정한다 — 미취급 브랜드는 결과가 비어 그냥 버려진다.
+NAIL_BRANDS = [
+    "데싱디바", "오호라", "젤라또랩", "위드샨", "웨이크메이크", "아이니",
+    "롬앤", "3CE", "데이지크", "어뮤즈", "클리오", "페리페라",
+]
+
+
 def _brand_seed() -> list[str]:
     # 대표 표기만 남긴다(같은 브랜드의 영/한 변형은 검색 결과가 겹쳐 어차피 dedup 된다).
     return sorted(set(KBEAUTY_BRANDS) | set(EXTRA_MAKEUP_BRANDS) | set(MEN_BRANDS))
@@ -125,11 +148,17 @@ def main() -> int:
     parser.add_argument("--men", action="store_true", help="남성 카테고리/브랜드 시드로 크롤(베이스/브로우/컨실러/립밤)")
     # --body: 바디/핸드/풋 시드. 성분 보강(enrich_ingredients_oliveyoung.py)이 쓸 goodsNo도 여기서 나온다.
     parser.add_argument("--body", action="store_true", help="바디/핸드/풋 카테고리·브랜드 시드로 크롤")
+    # --nail: 퍼스널컬러 아이템매칭의 네일 컬럼용. CATEGORY_TERMS에 네일어가 없어 미크롤 상태였다.
+    parser.add_argument("--nail", action="store_true", help="네일/페디 카테고리·브랜드 시드로 크롤")
     parser.add_argument("--merge", action="store_true", help="기존 out CSV를 먼저 읽어 누적(덮어쓰기 방지)")
     parser.add_argument("--out", default=str(_ROOT / "data" / "manifests" / "oliveyoung_kr_products.csv"))
     args = parser.parse_args()
 
-    if args.body:
+    if args.nail:
+        # 네일도 남성/바디와 같은 이유로 확장 없이 카테고리 쿼리 + 네일 브랜드 단독으로 간다.
+        queries = list(dict.fromkeys(NAIL_QUERIES + NAIL_BRANDS))
+        brands = queries
+    elif args.body:
         # 바디도 남성 시드와 같은 이유로 확장 없이 카테고리 쿼리 + 바디 브랜드 단독으로 간다.
         queries = list(dict.fromkeys(BODY_QUERIES + BODY_BRANDS))
         brands = queries

@@ -44,7 +44,8 @@ def test_searches_skincare_ingredient_knowledge(tmp_path) -> None:
     answer, sources = build_skincare_answer(matches)
     assert "나이아신아마이드" in answer
     assert "PMID:123" in answer
-    assert sources == ["AI Hub 스킨케어 성분-효능: 모공"]
+    # 출처 표기는 외부 데이터셋명이 아니라 자체 모델 화법으로 낸다(2026-07-29 결정).
+    assert sources == ["YoPalette 성분·효능 분석: 모공"]
 
 
 def test_recommendation_hint_uses_context(tmp_path) -> None:

@@ -1,14 +1,31 @@
+/* YoPalette 팔레트 — BeautyWEB(beautyweb-frontend/src/styles.css)과 동일 값.
+   잉크 #18233a · 배경 #f5fbff · 액센트 #1d8fc7 · 포인트(딸기요구르트) #f06f9b.
+   기존의 짙은 네이비 셸을 Web 과 같은 라이트 스카이블루로 맞춘다. */
+:root {
+  --yp-ink: #18233a;
+  --yp-ink-soft: #657487;
+  --yp-bg: #f5fbff;
+  --yp-surface: #ffffff;
+  --yp-line: #d8ecf8;
+  --yp-line-strong: #cde3f0;
+  --yp-accent: #1d8fc7;
+  --yp-accent-deep: #1d6eaa;
+  --yp-accent-soft: #edf8ff;
+  --yp-berry: #f06f9b;
+}
+
 body {
   margin: 0;
-  font-family: Inter, Pretendard, "Noto Sans KR", "Segoe UI", sans-serif;
-  background: #08111d;
+  font-family: Inter, Pretendard, "Noto Sans KR", "Noto Sans JP", "Segoe UI", sans-serif;
+  background: var(--yp-bg);
+  color: var(--yp-ink);
 }
 
 .app-shell {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 50% 0%, rgba(30, 61, 83, 0.42), transparent 34%),
-    linear-gradient(180deg, #05080d, #0a121d 54%, #05080d);
+    radial-gradient(circle at 50% 0%, rgba(29, 143, 199, 0.10), transparent 38%),
+    linear-gradient(180deg, #f5fbff, #eaf5fd 54%, #f5fbff);
   background-size: cover;
   background-position: center top;
   background-attachment: fixed;
@@ -19,17 +36,17 @@ body {
   min-height: 560px;
   overflow: hidden;
   padding: clamp(28px, 5vw, 58px);
-  border: 1px solid rgba(118, 206, 255, 0.26);
+  border: 1px solid var(--yp-line);
   background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.84), rgba(7, 16, 27, 0.94) 38%, rgba(3, 8, 14, 0.98)),
-    radial-gradient(circle at 76% 46%, rgba(79, 190, 255, 0.16), transparent 22%),
-    linear-gradient(180deg, #111923, #05080d);
-  color: #f8fbff;
+    linear-gradient(90deg, rgba(255, 255, 255, 0.96), rgba(237, 248, 255, 0.92) 38%, rgba(255, 255, 255, 0.98)),
+    radial-gradient(circle at 76% 46%, rgba(29, 143, 199, 0.10), transparent 24%),
+    linear-gradient(180deg, #ffffff, #edf8ff);
+  color: var(--yp-ink);
   border-radius: 18px;
   box-shadow:
-    inset 0 0 0 12px rgba(0, 0, 0, 0.42),
-    inset 0 0 0 13px rgba(160, 224, 255, 0.08),
-    0 34px 110px rgba(0, 0, 0, 0.68);
+    inset 0 0 0 12px rgba(255, 255, 255, 0.72),
+    inset 0 0 0 13px rgba(29, 143, 199, 0.10),
+    0 24px 70px rgba(24, 35, 58, 0.12);
 }
 
 .home-hero::before {
@@ -39,13 +56,13 @@ body {
   pointer-events: none;
   border-radius: 12px;
   background:
-    radial-gradient(circle at 50% 7%, #0b0f14 0 16px, rgba(147, 226, 255, 0.52) 17px 18px, transparent 19px),
-    linear-gradient(90deg, transparent 0 6%, rgba(215, 247, 255, 0.92) 6.25%, rgba(102, 211, 255, 0.58) 6.75%, transparent 7.2%),
-    linear-gradient(90deg, transparent 92.8%, rgba(102, 211, 255, 0.58) 93.25%, rgba(215, 247, 255, 0.92) 93.75%, transparent 94.2%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 26%, rgba(255, 255, 255, 0.05) 76%, transparent);
+    radial-gradient(circle at 50% 7%, var(--yp-accent) 0 16px, rgba(29, 143, 199, 0.35) 17px 18px, transparent 19px),
+    linear-gradient(90deg, transparent 0 6%, rgba(29, 143, 199, 0.45) 6.25%, rgba(29, 143, 199, 0.28) 6.75%, transparent 7.2%),
+    linear-gradient(90deg, transparent 92.8%, rgba(29, 143, 199, 0.28) 93.25%, rgba(29, 143, 199, 0.45) 93.75%, transparent 94.2%),
+    linear-gradient(180deg, rgba(29, 143, 199, 0.05), transparent 26%, rgba(240, 111, 155, 0.05) 76%, transparent);
   box-shadow:
-    inset 0 0 0 1px rgba(148, 225, 255, 0.14),
-    inset 0 0 80px rgba(85, 194, 255, 0.08);
+    inset 0 0 0 1px rgba(29, 143, 199, 0.16),
+    inset 0 0 80px rgba(29, 143, 199, 0.06);
 }
 
 .home-hero::after {
@@ -78,49 +95,42 @@ body {
   z-index: 1;
   max-width: min(620px, 52%);
   padding: 28px;
-  border: 1px solid rgba(138, 222, 255, 0.16);
-  background: rgba(3, 10, 18, 0.5);
+  border: 1px solid var(--yp-line);
+  background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(10px);
   border-radius: 12px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 18px 48px rgba(24, 35, 58, 0.10);
 }
 
 .home-hero .MuiChip-root {
-  border-color: rgba(137, 218, 255, 0.46);
-  color: #b9ecff;
-  background: rgba(12, 31, 47, 0.62);
+  border-color: rgba(29, 143, 199, 0.42);
+  color: var(--yp-accent-deep);
+  background: var(--yp-accent-soft);
   font-weight: 700;
   letter-spacing: 0;
 }
 
 .home-hero .MuiTypography-h3 {
   max-width: 560px;
-  color: #f2fbff;
+  color: var(--yp-ink);
   line-height: 1.08;
   letter-spacing: 0;
-  text-shadow:
-    0 0 18px rgba(77, 195, 255, 0.32),
-    0 4px 24px rgba(0, 0, 0, 0.72);
 }
 
 .home-hero .MuiTypography-body1 {
-  color: rgba(200, 224, 238, 0.86);
+  color: var(--yp-ink-soft);
   font-size: 1.05rem;
-  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.66);
 }
 
 .module-card {
   min-height: 280px;
   height: 100%;
   padding: 28px;
-  border: 1px solid rgba(129, 180, 214, 0.24);
-  background: linear-gradient(180deg, rgba(9, 19, 31, 0.9), rgba(5, 12, 22, 0.86));
-  backdrop-filter: blur(12px);
-  color: #ecf6ff;
+  border: 1px solid var(--yp-line);
+  background: var(--yp-surface);
   border-radius: 12px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 18px 48px rgba(0, 0, 0, 0.32);
+  color: var(--yp-ink);
+  box-shadow: 0 14px 34px rgba(24, 35, 58, 0.08);
 }
 
 .module-card .MuiTypography-root {
@@ -128,20 +138,20 @@ body {
 }
 
 .module-card .MuiTypography-body1 {
-  color: rgba(207, 222, 235, 0.82);
+  color: var(--yp-ink-soft);
 }
 
 .active-module {
-  border-color: rgba(79, 188, 255, 0.76);
-  background: linear-gradient(180deg, rgba(13, 44, 70, 0.96), rgba(6, 20, 35, 0.92));
+  border-color: var(--yp-accent);
+  background: linear-gradient(180deg, #ffffff, var(--yp-accent-soft));
   box-shadow:
-    0 0 0 1px rgba(68, 186, 255, 0.16),
-    0 18px 54px rgba(0, 103, 177, 0.24);
+    0 0 0 1px rgba(29, 143, 199, 0.22),
+    0 18px 44px rgba(29, 143, 199, 0.16);
 }
 
 .disabled-module {
-  background: linear-gradient(180deg, rgba(13, 27, 43, 0.7), rgba(8, 18, 31, 0.72));
-  opacity: 0.88;
+  background: #f7fbfe;
+  opacity: 0.9;
 }
 
 .module-icon {
@@ -150,21 +160,348 @@ body {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: rgba(63, 183, 255, 0.12);
-  color: #7ed8ff;
-  box-shadow: inset 0 0 0 1px rgba(126, 216, 255, 0.18);
+  background: var(--yp-accent-soft);
+  color: var(--yp-accent);
+  box-shadow: inset 0 0 0 1px rgba(29, 143, 199, 0.18);
 }
 
 .module-card .MuiButton-contained {
-  background: linear-gradient(90deg, #45c8ef, #95f0ff);
-  color: #03101c;
+  background: linear-gradient(90deg, var(--yp-accent), var(--yp-accent-deep));
+  color: #ffffff;
   font-weight: 900;
-  box-shadow: 0 12px 28px rgba(35, 174, 230, 0.24);
+  box-shadow: 0 12px 24px rgba(29, 143, 199, 0.26);
 }
 
 .module-card .MuiChip-root {
-  background: rgba(215, 229, 239, 0.14);
-  color: rgba(232, 244, 252, 0.78);
+  background: var(--yp-accent-soft);
+  color: var(--yp-accent-deep);
+}
+
+.virtual-module-card {
+  background:
+    linear-gradient(180deg, #ffffff, #f8fdff 62%, #fff5f8);
+}
+
+.virtual-preview-panel,
+.virtual-control-panel,
+.virtual-reco-card,
+.virtual-upload-panel {
+  height: 100%;
+  padding: 22px;
+  border: 1px solid var(--yp-line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 34px rgba(24, 35, 58, 0.08);
+}
+
+.virtual-upload-panel {
+  height: auto;
+}
+
+.virtual-upload-drop {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 260px;
+  cursor: pointer;
+  overflow: hidden;
+  border: 2px dashed var(--yp-line-strong);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff, var(--yp-accent-soft));
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.virtual-upload-drop:hover,
+.virtual-upload-drop.is-over {
+  border-color: var(--yp-accent);
+  background: linear-gradient(180deg, var(--yp-accent-soft), #ffffff);
+}
+
+.virtual-upload-drop img {
+  width: 100%;
+  height: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  display: block;
+  background: #ffffff;
+}
+
+.virtual-result-image {
+  position: relative;
+  overflow: hidden;
+  min-height: 430px;
+  border: 1px solid var(--yp-line);
+  border-radius: 12px;
+  background: #f7fbfe;
+}
+
+.virtual-result-image span {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1;
+  padding: 6px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--yp-ink);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.virtual-result-image img {
+  width: 100%;
+  height: 100%;
+  min-height: 430px;
+  object-fit: contain;
+  display: block;
+}
+
+.virtual-face-stage {
+  --face-line: 42%;
+  --jaw-balance: 28%;
+  --nose-contour: 34%;
+  --blemish-care: 56%;
+  position: relative;
+  min-height: 520px;
+  overflow: hidden;
+  border-radius: 12px;
+  background:
+    linear-gradient(90deg, rgba(24, 35, 58, 0.08) 0 49.8%, rgba(29, 143, 199, 0.26) 49.9% 50.2%, rgba(24, 35, 58, 0.08) 50.3%),
+    radial-gradient(circle at 50% 30%, rgba(240, 111, 155, 0.18), transparent 28%),
+    linear-gradient(180deg, #f7fbfe, #e8f6fd);
+}
+
+.virtual-before,
+.virtual-after {
+  position: absolute;
+  top: 18px;
+  z-index: 2;
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--yp-ink);
+}
+
+.virtual-before {
+  left: 18px;
+}
+
+.virtual-after {
+  right: 18px;
+}
+
+.virtual-face-outline {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(58%, 310px);
+  height: 72%;
+  transform: translate(-50%, -44%);
+  border: 3px solid rgba(24, 35, 58, 0.34);
+  border-radius:
+    calc(43% + (var(--face-line) * 0.05))
+    calc(43% + (var(--face-line) * 0.05))
+    calc(48% - (var(--jaw-balance) * 0.08))
+    calc(48% - (var(--jaw-balance) * 0.08)) /
+    40% 40% 58% 58%;
+  background:
+    radial-gradient(circle at 36% 58%, rgba(240, 111, 155, 0.18), transparent 10%),
+    radial-gradient(circle at 64% 58%, rgba(240, 111, 155, 0.18), transparent 10%),
+    linear-gradient(180deg, #ffe2d7, #f5bda8);
+  box-shadow:
+    inset 0 -26px 42px rgba(164, 88, 72, 0.12),
+    0 28px 56px rgba(24, 35, 58, 0.18);
+}
+
+.virtual-eye,
+.virtual-nose,
+.virtual-mouth,
+.virtual-blemish {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.virtual-eye {
+  top: 38%;
+  width: 34px;
+  height: 8px;
+  border-radius: 999px;
+  background: #283144;
+}
+
+.virtual-eye-left {
+  margin-left: -58px;
+}
+
+.virtual-eye-right {
+  margin-left: 58px;
+}
+
+.virtual-nose {
+  top: 45%;
+  width: calc(12px + var(--nose-contour) * 0.08);
+  height: calc(42px + var(--nose-contour) * 0.14);
+  border-radius: 999px;
+  border-left: 2px solid rgba(120, 72, 64, 0.34);
+  border-right: 2px solid rgba(120, 72, 64, 0.16);
+}
+
+.virtual-mouth {
+  top: 62%;
+  width: 74px;
+  height: 18px;
+  border-bottom: 4px solid rgba(143, 55, 76, 0.58);
+  border-radius: 50%;
+}
+
+.virtual-blemish {
+  width: calc(10px - var(--blemish-care) * 0.07);
+  height: calc(10px - var(--blemish-care) * 0.07);
+  min-width: 2px;
+  min-height: 2px;
+  border-radius: 50%;
+  background: rgba(105, 58, 52, 0.42);
+}
+
+.virtual-blemish.one {
+  top: 51%;
+  margin-left: -78px;
+}
+
+.virtual-blemish.two {
+  top: 57%;
+  margin-left: 88px;
+}
+
+.virtual-scan-line {
+  position: absolute;
+  inset: 12% 10%;
+  pointer-events: none;
+  border: 1px solid rgba(29, 143, 199, 0.22);
+  background:
+    linear-gradient(90deg, transparent 0 49.8%, rgba(29, 143, 199, 0.32) 49.9% 50.1%, transparent 50.2%),
+    linear-gradient(180deg, transparent 0 49.8%, rgba(29, 143, 199, 0.32) 49.9% 50.1%, transparent 50.2%);
+}
+
+.virtual-reco-card {
+  position: relative;
+  min-height: 172px;
+}
+
+.virtual-reco-no {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 14px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 900;
+  color: #ffffff;
+  background: var(--yp-accent);
+}
+
+.virtual-flow-header,
+.virtual-flow-footer,
+.virtual-step-guide,
+.virtual-report-card,
+.virtual-report-summary {
+  padding: 22px;
+  border: 1px solid var(--yp-line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 34px rgba(24, 35, 58, 0.08);
+}
+
+.virtual-flow-footer {
+  padding: 14px 18px;
+}
+
+.virtual-step-guide {
+  height: 100%;
+  background:
+    linear-gradient(180deg, #ffffff, var(--yp-accent-soft));
+}
+
+.virtual-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.virtual-choice-grid .MuiButton-root {
+  min-height: 46px;
+  justify-content: flex-start;
+  border-radius: 10px;
+  font-weight: 800;
+  text-align: left;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.virtual-target-card {
+  height: 100%;
+  cursor: pointer;
+  padding: 20px;
+  border: 1px solid var(--yp-line);
+  border-radius: 14px;
+  background: #ffffff;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.virtual-target-card:hover,
+.virtual-target-card.selected {
+  transform: translateY(-2px);
+  border-color: var(--yp-accent);
+  box-shadow: 0 18px 38px rgba(29, 143, 199, 0.16);
+}
+
+.virtual-target-face {
+  width: 96px;
+  height: 118px;
+  margin-bottom: 14px;
+  border: 3px solid rgba(24, 35, 58, 0.34);
+  background:
+    radial-gradient(circle at 36% 44%, #283144 0 4px, transparent 5px),
+    radial-gradient(circle at 64% 44%, #283144 0 4px, transparent 5px),
+    linear-gradient(180deg, #ffe4da, #f4bca8);
+  box-shadow: inset 0 -18px 30px rgba(164, 88, 72, 0.12);
+}
+
+.virtual-target-face.oval {
+  border-radius: 48% 48% 46% 46% / 38% 38% 56% 56%;
+}
+
+.virtual-target-face.vline {
+  border-radius: 46% 46% 22% 22% / 38% 38% 66% 66%;
+}
+
+.virtual-target-face.soft {
+  border-radius: 50%;
+}
+
+.virtual-target-face.defined {
+  border-radius: 42% 42% 38% 38% / 34% 34% 60% 60%;
+}
+
+.virtual-report-stage {
+  padding: 18px;
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(29, 143, 199, 0.08), rgba(240, 111, 155, 0.10)),
+    #ffffff;
+}
+
+.virtual-report-card {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.virtual-report-summary {
+  box-shadow: none;
 }
 
 .score-row {
@@ -577,6 +914,27 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 12px;
   margin-top: 8px;
+}
+
+/* 담은 상품이 5개면 2열로는 3줄이 되어, 고정 비율(aspect-ratio) 카드 밖으로 밀려나
+   아래 QR 캡션이 잘린다(실측). 5개는 3열 2줄로 깔아 줄 수를 4개일 때와 같게 유지한다. */
+.report-product-grid.dense {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.report-product-grid.dense .report-product {
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 7px;
+}
+
+.report-product-grid.dense .report-product-image {
+  width: 28px;
+  height: 38px;
+}
+
+.report-product-grid.dense .report-product-info p {
+  font-size: 0.54rem;
 }
 
 .report-product {
@@ -1130,4 +1488,263 @@ body {
   .page-panel {
     padding: 18px;
   }
+
+  .virtual-choice-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 화면 언어 토글 — 어느 화면에서나 우상단 고정. */
+.lang-toggle {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 1200;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 4px;
+  border: 1px solid var(--yp-line);
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(24, 35, 58, 0.10);
+}
+
+.lang-toggle .MuiButton-root {
+  border-radius: 999px;
+  font-weight: 800;
+}
+
+/* ── 네일·페디 업로드 화면 ─────────────────────────────────────
+   결과 전에는 버튼 하나뿐이라 화면이 비어 보였다(사용자 지적).
+   드롭존 + 사용법/팁 카드로 '읽을 것'을 만든다. */
+.nail-dropzone {
+  padding: 20px;
+  border: 1px solid var(--yp-line);
+  border-radius: 14px;
+  background: var(--yp-surface);
+}
+
+.nail-dropzone-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  border: 2px dashed var(--yp-line-strong);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff, var(--yp-accent-soft));
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.nail-dropzone-inner:hover,
+.nail-dropzone-inner.is-over {
+  border-color: var(--yp-accent);
+  background: linear-gradient(180deg, var(--yp-accent-soft), #ffffff);
+}
+
+.nail-dropzone-icon {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  color: var(--yp-accent);
+  background: var(--yp-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(29, 143, 199, 0.2);
+}
+
+.nail-guide {
+  height: 100%;
+  padding: 22px;
+  border: 1px solid var(--yp-line);
+  border-radius: 14px;
+  background: var(--yp-surface);
+}
+
+.nail-step-no {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-weight: 900;
+  font-size: 13px;
+  color: #ffffff;
+  background: var(--yp-accent);
+}
+
+.nail-tip-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--yp-berry);
+}
+
+/* 네일 촬영 뷰 — 얼굴 촬영과 달리 손·발을 담아야 해서 가로로 넓게 둔다. */
+.nail-camera {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--yp-line);
+  border-radius: 12px;
+  background: var(--yp-accent-soft);
+}
+
+.nail-camera-view {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #0d1b2a;
+}
+
+/* 네일 발색 미리보기 — 색 스와치와 원본/적용 비교 */
+.nail-swatch {
+  cursor: pointer;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.nail-swatch:hover {
+  background: var(--yp-accent-soft);
+}
+
+.nail-swatch.is-active {
+  border-color: var(--yp-accent);
+  background: var(--yp-accent-soft);
+}
+
+.nail-swatch-dot {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--yp-line-strong);
+  box-shadow: inset 0 -6px 10px rgba(0, 0, 0, 0.10);
+}
+
+/* 원본/발색 미리보기. 세로로 긴 손 사진이 원본 비율대로 늘어나면 화면 한 판을 다 먹어서
+   아래 상품·디자인 영역이 안 보였다(사용자 지적). 높이를 묶고 contain 으로 비율은 유지한다. */
+.nail-tryon-img {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  background: #f7fafc;
+  border-radius: 10px;
+  border: 1px solid var(--yp-line);
+  margin-top: 4px;
+}
+
+@media (min-width: 900px) {
+  .nail-tryon-img {
+    max-height: 300px;
+  }
+}
+
+/* 네일 미리보기 — 퍼스널컬러 kiosk-preview 와 같은 크기감으로 맞춘다. */
+.nail-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 340px;
+  cursor: pointer;
+  overflow: hidden;
+  border: 2px dashed var(--yp-line-strong);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff, var(--yp-accent-soft));
+  transition: border-color 0.15s ease;
+}
+
+.nail-preview:hover,
+.nail-preview.is-over {
+  border-color: var(--yp-accent);
+}
+
+.nail-preview img {
+  width: 100%;
+  height: 100%;
+  max-height: 460px;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+/* 퍼스널컬러 결과지 하단 상담 패널 */
+.pc-consult {
+  padding: 20px;
+  border: 1px solid var(--yp-line);
+  border-radius: 14px;
+  background: var(--yp-surface);
+}
+
+/* 피부 케어 결과지 추천 상품 — 2열 그리드. 썸네일에 고정 크기를 주지 않으면
+   원본 해상도로 커져 레이아웃이 무너진다(실제로 그랬다). */
+.report-products {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.report-product {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.report-product-thumb {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #d8dde3;
+  border-radius: 6px;
+  background: #f3f6f8;
+}
+
+.report-product-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.report-product-body {
+  min-width: 0;
+}
+
+.report-product-no {
+  display: inline-block;
+  min-width: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #ffffff;
+  background: var(--yp-accent);
+}
+
+.report-product-name {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.report-product-brand {
+  font-size: 11px;
+  color: #6b7684;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

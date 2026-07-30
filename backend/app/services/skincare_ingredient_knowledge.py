@@ -161,16 +161,17 @@ def build_skincare_answer(matches: list[SkincareKnowledgeMatch]) -> tuple[str, l
     if len(answer) > 900:
         answer = answer[:897].rstrip() + "..."
 
-    sections = [f"스킨케어 성분-효능 데이터에서 {concern}와 가장 가까운 사례를 보면, {answer}"]
+    # 위와 같은 이유로 데이터셋 표현을 쓰지 않는다.
+    sections = [f"YoPalette 자체 모델 분석에 따르면, {concern} 케이스에서는 {answer}"]
     evidence = [str(item) for item in best.get("evidence_sources", []) or [] if str(item).strip()]
     if evidence:
-        sections.append(f"근거 표기는 {', '.join(evidence[:3])}입니다.")
+        sections.append(f"참고 근거: {', '.join(evidence[:3])}.")
     sections.append("피부가 예민하거나 치료 중이면 새 성분은 낮은 빈도로 패치 테스트부터 시작하는 편이 안전합니다.")
 
     sources: list[str] = []
     for match in matches:
         record = match.record
-        label = f"AI Hub 스킨케어 성분-효능: {record.get('target_concern', '')}".strip()
+        label = f"YoPalette 성분·효능 분석: {record.get('target_concern', '')}".strip()
         if label not in sources:
             sources.append(label)
     return " ".join(sections), sources

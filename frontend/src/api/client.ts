@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, BodyConditionScore, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput } from '../types/api';
+import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, BodyConditionScore, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -27,6 +27,9 @@ export async function matchPersonalColorItems(
   region = 'jp',
   platform: ItemPlatform = 'all',
   gender: 'female' | 'male' = 'female',
+  // 'instant' = 라이브 검색·입점 검증을 건너뛴 즉답(로컬 카탈로그만). 먼저 띄우고
+  // 이어서 'full' 결과로 교체해 체감 대기를 줄인다.
+  stage: 'full' | 'instant' = 'full',
 ): Promise<PersonalColorItemMatchResponse> {
   const { data } = await api.post<PersonalColorItemMatchResponse>('/api/personal-color/item-match', {
     keywords,
@@ -35,6 +38,7 @@ export async function matchPersonalColorItems(
     region,
     platform,
     gender,   // 남성이면 백엔드가 베이스/브로우/컨실러/립밤으로 밸런싱한다.
+    stage,
   });
   return data;
 }
@@ -51,6 +55,17 @@ export async function analyzeFaceShape(file: File): Promise<FaceShapeResponse> {
   const form = new FormData();
   form.append('image', file);
   const { data } = await api.post<FaceShapeResponse>('/api/analyze-face-shape', form);
+  return data;
+}
+
+export async function simulateVirtualSurgery(file: File, tuning: VirtualSurgeryTuning): Promise<VirtualSurgeryResponse> {
+  const form = new FormData();
+  form.append('image', file);
+  form.append('face_line', String(tuning.faceLine));
+  form.append('jaw_balance', String(tuning.jawBalance));
+  form.append('nose_contour', String(tuning.noseContour));
+  form.append('blemish_care', String(tuning.blemishCare));
+  const { data } = await api.post<VirtualSurgeryResponse>('/api/virtual-surgery/simulate', form);
   return data;
 }
 

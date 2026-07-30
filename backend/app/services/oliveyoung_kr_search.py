@@ -135,6 +135,7 @@ def _load_kr_catalog() -> tuple[_KRItem, ...]:
                         brand=brand,
                         name=name,
                         sold_out=str(row.get("soldOut") or "").strip().upper() == "Y",
+                        image_url=str(row.get("imageUrl") or "").strip(),
                     ),
                     brand_key=normalize_key(brand),
                     brand_tokens=tokens_for(brand),
@@ -150,6 +151,17 @@ def clear_kr_catalog_cache() -> None:
 
 def kr_catalog_available() -> bool:
     return bool(_load_kr_catalog())
+
+
+def kr_catalog_items() -> tuple[KRResult, ...]:
+    """로컬 KR 카탈로그가 담고 있는 실제 취급 상품(품절 제외).
+
+    카탈로그는 원래 '이 상품을 올영이 파는가'를 판정하는 **검증기**로만 쓰였다. 하지만
+    네일처럼 **후보 소스(네이버 색상검색)와 올영 취급 브랜드가 전혀 안 겹치는** 카테고리는
+    검증만으로는 컬럼이 영원히 빈다(네이버=프롬더네일·로지힙, 올영=데싱디바·오호라).
+    그런 경우 호출부가 카탈로그를 **후보 소스**로도 쓸 수 있게 열어준다.
+    """
+    return tuple(item.result for item in _load_kr_catalog() if not item.result.sold_out)
 
 
 # 용량/수량 노이즈.

@@ -111,8 +111,8 @@ class _OYItem:
 
 
 @dataclass(frozen=True)
-class OYMaleItem:
-    """JP 남성 아이템매칭용 글로벌몰 남성 상품(카드 소스). 지역별 표기를 호출부가 고른다."""
+class OYCatalogItem:
+    """글로벌몰 카탈로그 상품(카드 소스). 지역별 표기를 호출부가 고른다."""
     brand: str          # 영문/기본 브랜드(매칭·폴백용)
     brand_jp: str       # 일본어 브랜드
     name_kr: str
@@ -192,6 +192,8 @@ def _load_items() -> tuple[_OYItem, ...]:
 def clear_cache() -> None:
     """테스트/재크롤 후 인메모리 인덱스 초기화."""
     _load_items.cache_clear()
+    catalog_brand_keys.cache_clear()
+    match_oliveyoung.cache_clear()
 
 
 def catalog_available() -> bool:
@@ -200,6 +202,25 @@ def catalog_available() -> bool:
     False면 호출부는 라이브 검색 링크(기존 동작)로 폴백해야 한다(크롤 전 그레이스풀).
     """
     return bool(_load_items())
+
+
+@lru_cache(maxsize=1)
+def catalog_brand_keys() -> frozenset[str]:
+    """카탈로그가 취급하는 브랜드 키 집합(약 194개).
+
+    `match_oliveyoung`은 후보 3천여 개를 전수 스캔해 상품 하나당 ~40ms 든다(729개 상품에
+    걸면 30초). 후보를 추리는 **싼 선필터**로 쓴다 — 브랜드가 카탈로그에 아예 없으면 그
+    상품은 글로벌몰이 취급하지 않는다고 봐도 된다.
+    """
+    return frozenset(item.brand_key for item in _load_items() if item.brand_key)
+
+
+def brand_in_catalog(brand: str) -> bool:
+    """브랜드가 카탈로그에 있는지(부분일치 포함). match_oliveyoung 앞단의 싼 게이트."""
+    key = normalize_key(brand or "")
+    if not key:
+        return False
+    return any(key == c or key in c or c in key for c in catalog_brand_keys())
 
 
 def _brands_match(q_brand_key, q_brand_tokens, c_brand_key, c_name_tokens) -> bool:
@@ -265,8 +286,14 @@ def line_match_score(brand: str, name: str, cand_brand: str, cand_name: str) -> 
     )
 
 
+@lru_cache(maxsize=8192)
 def match_oliveyoung(brand: str, name: str, min_score: float = 0.5) -> OYMatch | None:
-    """상품을 로컬 카탈로그와 조인해 최적 매칭을 반환한다(없으면 None). JP 글로벌몰 전용."""
+    """상품을 로컬 카탈로그와 조인해 최적 매칭을 반환한다(없으면 None). JP 글로벌몰 전용.
+
+    카탈로그 3,100여 건을 전수 스캔해 호출당 ~77ms 든다(실측). 아이템매칭은 같은 후보에
+    resolve 를 두 번(네이버 보강 전후) 돌리고 요청 간에도 같은 상품이 반복되므로 메모이즈한다.
+    반환 OYMatch 는 읽기 전용으로만 쓸 것(호출부가 변형하면 캐시가 오염된다).
+    """
     q_brand_key = normalize_key(brand)
     q_brand_tokens = tokens_for(brand)
     q_name_tokens = tokens_for(name)
@@ -333,22 +360,34 @@ def _parse_usd(raw: str) -> float:
     return float(m.group()) if m else 0.0
 
 
-def male_catalog_items() -> list[OYMaleItem]:
+def _as_catalog_item(item: _OYItem) -> OYCatalogItem:
+    return OYCatalogItem(
+        brand=item.brand,
+        brand_jp=item.brand_jp,
+        name_kr=item.name_kr,
+        name_en=item.name_en,
+        name_jp=item.name_jp,
+        prdt_no=item.prdt_no,
+        image_url=item.image_url,
+        price_usd=_parse_usd(item.sale_amt),
+    )
+
+
+def male_catalog_items() -> list[OYCatalogItem]:
     """글로벌몰 카탈로그의 '남성' 상품 목록(JP 남성 소스). 카탈로그 없으면 빈 리스트."""
-    out: list[OYMaleItem] = []
+    out: list[OYCatalogItem] = []
     for item in _load_items():
         blob = f"{item.brand} {item.name_en} {item.name_kr}"
         if item.brand_key in _MEN_CATALOG_BRAND_KEYS or _MEN_NAME_RE.search(blob):
-            out.append(
-                OYMaleItem(
-                    brand=item.brand,
-                    brand_jp=item.brand_jp,
-                    name_kr=item.name_kr,
-                    name_en=item.name_en,
-                    name_jp=item.name_jp,
-                    prdt_no=item.prdt_no,
-                    image_url=item.image_url,
-                    price_usd=_parse_usd(item.sale_amt),
-                )
-            )
+            out.append(_as_catalog_item(item))
     return out
+
+
+def catalog_items() -> list[OYCatalogItem]:
+    """글로벌몰 카탈로그 전 상품(카드 소스).
+
+    JP 올리브영 탭에서 **비어 있는 컬럼**(실측: 블러셔·네일 0건)을 메우는 후보 소스다.
+    JP 후보는 라쿠텐 라이브 검색뿐인데 라쿠텐엔 한국 색조 브랜드가 거의 안 떠서, 검증만으로는
+    그 컬럼이 영원히 빈다 — KR 쪽 _inject_kr_oliveyoung_catalog 와 같은 구조의 공백이다.
+    """
+    return [_as_catalog_item(item) for item in _load_items()]

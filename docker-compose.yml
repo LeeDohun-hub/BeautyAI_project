@@ -34,6 +34,10 @@ services:
       RAKUTEN_REFERER: ${RAKUTEN_REFERER:-http://127.0.0.1:5173/}
       NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
       NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
+      # LLM 상담용. .env 에 키가 있어도 여기서 넘기지 않으면 컨테이너 안에서는 안 보인다
+      # (실제로 이것만 빠져 있어 상담이 계속 지식베이스 폴백으로만 동작했다).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       SKIN_MODEL_PATH: /data/models/skin_efficientnet_b0.pt
       BODY_SKIN_MODEL_PATH: /data/models/body_skin_mobilenet_v3.pt
       PERSONAL_COLOR_MODEL_PATH: /data/models/personal_color_retrain_try2_smooth005.pt

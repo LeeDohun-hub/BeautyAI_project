@@ -1,4 +1,6 @@
 import json
+import re
+import time
 from collections import defaultdict
 from urllib.parse import quote_plus
 
@@ -26,6 +28,7 @@ from app.services.pediatric_care import (
     is_pediatric_safe,
     raw_ingredients_have_fragrance,
 )
+from app.services.oliveyoung_catalog import brand_in_catalog, match_oliveyoung
 from app.services.platform_availability import unavailable_platforms_bulk
 from app.services.skincare_ingredient_knowledge import (
     build_skincare_recommendation_hint,
@@ -161,8 +164,18 @@ def _brand_text(product: Product) -> str:
 
 
 def _has_brand(product: Product, brands: set[str]) -> bool:
+    """브랜드명이 목록의 브랜드를 '단어로' 포함하는지.
+
+    단순 부분문자열은 오탐이 난다 — 미국 브랜드 'Danessa Myricks Beauty'가 일본 브랜드
+    'anessa'를 품고 있어 J뷰티로 분류됐고(6건), 그 탓에 matched_platforms 가 올리브영·
+    네이버·Amazon US 후보에서 통째로 빼버렸다. 앞뒤가 영숫자면 매칭으로 보지 않는다.
+    (K뷰티 판정은 이 변경으로 바뀌는 브랜드가 0건임을 실측 확인.)
+    """
     brand = _brand_text(product)
-    return any(name in brand for name in brands)
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", brand)
+        for name in brands
+    )
 
 
 def is_kbeauty(product: Product) -> bool:
@@ -198,6 +211,7 @@ def build_platform_links(product: Product) -> dict[str, str]:
 
 def matched_platforms(product: Product) -> list[str]:
     product_url = (product.product_url or "").lower()
+    brand_name = product.brand.name if product.brand else ""
 
     # 일본 채널(Amazon JP·마츠키요)은 실제 상품 URL이 그 플랫폼을 가리킬 때만
     # 노출한다. 예전에는 "K/J-뷰티 브랜드면 일본 채널에도 있겠지"라고 추측해 버튼을
@@ -218,7 +232,12 @@ def matched_platforms(product: Product) -> list[str]:
         matches.add("amazon_jp")
     elif "amazon." in product_url:
         matches.add("amazon_us")
-    if "oliveyoung." in product_url or is_kbeauty(product):
+    # 올리브영 글로벌몰은 K뷰티 전용이 아니다 — ANESSA·CEZANNE·KATE 같은 **일본 브랜드도
+    # 실제로 취급한다**(카탈로그 194개 브랜드에 실재). 그래서 위에서 is_japanese 로 묶어
+    # 배제했더라도, 카탈로그가 그 브랜드를 취급하면 올리브영 후보로 되살린다. 여기서 통과해도
+    # 실제 버튼은 match_oliveyoung 의 라인 매칭(_oliveyoung_slot_is_real·resolve_product_platforms)을
+    # 통과해야 붙으므로, 후보를 넓혀도 오탐 버튼은 생기지 않는다.
+    if "oliveyoung." in product_url or is_kbeauty(product) or brand_in_catalog(brand_name):
         matches.add("oliveyoung")
     if "matsukiyococokara" in product_url:
         matches.add("matsukiyo")
@@ -698,12 +717,111 @@ def _is_personal_color_makeup_product(product: Product) -> bool:
     return any(term in text for term in PERSONAL_COLOR_MAKEUP_TERMS)
 
 
+# 색조(퍼스널컬러) 후보 id 캐시 — {DB URL: (만료시각, ids)}.
+_PC_CANDIDATE_TTL = 600.0
+_pc_candidate_cache: dict[str, tuple[float, tuple[int, ...]]] = {}
+
+
+# 상품 성분 인덱스 캐시 — {DB URL: (만료시각, {product_id: (성분명 set, 타깃 set)})}.
+_INGREDIENT_INDEX_TTL = 600.0
+_ingredient_index_cache: dict[str, tuple[float, dict[int, tuple[frozenset[str], frozenset[str]]]]] = {}
+
+
+def clear_personal_color_candidate_cache() -> None:
+    """상품 임포트/시딩 후, 또는 테스트에서 후보 캐시를 비운다."""
+    _pc_candidate_cache.clear()
+    _ingredient_index_cache.clear()
+
+
+def ingredient_index(db: Session) -> dict[int, tuple[frozenset[str], frozenset[str]]]:
+    """상품 id → (성분명, 타깃) 인덱스 (10분 캐시).
+
+    왜 캐시하나: 랭킹은 상품 7,228건 전부의 성분을 봐야 하는데, 이걸 `selectinload` 로 매 요청
+    끌어오면 **요청마다** 성분 조인이 돈다. SQLAlchemy 가 500건씩 나눠 15개 쿼리를 보내고,
+    원격 DB(왕복 107ms) 라 그것만 1.9초 + 객체 그래프 생성까지 합쳐 요청당 3.5초쯤 든다(실측:
+    브랜드만 1.8s vs 브랜드+성분 5.2s).
+
+    성분 구성은 상품 데이터라 요청 사이에 바뀌지 않는다. 한 번(1.16초) 만들어 두고 재사용하면
+    랭킹 루프는 dict 조회만 하면 된다. TTL·DB URL 키 규약은 _personal_color_candidate_ids 와 동일.
+    """
+    key = str(db.get_bind().url)
+    now = time.monotonic()
+    cached = _ingredient_index_cache.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    index: dict[int, tuple[set[str], set[str]]] = {}
+    rows = (
+        db.query(ProductIngredient)
+        .options(selectinload(ProductIngredient.ingredient))
+        .all()
+    )
+    for row in rows:
+        names, targets = index.setdefault(row.product_id, (set(), set()))
+        ingredient = row.ingredient
+        if ingredient is None:
+            continue
+        names.add(ingredient.name)
+        targets.update(target for target in (ingredient.targets or "").split(",") if target)
+    frozen = {pid: (frozenset(n), frozenset(t)) for pid, (n, t) in index.items()}
+    _ingredient_index_cache[key] = (now + _INGREDIENT_INDEX_TTL, frozen)
+    return frozen
+
+
+_EMPTY_INGREDIENTS: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset())
+
+
+def _personal_color_candidate_ids(db: Session) -> tuple[int, ...]:
+    """색조 화장품 후보 상품 id (10분 캐시).
+
+    `_is_personal_color_makeup_product` 는 키워드와 무관한 순수 분류라, 요청마다 전체 상품
+    (7,228건)을 ORM 으로 올려 파이썬에서 거르는 건 낭비였다 — 이 로딩만 매 요청 4~7초를
+    먹었다(실측, 아이템매칭 지연의 최대 단일 원인). 후보는 729건뿐이라 id 만 캐시해 두면
+    이후 요청은 그 729건만 올린다. DB 가 바뀔 수 있는 테스트/시딩을 위해 bind URL 로 키를
+    나누고 TTL 을 둔다.
+    """
+    key = str(db.get_bind().url)
+    now = time.monotonic()
+    cached = _pc_candidate_cache.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    rows = db.query(Product).options(selectinload(Product.brand)).all()
+    ids = tuple(p.id for p in rows if _is_personal_color_makeup_product(p))
+    _pc_candidate_cache[key] = (now + _PC_CANDIDATE_TTL, ids)
+    return ids
+
+
 def _visible_product_platforms(product: Product, region: str, platform: str) -> list[str]:
     allowed = REGION_PLATFORMS.get(region, set().union(*REGION_PLATFORMS.values()))
     matches = set(matched_platforms(product)).intersection(allowed)
     if platform != "all":
         matches = matches.intersection({platform})
     return sorted(matches)
+
+
+def _oliveyoung_slot_is_real(product: Product, region: str, platform: str) -> bool:
+    """올리브영 탭에서 이 DB 상품이 자리를 차지할 자격이 있는가(JP 한정).
+
+    `matched_platforms`는 일본 상품이 아니면 **무조건** oliveyoung 을 부여한다. 그래서
+    글로벌몰이 취급하지 않는 서양 브랜드(Benefit·Givenchy·HUDA…)까지 올리브영 탭 후보가
+    되고, `build_platform_links`가 붙여주는 건 상품 직링크가 아니라 **검색 URL**이다.
+    이 상품들이 limit 을 다 채우면 아래 `_curated_personal_color_products`(실제 글로벌몰
+    직링크가 확인된 큐레이션 목록)가 `limit - len(db_results)` = 0 슬롯만 받아 한 건도
+    못 들어가고, 그 뒤 resolve_product_platforms 가 검증 안 되는 검색 URL 을 걷어내
+    **JP 올리브영 탭이 통째로 0건**이 됐다.
+
+    그래서 JP 올리브영 요청에 한해 카탈로그에 실재하는 상품만 통과시킨다. KR 은 글로벌
+    카탈로그가 아니라 국내몰 라이브 검색(oliveyoung_kr_search)으로 판정하므로 건드리지
+    않는다 — 여기서 막으면 국내몰에 있는 상품까지 사라진다.
+    """
+    if platform != "oliveyoung" or (region or "").lower() != "jp":
+        return True
+    brand = product.brand.name if product.brand else ""
+    # 싼 브랜드 게이트로 3천여 후보 전수 스캔(상품당 ~40ms)을 피한다.
+    if not brand_in_catalog(brand):
+        return False
+    return match_oliveyoung(brand, product.name or "") is not None
 
 
 def _search_link(platform: str, brand: str, name: str) -> str:
@@ -788,17 +906,21 @@ def recommend_personal_color_products(
     platform = normalize_platform(platform)
     allowed_platforms = REGION_PLATFORMS.get(region, set().union(*REGION_PLATFORMS.values()))
 
-    products = db.query(Product).options(
-        selectinload(Product.brand),
-        selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
+    # ⚠ ingredients 를 여기서 eager 로드하면 안 된다. 스코어링(_is_personal_color_makeup_product
+    # ·personal_color_fit_score_for_text)은 brand/name/category/description 만 보는데,
+    # 성분까지 selectinload 하면 전체 상품에 대해 조인이 돌아 쿼리가 4.2s→9.0s 가 된다
+    # (실측). 성분이 실제로 필요한 건 아래 top_products 8건뿐이라 그때 지연로드된다.
+    # 색조 후보(7,228→729)는 키워드와 무관하므로 id 를 캐시해 매 요청 전량 로딩을 피한다.
+    products = db.query(Product).options(selectinload(Product.brand)).filter(
+        Product.id.in_(_personal_color_candidate_ids(db))
     ).all()
 
     scored: list[tuple[float, float, Product, list[str]]] = []
     for product in products:
-        if not _is_personal_color_makeup_product(product):
-            continue
         visible_platforms = _visible_product_platforms(product, region, platform)
         if not visible_platforms:
+            continue
+        if not _oliveyoung_slot_is_real(product, region, platform):
             continue
 
         if platform == "all":
@@ -827,6 +949,14 @@ def recommend_personal_color_products(
         key=lambda item: (item[0], item[1], item[2].review_count or 0, item[2].avg_rating or 0.0),
         reverse=True,
     )[:limit]
+
+    # 성분은 최종 top 상품에만 필요하다. 위 스캔에서 eager 로드를 뺐으므로 여기서 한 번에
+    # 채운다 — 그냥 두면 ProductOut 만들 때 상품마다 지연로딩이 돌아 N+1 이 된다(원격 DB
+    # 왕복 107ms × 8 ≈ 0.9s). identity map 에 들어가므로 아래 product.ingredients 는 재조회 없음.
+    if top_products:
+        db.query(Product).options(
+            selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
+        ).filter(Product.id.in_([product.id for _s, _ps, product, _pl in top_products])).all()
 
     hidden_map = unavailable_platforms_bulk(
         (product.id, product.brand.name, product.name, set(platforms))
@@ -936,30 +1066,36 @@ def _line_dedup_key(product) -> str:
     return key or (product.name or "").strip().lower()
 
 
-def _generic_quality(product, survey: SurveyInput, platform_score: float, soothing: bool) -> float:
+# 성분 조회는 캐시 인덱스로 한다. 정렬 비교 함수 안에서 product.ingredients 를 만지면
+# 후보 수만큼 지연로딩이 걸려 N+1 이 된다(민감도 4 이상 사용자에게만 터지는 함정이었다).
+def _names_of(product, ing_index) -> frozenset[str]:
+    if ing_index is None:  # 인덱스를 못 받은 호출부(구 시그니처) 호환 — 이때만 관계를 읽는다.
+        return frozenset(pi.ingredient.name for pi in product.ingredients)
+    return ing_index.get(product.id, _EMPTY_INGREDIENTS)[0]
+
+
+def _generic_quality(product, survey: SurveyInput, platform_score: float, soothing: bool, ing_index=None) -> float:
     """비-세럼 단계용 품질 점수: 평점 + 피부타입 적합 + 플랫폼 (+민감 진정 가점)."""
     score = rating_score_for(product)
     if survey.skin_type in product.skin_types or "all" in product.skin_types:
         score += 4.0
     score += min(3.0, platform_score * 0.3)
     if soothing and survey.sensitivity >= 4:
-        names = {pi.ingredient.name for pi in product.ingredients}
-        if names & _SOOTHING_INGREDIENTS:
+        if _names_of(product, ing_index) & _SOOTHING_INGREDIENTS:
             score += 3.0
     return score
 
 
-def _serum_sort_key(x, survey: SurveyInput):
+def _serum_sort_key(x, survey: SurveyInput, ing_index=None):
     """세럼 랭킹 키: 사진 고민(total)으로 정렬하되, 민감 피부엔 강한 액티브(레티놀·AHA/BHA)를 감점."""
     product, total = x[0], x[1]
     if survey.sensitivity >= 4:
-        names = {pi.ingredient.name for pi in product.ingredients}
-        if names & (_AHA_BHA | {"Retinol"}):
+        if _names_of(product, ing_index) & (_AHA_BHA | {"Retinol"}):
             total -= 30.0
     return (total, rating_score_for(product))
 
 
-def build_product_columns(scored, survey: SurveyInput):
+def build_product_columns(scored, survey: SurveyInput, ing_index=None):
     """scored(전체 후보) → 카테고리별 추천 상품 컬럼(각 top-N).
 
     scored = [(total, platform_score, product, reason_tags, _evidence), ...].
@@ -977,13 +1113,13 @@ def build_product_columns(scored, survey: SurveyInput):
     columns = []
     for key, label in ROUTINE_SLOTS:
         if key == "serum":
-            cand = sorted(pools.get("serum", []), key=lambda x: _serum_sort_key(x, survey), reverse=True)
+            cand = sorted(pools.get("serum", []), key=lambda x: _serum_sort_key(x, survey, ing_index), reverse=True)
         elif key == "moisturizer":
             pool = pools.get(moist_step) or pools.get("cream") or pools.get("lotion") or []
-            cand = sorted(pool, key=lambda x: (_generic_quality(x[0], survey, x[3], True), x[1]), reverse=True)
+            cand = sorted(pool, key=lambda x: (_generic_quality(x[0], survey, x[3], True, ing_index), x[1]), reverse=True)
         else:
             soothing = key in ("cleanser", "toner")
-            cand = sorted(pools.get(key, []), key=lambda x: (_generic_quality(x[0], survey, x[3], soothing), x[1]), reverse=True)
+            cand = sorted(pools.get(key, []), key=lambda x: (_generic_quality(x[0], survey, x[3], soothing, ing_index), x[1]), reverse=True)
         # 라인 기준 중복 제거(카탈로그 소스별 중복행·용량변형) 후 top-N.
         top, seen = [], set()
         for item in cand:
@@ -1186,10 +1322,11 @@ def recommend_products(
             knowledge_context,
         )
 
-    products = db.query(Product).options(
-        selectinload(Product.brand),
-        selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
-    ).all()
+    # ⚠ 성분을 여기서 eager 로드하지 않는다. 랭킹은 전 상품(7,228건)의 성분을 보지만,
+    # 그 정보는 요청과 무관한 상품 데이터라 ingredient_index() 로 캐시해 둔다(요청당 3.5초 절감).
+    # 대신 **아래 스캔에서 product.ingredients 를 만지면 안 된다** — 지연로딩이 걸려 N+1 이 된다.
+    products = db.query(Product).options(selectinload(Product.brand)).all()
+    ing_index = ingredient_index(db)
     scored: list[tuple[float, float, Product, list[str], str | None]] = []
     for product in products:
         platform_score = platform_fit_score(product, platform)
@@ -1199,15 +1336,8 @@ def recommend_products(
         # targets 가 barrier/moisture 라 여기서 걸러진다 — 안 거르면 severity_focus 가
         # 타깃 '평균'이라, 상품 82%에 든 글리세린이 0점 타깃으로 들어가 얼굴 랭킹을 뭉갠다.
         # 현재 얼굴 성분 14종은 전부 얼굴 타깃이라 이 필터는 오늘 기준 no-op 이다.
-        product_targets = {
-            target
-            for product_ingredient in product.ingredients
-            for target in product_ingredient.ingredient.targets.split(",")
-            if target in FACE_SCORE_TARGETS
-        }
-        product_ingredient_names = {
-            product_ingredient.ingredient.name for product_ingredient in product.ingredients
-        }
+        product_ingredient_names, all_targets = ing_index.get(product.id, _EMPTY_INGREDIENTS)
+        product_targets = {target for target in all_targets if target in FACE_SCORE_TARGETS}
         if analysis_mode == "body":
             if product_ingredient_names.intersection(BODY_AVOID_INGREDIENTS):
                 continue
@@ -1311,7 +1441,7 @@ def recommend_products(
     # face 모드면 카테고리별 상품 컬럼(각 여러 개)을 조립한다. body는 recommend_derma_care에서.
     column_selection: list = []
     if analysis_mode != "body":
-        column_selection, _moist_step = build_product_columns(scored, survey)
+        column_selection, _moist_step = build_product_columns(scored, survey, ing_index)
 
     # 후보 플랫폼을 미리 구한 뒤, 실시간 입점 확인으로 '실제 없는' 곳만 숨긴다.
     # top_products + 컬럼 상품을 합쳐(중복 제거) 한 번에 확인한다.
@@ -1319,6 +1449,13 @@ def recommend_products(
     for _key, _label, _reason, top in column_selection:
         for prod, _t, _rt, _ps in top:
             union[prod.id] = prod
+    # 응답에 실을 상품(≈25건)의 성분만 한 번에 채운다. 위 스캔에서 성분 eager 로드를 뺐으므로
+    # 이걸 빼먹으면 _product_out 이 상품마다 지연로딩을 돌려 N+1 이 된다(원격 DB 왕복 107ms).
+    # identity map 에 올라가므로 이후 product.ingredients 접근은 재조회가 없다.
+    if union:
+        db.query(Product).options(
+            selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
+        ).filter(Product.id.in_(list(union))).all()
     matched_map = {pid: matched_platforms(p) for pid, p in union.items()}
     hidden_map = unavailable_platforms_bulk(
         (p.id, p.brand.name, p.name, set(matched_map[p.id])) for p in union.values()
