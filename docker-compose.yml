@@ -29,6 +29,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://beautyai:beautyai@mysql:3306/beautyai}
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      # 웹 계정 연동. 기본값은 BeautyWEB TokenUtils 의 기본값과 같아 로컬은 설정 없이 붙는다.
+      # 로그인 게이트는 로컬에서 꺼둔다 — 익명으로 기능을 그대로 확인할 수 있게(운영은 true).
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_32_BYTE_MINIMUM_JWT_SECRET!}
+      REQUIRE_LOGIN: ${REQUIRE_LOGIN:-false}
+      WEB_LOGIN_URL: ${WEB_LOGIN_URL:-http://localhost:5174/login}
+      WEB_CART_URL: ${WEB_CART_URL:-http://localhost:5174/cart}
       RAKUTEN_APP_ID: ${RAKUTEN_APP_ID:-}
       RAKUTEN_ACCESS_KEY: ${RAKUTEN_ACCESS_KEY:-}
       RAKUTEN_REFERER: ${RAKUTEN_REFERER:-http://127.0.0.1:5173/}

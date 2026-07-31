@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.security import enforce_login, optional_user
 from app.models import Product, ProductIngredient, RecommendationHistory, SkinAnalysis, User
 from app.schemas.api import (
     AnalyzeNailDesignResponse,
@@ -47,7 +48,7 @@ from app.services.naver_kr_enricher import enrich_products_with_naver_kr
 from app.services.oliveyoung_availability import prune_global_oliveyoung
 from app.services.oliveyoung_catalog import catalog_available, catalog_items, male_catalog_items
 from app.services.oliveyoung_kr_search import kr_catalog_items, kr_goods_url, prune_kr_oliveyoung
-from app.services.personal_color_analyzer import PersonalColorAnalyzer
+from app.services.personal_color_analyzer import PersonalColorAnalyzer, declared_personal_color_result
 from app.services.platform_resolver import OLIVEYOUNG_GLOBAL_DETAIL, dedup_by_line, resolve_product_platforms
 from app.services.product_image_provider import fill_missing_images
 from app.services.rakuten_body_links import rakuten_link_for
@@ -64,7 +65,9 @@ from app.services.recommender import (
 )
 from app.services.skin_analyzer import SkinAnalyzer, summarize_scores
 
-router = APIRouter(prefix="/api")
+# settings.require_login 이 켜져 있으면 이 라우터 전체가 세션 없이는 401 이다.
+# 프론트 게이트만으로는 API 가 그대로 열려 있어서, 운영에서는 여기까지 막아야 실제 제한이 된다.
+router = APIRouter(prefix="/api", dependencies=[Depends(enforce_login)])
 
 
 def _resolve_region(raw_region: str | None, request: Request, fallback: str) -> str:
@@ -835,7 +838,10 @@ async def analyze_skin(
     analysis_mode: str = Form(default="auto"),
     image: UploadFile = File(...),
     db: Session = Depends(get_db),
+    session_user: User | None = Depends(optional_user),
 ) -> AnalyzeSkinResponse:
+    # 세션이 있으면 쿼리 파라미터보다 우선한다 — 남의 user_id 를 실어 보내도 자기 이력에만 쌓인다.
+    user_id = session_user.id if session_user else user_id
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="An image file is required.")
     image_bytes = await image.read()
@@ -892,6 +898,19 @@ async def analyze_personal_color(
         return PersonalColorAnalyzer().analyze_many(image_bytes, color_scale=color_scale)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not analyze this image.") from exc
+
+
+@router.get("/personal-color/profile", response_model=PersonalColorResponse)
+def personal_color_profile(label: str) -> PersonalColorResponse:
+    """이미 아는 퍼스널컬러(웹 계정에 저장된 8종 라벨)로 결과지를 만든다.
+
+    사진 분석 결과와 같은 모양이라 프론트가 그대로 아이템매칭 검색어로 넘길 수 있다.
+    아티스트에게 진단받은 사람에게 다시 찍으라고 하지 않기 위한 경로다.
+    """
+    result = declared_personal_color_result(label)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Unknown personal color label: {label}")
+    return result
 
 
 @router.post("/analyze-face-shape", response_model=FaceShapeResponse)
@@ -1048,7 +1067,11 @@ def recommend(
     payload: RecommendationRequest,
     request: Request,
     db: Session = Depends(get_db),
+    session_user: User | None = Depends(optional_user),
 ) -> RecommendationResponse:
+    # 세션이 있으면 추천 이력을 그 계정에 붙인다(요청 본문의 user_id 보다 우선).
+    if session_user is not None:
+        payload.user_id = session_user.id
     region = _resolve_region(payload.region, request, "kr")
     platform = normalize_platform(payload.platform)
     # 스킨케어 상품은 글로벌 카탈로그라 지역/플랫폼과 무관하게 피부적합도로 고른다("all").
@@ -1462,8 +1485,13 @@ def style_mood_thumbnails() -> MoodThumbnailsResponse:
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
-    return answer_skin_question(db, payload.message, payload.user_id, payload.context)
+def chat(
+    payload: ChatRequest,
+    db: Session = Depends(get_db),
+    session_user: User | None = Depends(optional_user),
+) -> ChatResponse:
+    user_id = session_user.id if session_user else payload.user_id
+    return answer_skin_question(db, payload.message, user_id, payload.context)
 
 
 @router.get("/products", response_model=list[ProductOut])
@@ -1491,7 +1519,14 @@ def products(db: Session = Depends(get_db)) -> list[ProductOut]:
 
 
 @router.get("/history", response_model=list[HistoryOut])
-def history(user_id: int | None = None, db: Session = Depends(get_db)) -> list[HistoryOut]:
+def history(
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    session_user: User | None = Depends(optional_user),
+) -> list[HistoryOut]:
+    # 세션이 있으면 남의 user_id 를 넣어도 자기 이력만 보인다.
+    if session_user is not None:
+        user_id = session_user.id
     query = db.query(RecommendationHistory)
     if user_id is not None:
         query = query.filter(RecommendationHistory.user_id == user_id)

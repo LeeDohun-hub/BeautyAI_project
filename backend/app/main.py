@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
 
+from app.api.auth import auth_router
+from app.api.cart_handoff import cart_handoff_router
 from app.api.routes import router
 from app.core.config import get_settings
 from app.core.database import Base, SessionLocal, engine
@@ -28,6 +30,41 @@ def ensure_product_link_columns() -> None:
         statements.append("ALTER TABLE products ADD COLUMN product_url VARCHAR(500) DEFAULT ''")
     if "image_url" not in columns:
         statements.append("ALTER TABLE products ADD COLUMN image_url VARCHAR(500) DEFAULT ''")
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def ensure_user_account_columns() -> None:
+    """웹 계정 연동 컬럼을 기존 DB(users 테이블이 이미 있는 경우)에 추가한다.
+
+    Base.metadata.create_all 은 **없는 테이블만** 만들고 기존 테이블에 컬럼을 붙이지는
+    않는다. 운영 DB 는 이미 users 가 있으므로 이 보정이 없으면 연동이 통째로 죽는다.
+    """
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    definitions = {
+        # unique 는 여기서 안 건다 — MySQL/SQLite 모두 나중에 인덱스로 붙이는 편이 안전하고,
+        # 중복 web_member_id 가 생길 경로가 upsert 하나뿐이라 애플리케이션에서 막힌다.
+        "web_member_id": "INTEGER",
+        "login_id": "VARCHAR(100)",
+        "gender": "VARCHAR(20)",
+        "age_group": "VARCHAR(20)",
+        "skin_type": "VARCHAR(40)",
+        "personal_color": "VARCHAR(40)",
+    }
+    statements = [
+        f"ALTER TABLE users ADD COLUMN {name} {ddl}"
+        for name, ddl in definitions.items()
+        if name not in columns
+    ]
 
     if not statements:
         return
@@ -84,6 +121,7 @@ def _warm_caches() -> None:
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     Base.metadata.create_all(bind=engine)
     ensure_product_link_columns()
+    ensure_user_account_columns()
     db = SessionLocal()
     try:
         seed_database(db)
@@ -104,6 +142,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 연동 라우터가 먼저다 — 게이트(enforce_login)를 통과하려고 부르는 곳이라 게이트를 걸면 안 된다.
+app.include_router(auth_router)
+# 장바구니 핸드오프: /api/cart/handoff 는 사용자 세션, /internal/... 은 서비스 토큰으로 각각 지킨다.
+app.include_router(cart_handoff_router)
 app.include_router(router)
 
 

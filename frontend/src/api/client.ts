@@ -1,9 +1,69 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, BodyConditionScore, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning } from '../types/api';
+import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
 });
+
+/** AI 세션 토큰 보관 키. 웹 로그인과 별개로 AI 가 자체 발급한 토큰이다(기본 12시간). */
+export const SESSION_STORAGE_KEY = 'beautyai_session_token';
+
+export function getSessionToken(): string | null {
+  try {
+    return window.localStorage.getItem(SESSION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionToken(token: string | null): void {
+  try {
+    if (token) window.localStorage.setItem(SESSION_STORAGE_KEY, token);
+    else window.localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // 시크릿 모드 등에서 localStorage 가 막혀 있어도 이번 세션은 그대로 쓸 수 있게 무시한다.
+  }
+}
+
+// 모든 요청에 세션을 붙인다. 붙지 않으면 분석 결과가 계정에 안 쌓이고,
+// REQUIRE_LOGIN 이 켜진 배포에서는 전부 401 이 된다.
+api.interceptors.request.use((config) => {
+  const token = getSessionToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+/** 웹 핸드오프 티켓을 AI 세션으로 교환한다. 성공하면 토큰을 저장하고 사용자 정보를 돌려준다. */
+export async function exchangeTicket(ticket: string): Promise<AuthSessionResponse> {
+  const { data } = await api.post<AuthSessionResponse>('/api/auth/exchange', { ticket });
+  setSessionToken(data.token);
+  return data;
+}
+
+/** 저장된 세션이 아직 유효한지 확인하고 최신 프로필을 가져온다. 만료면 401 이 난다. */
+export async function fetchMe(): Promise<AuthUser> {
+  const { data } = await api.get<AuthUser>('/api/auth/me');
+  return data;
+}
+
+export async function fetchAuthConfig(): Promise<AuthConfigResponse> {
+  const { data } = await api.get<AuthConfigResponse>('/api/auth/config');
+  return data;
+}
+
+/** 결과지에 담은 상품으로 1회용 장바구니 코드를 만든다. QR 은 이 응답의 url 을 담는다. */
+export async function createCartHandoff(items: CartHandoffItem[]): Promise<CartHandoffResponse> {
+  const { data } = await api.post<CartHandoffResponse>('/api/cart/handoff', { items });
+  return data;
+}
+
+/** 이미 아는 퍼스널컬러(웹 계정 저장값)로 결과지를 만든다 — 사진 촬영 없이. */
+export async function personalColorProfile(label: string): Promise<PersonalColorResponse> {
+  const { data } = await api.get<PersonalColorResponse>('/api/personal-color/profile', {
+    params: { label },
+  });
+  return data;
+}
 
 export async function analyzeSkin(file: File, analysisMode: AnalysisMode): Promise<AnalyzeSkinResponse> {
   const form = new FormData();

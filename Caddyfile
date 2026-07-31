@@ -1,0 +1,30 @@
+# BeautyAI 리버스 프록시 + 자동 HTTPS.
+#
+# 포트 80 은 인증서 갱신(HTTP-01 챌린지)에 쓰이므로 보안그룹에서 닫으면 안 된다.
+#
+#   ai.yopalette.com → frontend(nginx, 컨테이너 내부 8080)
+#
+# ⚠️ 프론트는 이제 호스트 포트를 열지 않는다(compose 에서 ports 제거). 외부 접점은 Caddy 뿐이다.
+# ⚠️ /api, /internal 은 프론트 nginx 가 backend:8000 으로 프록시한다 — Caddy 는 호스트만 가른다.
+
+{
+	email hundo1217@gmail.com
+}
+
+ai.yopalette.com {
+	reverse_proxy frontend:8080 {
+		# CPU 추론 + 라이브 상품검색이 겹치면 오래 걸린다. 프론트 nginx 가 이미 300s 로
+		# 잡아둔 것과 맞춘다 — 여기가 더 짧으면 Caddy 가 먼저 끊어 504 가 난다.
+		transport http {
+			dial_timeout 10s
+			response_header_timeout 300s
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# 얼굴·바디 사진 업로드. 기본 제한에 걸리면 분석이 413 으로 죽는다.
+	request_body {
+		max_size 20MB
+	}
+}

@@ -168,6 +168,80 @@ curl -f http://<호스트>/ready    # {"status":"ready"} — 워밍 완료(기�
 5. ~~네일 기능 포함~~ **완료(2026-07-28)** — `--no-nail` 로 빼면 번들이 작아지고
    `/api/analyze-nail-design` 이 `feature_available=false` 로 응답한다.
 
+## 5.6 BeautyWEB 계정 연동 (2026-07-31)
+
+웹에서 로그인한 사용자만 AI 를 쓰게 하고, 회원 정보·퍼스널컬러를 함께 넘긴다.
+
+```
+WEB(로그인) ─ GET /v1/api/account/ai-ticket ─▶ 120초 1회용 티켓(JWT, sub=aiHandoff)
+            └ location.assign("<AI>/#t=<ticket>")
+AI ─ POST /api/auth/exchange ─▶ jti 소각 + users upsert ─▶ AI 세션(sub=aiSession, 12h)
+   └ 이후 모든 요청에 Authorization: Bearer <세션>
+```
+
+**왜 WEB 액세스 토큰을 그대로 안 쓰나**
+- WEB 액세스 토큰은 수명이 **1분**이다(`AccountConstants.ACCESS_TOKEN_EXP_MINUTES`).
+- 갱신용 리프레시 토큰은 HttpOnly·호스트 한정 쿠키라 AI 오리진에서 못 읽는다
+  (`SameSite` 미설정 → Lax). 두 앱을 같은 등록도메인의 서브도메인으로 묶고 `Domain=`·
+  `Secure` 를 붙이면 쿠키 공유도 가능하지만, 지금 배포는 포트 분리 + 평문이라 그 전제가 없다.
+- 티켓은 **프래그먼트(`#t=`)** 로 실어 보낸다. 쿼리스트링은 서버 접근로그와 Referer 에 남는다.
+
+**필수 환경변수**
+
+| 변수 | 어디에 | 비고 |
+|---|---|---|
+| `JWT_SECRET` | **WEB·AI 양쪽 동일** | 다르면 티켓이 전부 401. 기본값(`CHANGE_ME…`)이면 티켓 위조가 가능하다 |
+| `REQUIRE_LOGIN` | AI | `true` 면 `/api/**` 가 세션 없이는 401. **프론트 게이트만으로는 API 가 그대로 열려 있다** |
+| `WEB_LOGIN_URL` | AI | 게이트 화면의 "웹에서 로그인하기" 링크 |
+
+**확인**
+
+```bash
+curl -s http://localhost:8080/api/auth/config
+# {"require_login":true,"web_login_url":"https://…/login"}
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/history
+# 401  ← 200 이면 게이트가 안 걸린 것(REQUIRE_LOGIN 확인)
+```
+
+**함정**
+- `users` 에 컬럼이 추가됐다(`web_member_id`, `login_id`, `gender`, `age_group`,
+  `skin_type`, `personal_color`). `Base.metadata.create_all` 은 **기존 테이블에 컬럼을
+  안 붙인다** — `main.ensure_user_account_columns()` 가 기동 때 ALTER 로 보정한다.
+- 프론트 게이트는 모듈 분기(`appModule === 'home'` …)보다 **위**에 있어야 한다. 아래에
+  두면 홈·퍼스널컬러·네일·가상성형이 각자 먼저 return 해서 스킨케어 흐름만 막힌다.
+
+## 5.7 결과지 QR → 웹 장바구니 (2026-07-31)
+
+```
+AI 결과지에서 상품 담기 → POST /api/cart/handoff (사용자 세션) → 1회용 코드(30분)
+QR = <WEB_CART_URL>?ai=<code>   ← 73자, 상품 목록은 안 싣는다
+폰으로 스캔 → BeautyWEB /cart
+  → POST /v1/api/carts/ai-import (로그인 불필요)
+  → WEB 백엔드가 AI 의 POST /internal/cart-handoff/resolve 로 목록을 받아(서비스 토큰)
+    구매URL/external_id 로 items 를 찾아 코드 주인의 장바구니에 담는다
+```
+
+**필수 환경변수**
+
+| 변수 | 어디에 | 비고 |
+|---|---|---|
+| `WEB_CART_URL` | AI | QR 이 가리킬 웹 장바구니 주소(`?ai=` 가 붙는다) |
+| `BEAUTYWEB_BEAUTYAI_BASE_URL` | WEB | AI 백엔드 내부 주소. 서버끼리 부르므로 공개 주소가 아니어도 된다 |
+| `JWT_SECRET` | 양쪽 동일 | 서비스 토큰도 이 키로 서명한다(§5.6과 같은 값) |
+
+**함정**
+- **QR 에 상품 목록을 싣지 않는다.** 5개만 담아도 base64 가 1KB 를 넘겨 QR 이 아주
+  조밀해지고 출력물에서 인식이 어렵다. 짧은 코드만 싣고 목록은 서버끼리 주고받는다.
+- **WEB→AI 호출은 HTTP/1.1 로 고정해야 한다.** Spring 의 기본 JDK HttpClient 는 평문에서도
+  `Upgrade: h2c` 로 HTTP/2 승격을 시도하는데, uvicorn 은 HTTP/1.1 전용이라 이 요청을
+  거절하면서 **본문을 못 읽고 422** 를 준다(실측: 담기가 전부 실패). `BeautyAiHandoffClient`
+  가 `HttpClient.Version.HTTP_1_1` 로 못 박는다. AI 백엔드 앞에 nginx 를 두면 안 겪지만,
+  지금은 WEB 이 uvicorn 을 직접 부른다.
+- 담기는 **로그인 없이** 성공한다(코드가 회원을 가리킨다). 담긴 걸 *보려면* 로그인해야
+  한다 — 코드가 로그인 자격증명이 되면 QR 사진 한 장으로 계정이 열린다.
+- BeautyWEB 카탈로그에 없는 상품(라쿠텐·네이버 라이브 검색 결과)은 담기지 않고 이름으로
+  안내된다. 브랜드+상품명 유사도 매칭은 일부러 넣지 않았다(오탐 전례).
+
 ## 6. 주의
 
 - `.env.prod` 는 `.gitignore` 의 `.env.*` 에 걸려 커밋되지 않는다(`.env.prod.example` 만 예외).

@@ -34,6 +34,14 @@ services:
       # 프론트와 같은 오리진(nginx 프록시)으로 들어오므로 CORS 는 사실상 불필요하지만,
       # 백엔드를 별도 도메인에 직접 노출할 경우를 위해 남겨둔다.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      # 웹 계정 연동. JWT_SECRET 은 BeautyWEB 백엔드와 **같은 값**이어야 핸드오프 티켓이 검증된다.
+      # 기본값(CHANGE_ME…)으로 두면 티켓을 아무나 위조할 수 있으므로 운영에서는 필수로 채운다.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 이 필요합니다 — BeautyWEB 과 같은 값을 넣으세요}
+      # 프론트 게이트만으로는 API 가 열려 있다 — 운영에서는 켠다.
+      REQUIRE_LOGIN: ${REQUIRE_LOGIN:-true}
+      WEB_LOGIN_URL: ${WEB_LOGIN_URL:-http://localhost:5174/login}
+      # 결과지 QR 이 가리킬 웹 장바구니. 폰이 여는 주소라 반드시 공개 주소여야 한다.
+      WEB_CART_URL: ${WEB_CART_URL:-http://localhost:5174/cart}
       RAKUTEN_APP_ID: ${RAKUTEN_APP_ID:-}
       RAKUTEN_ACCESS_KEY: ${RAKUTEN_ACCESS_KEY:-}
       RAKUTEN_REFERER: ${RAKUTEN_REFERER:-http://localhost:8080/}
@@ -54,6 +62,11 @@ services:
     depends_on:
       redis:
         condition: service_started
+    networks:
+      default:
+      beauty_stack:
+        aliases:
+          - beautyai-backend
 
   frontend:
     build:
@@ -63,8 +76,33 @@ services:
         # 빈 값 = 같은 오리진(/api) → nginx 프록시 경유. 백엔드를 별도 도메인에 둘 때만 채운다.
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     restart: unless-stopped
-    ports:
-      - "${WEB_PORT:-8080}:8080"
+    # 호스트 포트를 열지 않는다 — 외부 접점은 caddy 하나뿐이다.
+    expose:
+      - "8080"
     depends_on:
       backend:
         condition: service_healthy
+
+  # 리버스 프록시 + 자동 HTTPS(Let's Encrypt). 설정은 ./Caddyfile 참조.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"      # 인증서 갱신(HTTP-01)에 필요 — 닫지 말 것
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # 발급받은 인증서를 보존한다. 없으면 재기동마다 재발급해 Let's Encrypt 한도에 걸린다.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  beauty_stack:
+    name: beauty_stack
+    external: true

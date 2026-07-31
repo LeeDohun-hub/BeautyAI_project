@@ -1,5 +1,6 @@
 from app.models.domain import (
     Brand,
+    CartHandoff,
     ChatHistory,
     Ingredient,
     Product,
@@ -7,11 +8,13 @@ from app.models.domain import (
     RecommendationHistory,
     SkinAnalysis,
     Survey,
+    UsedTicket,
     User,
 )
 
 __all__ = [
     "Brand",
+    "CartHandoff",
     "ChatHistory",
     "Ingredient",
     "Product",
@@ -19,6 +22,7 @@ __all__ = [
     "RecommendationHistory",
     "SkinAnalysis",
     "Survey",
+    "UsedTicket",
     "User",
 ]
 

@@ -17,6 +17,7 @@ import csv
 import re
 import threading
 import time
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
@@ -335,8 +336,13 @@ def _query_candidates(brand: str, name: str) -> list[str]:
 
 _HANGUL_RE = re.compile(r"[가-힣]")
 
-# 영문 브랜드 → 한글 브랜드 별칭. 네이버가 한글 타이틀을 안 줘서 한글명에서 브랜드를 못 뽑는
-# 경우(rom&nd 'B15026 Rom&nd …')에도 한글 브랜드로 국내몰 검색/채점이 되게 한다.
+# 영문 브랜드 → 한글 브랜드 별칭(사람이 검수한 값). 아래 _catalog_brand_alias() 가 카탈로그에서
+# 자동 생성한 것과 합쳐 쓰며, **여기 값이 우선**한다.
+#
+# ⚠️ 2026-07-31 이전에는 네이버 쇼핑 검색이 한글 상품명을 채워줘서, 별칭에 없는 브랜드도
+# `_kr_brand()` 의 (3)단계(한글명 첫 토큰)로 넘어갔다. 쇼핑 API 가 종료되면서 그 경로가
+# 통째로 죽어, 이 표에 없는 브랜드는 영문 그대로 국내몰(한글) 검색에 들어가 **정상 상품도
+# 전부 기각**됐다. 그래서 카탈로그 자동 생성을 추가해 커버리지를 32종 → 100종+ 로 넓혔다.
 _BRAND_ALIAS = {
     "romnd": "롬앤", "romand": "롬앤", "peripera": "페리페라", "espoir": "에스쁘아",
     "clio": "클리오", "colorgram": "컬러그램", "cologram": "컬러그램", "wakemake": "웨이크메이크",
@@ -353,13 +359,65 @@ def _brand_alias_key(brand: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (brand or "").lower())
 
 
+# 자동 생성 별칭을 인정할 최소 상품 수. 1개짜리는 그 상품의 한글명이 브랜드로 시작하지 않는
+# 경우(예: '[기획] …')에 엉뚱한 토큰이 브랜드로 굳어버려, 2개 이상 반복될 때만 채택한다.
+_ALIAS_MIN_SUPPORT = 2
+
+
+@lru_cache(maxsize=1)
+def _catalog_brand_alias() -> dict[str, str]:
+    """올리브영 글로벌 카탈로그에서 영문 브랜드 → 한글 브랜드를 뽑는다.
+
+    카탈로그 각 행에 영문 브랜드(brand)와 한글 상품명(name_kr)이 함께 있고, 한글 상품명은
+    대개 브랜드로 시작한다('라운드랩 자작나무 …'). 그래서 **같은 영문 브랜드의 한글명 첫
+    토큰을 투표**하면 한글 브랜드가 나온다. 하드코딩 표를 손으로 늘리는 것보다 정확하고
+    (카탈로그가 출처라 오탐이 없다) 카탈로그가 커지면 자동으로 같이 늘어난다.
+    """
+    try:
+        from app.services.oliveyoung_catalog import catalog_items
+    except Exception:  # noqa: BLE001 - 카탈로그가 없으면 하드코딩 표만 쓴다.
+        return {}
+
+    votes: dict[str, Counter[str]] = defaultdict(Counter)
+    try:
+        items = catalog_items()
+    except Exception:  # noqa: BLE001 - 번들 누락 등. 별칭 없이도 동작해야 한다.
+        return {}
+
+    for item in items:
+        key = _brand_alias_key(item.brand)
+        if not key:
+            continue
+        head = (item.name_kr or "").strip().split(" ")[0].strip()
+        if head and _HANGUL_RE.search(head):
+            votes[key][head] += 1
+
+    alias: dict[str, str] = {}
+    for key, counter in votes.items():
+        head, support = counter.most_common(1)[0]
+        if support >= _ALIAS_MIN_SUPPORT:
+            alias[key] = head
+    return alias
+
+
+def _brand_alias(key: str) -> str:
+    """하드코딩(검수됨) 우선, 없으면 카탈로그 자동 생성."""
+    return _BRAND_ALIAS.get(key) or _catalog_brand_alias().get(key, "")
+
+
 def _kr_brand(brand: str, name: str) -> str:
     """국내몰은 한글이라, 영문 DB 브랜드(peripera/CLIO)면 한글 브랜드를 쓴다.
-    우선순위: (1) 이미 한글이면 그대로, (2) 알려진 영문→한글 별칭, (3) 한글명 첫 한글 토큰.
-    이렇게 안 하면 line_match_score의 브랜드 매칭이 영문vs한글로 실패해 정상 상품도 기각된다."""
+
+    우선순위: (1) 이미 한글이면 그대로, (2) 별칭(하드코딩 → 카탈로그 자동생성),
+    (3) 한글명 첫 한글 토큰.
+    이렇게 안 하면 line_match_score의 브랜드 매칭이 영문vs한글로 실패해 정상 상품도 기각된다.
+
+    (3)은 네이버 쇼핑 검색이 한글명을 채워주던 시절의 폴백이라 지금은 거의 안 걸린다
+    (2026-07-31 종료). 실질적으로 (2)가 유일한 경로다.
+    """
     if _HANGUL_RE.search(brand or ""):
         return brand
-    alias = _BRAND_ALIAS.get(_brand_alias_key(brand))
+    alias = _brand_alias(_brand_alias_key(brand))
     if alias:
         return alias
     for token in (name or "").split():

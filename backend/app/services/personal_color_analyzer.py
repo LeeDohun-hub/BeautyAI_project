@@ -1002,3 +1002,51 @@ class PersonalColorAnalyzer:
         if redness > 0.08:
             tone_text += ", 로지한 혈색"
         return f"{light_text} 피부 밝기와 {chroma_text} 대비, {tone_text}이 감지되어 {profile.label} 경향으로 분석했습니다."
+
+
+# ── 웹 계정에 저장된 퍼스널컬러 → 결과지 ──────────────────────────────────────────
+# 웹 마이페이지의 8종 라벨을 앱의 PROFILES 키로 옮긴다. 사진 분석 없이 팔레트/메이크업
+# 추천과 아이템매칭 검색어를 바로 만들기 위한 것이다(이미 아는 사람에게 다시 찍으라고
+# 하지 않으려고). PROFILES 에는 봄이 하나뿐이라 spring_bright/spring_warm 이 같은 곳으로
+# 간다 — 봄 계열은 라이트 하나로만 세분돼 있고, 없는 프로필을 지어내면 팔레트가 틀린다.
+WEB_LABEL_TO_PROFILE_KEY: dict[str, tuple[str, str]] = {
+    "spring_bright": ("warm", "light"),
+    "spring_warm": ("warm", "light"),
+    "summer_light": ("cool", "light"),
+    "summer_mute": ("cool", "soft"),
+    "autumn_warm": ("warm", "deep"),
+    "autumn_mute": ("warm", "soft"),
+    "winter_clear": ("cool", "bright"),
+    "winter_deep": ("cool", "deep"),
+}
+
+
+def profile_from_web_label(web_label: str) -> PersonalColorProfile | None:
+    """웹 라벨(spring_bright 등)에 해당하는 프로필. 모르는 라벨이면 None."""
+    key = WEB_LABEL_TO_PROFILE_KEY.get((web_label or "").strip().lower())
+    return PROFILES.get(key) if key else None
+
+
+def declared_personal_color_result(web_label: str) -> PersonalColorResponse | None:
+    """사진 없이, 사용자가 이미 아는 퍼스널컬러로 결과지를 만든다.
+
+    측정한 값이 아니므로 metrics 는 비우고 confidence 는 1.0 으로 둔다 — 모델 확률이
+    아니라 '본인이 신고한 값'이라는 뜻이다. 프론트는 이 결과를 분석 결과와 똑같이
+    아이템매칭 검색어로 넘길 수 있다.
+    """
+    profile = profile_from_web_label(web_label)
+    if profile is None:
+        return None
+    return PersonalColorResponse(
+        season=profile.season,
+        tone=profile.tone,
+        subtype=profile.subtype,
+        label=profile.label,
+        decision_note="회원 정보에 저장된 퍼스널 컬러를 그대로 사용했습니다.",
+        confidence=1.0,
+        skin_summary=f"{profile.label} 기준으로 어울리는 색을 정리했습니다.",
+        palette=list(profile.palette),
+        makeup=profile.makeup,
+        advice=list(profile.advice),
+        metrics={},
+    )

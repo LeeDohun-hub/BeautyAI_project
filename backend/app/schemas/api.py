@@ -290,3 +290,72 @@ class AnalyzeNailDesignResponse(BaseModel):
     recommended_palette: list[NailShade] = Field(default_factory=list)
     note: str = ""
 
+
+
+class AuthExchangeRequest(BaseModel):
+    """BeautyWEB 이 발급한 1회용 핸드오프 티켓."""
+
+    ticket: str
+
+
+class AuthUser(BaseModel):
+    """AI 세션이 들고 있는 사용자. profile 값은 웹 마이페이지에서 넘어온 것이다."""
+
+    id: int
+    name: str
+    role: str = "customer"
+    web_member_id: int | None = None
+    login_id: str | None = None
+    gender: str | None = None
+    age_group: str | None = None
+    skin_type: str | None = None
+    personal_color: str | None = None
+
+
+class AuthSessionResponse(BaseModel):
+    token: str
+    expires_in: int                  # 초
+    user: AuthUser
+
+
+class AuthConfigResponse(BaseModel):
+    """프론트 게이트가 쓰는 값. 로그인이 필요한지, 어디로 보낼지."""
+
+    require_login: bool
+    web_login_url: str
+
+
+class CartHandoffItem(BaseModel):
+    """결과지에 담은 상품 한 건. BeautyWEB 이 자기 카탈로그와 맞춰볼 수 있는 값만 담는다."""
+
+    name: str
+    brand: str = ""
+    # 매칭 1순위. BeautyWEB items.productUrl 과 같은 방식으로 만들어진다
+    # (올리브영 prdtNo/goodsNo, 아마존 /dp/ASIN 등).
+    url: str = ""
+    image_url: str = ""
+    price: int = 0
+    source: str = ""
+    external_id: str = ""
+
+
+class CartHandoffRequest(BaseModel):
+    # 결과지 상한(5개)보다 넉넉하게. 그 이상은 QR 한 장에 담을 흐름이 아니다.
+    items: list[CartHandoffItem] = Field(default_factory=list, max_length=10)
+
+
+class CartHandoffResponse(BaseModel):
+    code: str
+    # QR 에 그대로 넣을 주소(`<web_cart_url>?ai=<code>`).
+    url: str
+    expires_in: int                  # 초
+    item_count: int
+
+
+class CartHandoffResolveRequest(BaseModel):
+    code: str
+
+
+class CartHandoffResolveResponse(BaseModel):
+    web_member_id: int
+    items: list[CartHandoffItem]

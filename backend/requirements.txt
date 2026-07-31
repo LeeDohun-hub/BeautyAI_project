@@ -5,6 +5,8 @@ alembic==1.14.0
 psycopg2-binary==2.9.10
 pydantic-settings==2.7.1
 python-multipart==0.0.20
+# BeautyWEB 핸드오프 티켓(HS256) 검증 + AI 자체 세션 발급. WEB 과 JWT_SECRET 을 공유한다.
+PyJWT==2.10.1
 pymysql==1.1.1
 cryptography==44.0.0
 beautifulsoup4==4.12.3

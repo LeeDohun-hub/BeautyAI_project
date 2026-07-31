@@ -11,6 +11,23 @@ class Settings(BaseSettings):
     chroma_path: str = "./data/rag/chromadb"
     redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # ── 웹 계정 연동 ────────────────────────────────────────────────────────────
+    # BeautyWEB(Spring)과 **같은 값**이어야 한다. 다르면 핸드오프 티켓 서명 검증이 전부 실패한다.
+    # 기본값은 WEB 의 TokenUtils 기본값과 맞춰 로컬에서 설정 없이 돌아가게 한 것 — 운영에서는 반드시 교체.
+    jwt_secret: str = "CHANGE_ME_32_BYTE_MINIMUM_JWT_SECRET!"
+    # AI 가 티켓을 교환해 발급하는 자체 세션 수명. WEB 액세스토큰(1분)과 무관하게 여기서 정한다.
+    ai_session_exp_hours: int = 12
+    # True 면 분석·추천 API 가 세션 없이는 401. 프론트 게이트만으로는 API 가 그대로 열려 있어서
+    # 운영에서는 켜는 게 맞다(docker-compose.prod.yml 에서 REQUIRE_LOGIN=true).
+    # 기본값이 False 인 이유: 로컬/테스트에서 익명 호출로 기능을 그대로 확인할 수 있게.
+    require_login: bool = False
+    # 게이트에 걸렸을 때 프론트가 안내할 웹 로그인 주소.
+    web_login_url: str = "http://localhost:5174/login"
+    # 결과지 QR 이 가리킬 웹 장바구니 주소. `?ai=<code>` 가 붙는다.
+    web_cart_url: str = "http://localhost:5174/cart"
+    # 장바구니 핸드오프 코드 수명(분). 결과지를 출력해 놓고 나중에 찍는 경우가 있어
+    # 로그인 티켓(120초)보다는 넉넉히 준다. 1회용이라 다 쓰면 바로 죽는다.
+    cart_handoff_exp_minutes: int = 30
     # 피부케어 6항목 회귀기. AI-Hub 03(스킨케어) 육안평가 등급으로 재학습한 버전으로 교체
     # (2026-07-23). 03 val MAE 39.8→6.2, 출력채널 상관 0.349→0.182(6항목 구분 개선).
     # 구 Kaggle-키워드 라벨 버전(skin_efficientnet_b0.pt)은 폴백용으로 보존. 되돌리려면 이 줄만 원복.

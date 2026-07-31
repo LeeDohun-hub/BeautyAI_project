@@ -7,6 +7,50 @@ export type SkinScores = {
   oiliness: number;
 };
 
+/** BeautyWEB 계정에서 넘어온 사용자. profile 값이 있으면 설문을 미리 채운다. */
+export type AuthUser = {
+  id: number;
+  name: string;
+  role: string;
+  web_member_id?: number | null;
+  login_id?: string | null;
+  gender?: string | null;
+  age_group?: string | null;
+  skin_type?: string | null;
+  // 8종 라벨(spring_bright … winter_deep). 있으면 사진 없이 결과지를 만들 수 있다.
+  personal_color?: string | null;
+};
+
+export type AuthSessionResponse = {
+  token: string;
+  expires_in: number;
+  user: AuthUser;
+};
+
+export type AuthConfigResponse = {
+  require_login: boolean;
+  web_login_url: string;
+};
+
+/** 결과지 QR → 웹 장바구니로 넘길 상품 한 건. url 이 매칭 1순위 키다. */
+export type CartHandoffItem = {
+  name: string;
+  brand?: string;
+  url?: string;
+  image_url?: string;
+  price?: number;
+  source?: string;
+  external_id?: string;
+};
+
+export type CartHandoffResponse = {
+  code: string;
+  /** QR 에 그대로 넣을 주소(`<웹 장바구니>?ai=<code>`). */
+  url: string;
+  expires_in: number;
+  item_count: number;
+};
+
 export type AnalysisMode = 'auto' | 'face' | 'body';
 
 export type BodyConditionScore = {
