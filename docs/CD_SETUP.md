@@ -1,5 +1,8 @@
 # 자동배포(CD) 셋업 — AI · WEB
 
+> **처음 켜는 거라면 [CD_SETUP_STEPS.md](CD_SETUP_STEPS.md) 를 보라** — 어느 사이트에서
+> 무엇을 누르는지 순서대로 적어놨다. 이 문서는 왜 이렇게 만들었는지와 값 표(레퍼런스)다.
+
 `git push` → CI 통과 → EC2 반영. 두 저장소가 **다른 방식**으로 배포된다.
 
 | | AI (`BeautyAI_project`, private) | WEB (`BeautyWEB_project`, public) |
