@@ -91,6 +91,9 @@ class SkinAnalysis(Base):
     redness: Mapped[float] = mapped_column(Float)
     pigmentation: Mapped[float] = mapped_column(Float)
     oiliness: Mapped[float] = mapped_column(Float)
+    # 원본 파일명이 아니라 **확장자만** 담는다(2026-08-03). 업로드 파일명에는 이름·날짜·기기·
+    # 장소가 들어가기 쉬운데, 이 컬럼은 어디서도 읽지 않으면서 user_id 와 묶여 남아 있었다.
+    # 기존 행에는 옛 파일명이 그대로 있다 — 정리는 scripts/scrub_image_names.py 참고.
     image_name: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
