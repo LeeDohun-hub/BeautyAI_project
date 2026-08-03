@@ -44,8 +44,12 @@ cd "$RUNNER_DIR"
 
 if [ ! -f ./config.sh ]; then
   # 최신 버전을 조회해 받는다(버전을 박아두면 몇 달 뒤 설치가 깨진다).
-  VERSION=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest \
-            | grep -m1 '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+  # ⚠ `curl ... | grep -m1` 로 쓰면 안 된다 — grep 이 첫 매치 후 파이프를 닫아 curl 이
+  #   SIGPIPE(exit 23)로 죽고, `set -o pipefail` 때문에 스크립트가 통째로 중단된다(실측).
+  #   응답을 변수에 먼저 담고 나서 파싱한다.
+  RELEASE_JSON=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)
+  VERSION=$(printf '%s\n' "$RELEASE_JSON" | grep -m1 '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+  [ -n "$VERSION" ] || { echo "러너 최신 버전을 알아내지 못했습니다" >&2; exit 1; }
   echo "러너 v$VERSION 내려받는 중..."
   curl -fsSL -o runner.tar.gz \
     "https://github.com/actions/runner/releases/download/v${VERSION}/actions-runner-linux-x64-${VERSION}.tar.gz"
