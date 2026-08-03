@@ -237,3 +237,65 @@ def test_ticket_profile_values_are_filtered(client: TestClient, secret: str) -> 
     assert user["age_group"] is None
     assert user["skin_type"] is None
     assert user["personal_color"] is None
+
+
+# ── 내 데이터 삭제 (설계안 §11 '언제든 삭제 요청할 수 있게 한다') ─────────────────
+# 보관 기간 자동 만료는 정책이 정해져야 하므로 만들지 않았다 — 삭제 '수단'만 만든 것이다.
+
+def _session_token(client: TestClient, secret: str, member_id: int) -> str:
+    res = client.post("/api/auth/exchange", json={"ticket": make_ticket(secret, memberId=member_id)})
+    assert res.status_code == 200
+    return res.json()["token"]
+
+
+def test_delete_my_data_requires_session(client: TestClient) -> None:
+    """세션이 없으면 401. user_id 파라미터를 받지 않으므로 남의 데이터는 애초에 지목할 수 없다."""
+    assert client.delete("/api/me/data").status_code == 401
+
+
+def test_delete_my_data_removes_only_own_rows(client: TestClient, secret: str) -> None:
+    """다른 사용자의 행은 남아야 한다 — 이 검사가 없으면 '전체 삭제' 사고를 못 잡는다."""
+    from app.core.database import SessionLocal
+    from app.models import RecommendationHistory, SkinAnalysis, User
+
+    mine = _session_token(client, secret, 910001)
+    _session_token(client, secret, 910002)
+
+    db = SessionLocal()
+    try:
+        me = db.query(User).filter(User.web_member_id == 910001).one()
+        other = db.query(User).filter(User.web_member_id == 910002).one()
+
+        def _analysis(uid: int) -> SkinAnalysis:
+            return SkinAnalysis(user_id=uid, acne=1, pore=1, wrinkle=1,
+                                redness=1, pigmentation=1, oiliness=1)
+
+        db.add_all([
+            _analysis(me.id), _analysis(other.id),
+            RecommendationHistory(user_id=me.id, recommended_ingredients="[]", recommended_products="[]"),
+            RecommendationHistory(user_id=other.id, recommended_ingredients="[]", recommended_products="[]"),
+        ])
+        db.commit()
+        me_id, other_id = me.id, other.id
+    finally:
+        db.close()
+
+    # ⚠ 절대 개수로 비교하면 안 된다 — test_beautyai.db 는 실행 간에 남아 이전 행이 섞인다
+    #   (전체 스위트로 돌리면 이 테스트만 깨졌다). '남의 행이 하나도 안 줄었는가'를 본다.
+    db = SessionLocal()
+    try:
+        before_other = db.query(SkinAnalysis).filter(SkinAnalysis.user_id == other_id).count()
+    finally:
+        db.close()
+
+    res = client.delete("/api/me/data", headers={"Authorization": f"Bearer {mine}"})
+    assert res.status_code == 200
+    assert res.json()["deleted"]["skin_analyses"] >= 1
+
+    db = SessionLocal()
+    try:
+        assert db.query(SkinAnalysis).filter(SkinAnalysis.user_id == me_id).count() == 0
+        after_other = db.query(SkinAnalysis).filter(SkinAnalysis.user_id == other_id).count()
+        assert after_other == before_other, "남의 데이터가 지워지면 안 된다"
+    finally:
+        db.close()

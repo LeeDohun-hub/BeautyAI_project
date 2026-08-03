@@ -14,7 +14,15 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import enforce_login, optional_user
-from app.models import Product, ProductIngredient, RecommendationHistory, SkinAnalysis, User
+from app.models import (
+    ChatHistory,
+    Product,
+    ProductIngredient,
+    RecommendationHistory,
+    SkinAnalysis,
+    Survey,
+    User,
+)
 from app.schemas.api import (
     AnalyzeNailDesignResponse,
     AnalyzeSkinResponse,
@@ -27,6 +35,7 @@ from app.schemas.api import (
     NailSeasonFit,
     NailShade,
     MakeupPreviewRequest,
+    MyDataDeletionResult,
     MakeupPreviewResponse,
     MoodThumbnailsResponse,
     PersonalColorItemMatchRequest,
@@ -1606,6 +1615,36 @@ def history(
         )
         for row in rows
     ]
+
+
+@router.delete("/me/data", response_model=MyDataDeletionResult)
+def delete_my_data(
+    db: Session = Depends(get_db),
+    session_user: User | None = Depends(optional_user),
+) -> MyDataDeletionResult:
+    """내 분석·설문·추천이력·상담기록을 지운다.
+
+    설계안 §11 이 요구하는 '사용자가 언제든 삭제 요청할 수 있게 한다' 를 **수단**으로 만든 것.
+    보관 기간 자동 만료는 정책이 정해져야 하므로 여기서 정하지 않는다(설계 검토 §7).
+
+    ⚠ **세션 사용자 것만** 지운다. user_id 를 파라미터로 받지 않는 이유는 그 순간 남의
+    데이터를 지울 수 있는 API 가 되기 때문이다(같은 이유로 /history 도 세션을 우선한다).
+    ⚠ 계정(users) 자체는 지우지 않는다. 웹에서 넘어온 연동 정보라 여기서 지우면 로그인
+    상태와 어긋난다 — 계정 탈퇴는 웹 소관이다.
+    """
+    if session_user is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+
+    uid = session_user.id
+    deleted = {
+        "skin_analyses": db.query(SkinAnalysis).filter(SkinAnalysis.user_id == uid).delete(synchronize_session=False),
+        "surveys": db.query(Survey).filter(Survey.user_id == uid).delete(synchronize_session=False),
+        "recommendation_histories": db.query(RecommendationHistory).filter(
+            RecommendationHistory.user_id == uid).delete(synchronize_session=False),
+        "chat_histories": db.query(ChatHistory).filter(ChatHistory.user_id == uid).delete(synchronize_session=False),
+    }
+    db.commit()
+    return MyDataDeletionResult(deleted={k: int(v or 0) for k, v in deleted.items()})
 
 
 @router.get("/admin/statistics")

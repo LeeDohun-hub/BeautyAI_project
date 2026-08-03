@@ -392,3 +392,12 @@ class CartHandoffResolveRequest(BaseModel):
 class CartHandoffResolveResponse(BaseModel):
     web_member_id: int
     items: list[CartHandoffItem]
+
+
+class MyDataDeletionResult(BaseModel):
+    """내 데이터 삭제 결과. 테이블별로 몇 건을 지웠는지 돌려준다.
+
+    사용자에게 '무엇이 지워졌는지' 를 보여줄 수 있어야 삭제 요청이 신뢰를 얻는다.
+    """
+
+    deleted: dict[str, int] = Field(default_factory=dict)
