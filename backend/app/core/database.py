@@ -32,6 +32,9 @@ def guard_production_db(database_url: str) -> None:
     조용히 경고만 찍으면 아무도 안 본다 — 엔진을 만들기 전에 예외로 끊는다.
     운영 컨테이너는 APP_ENV=production 을 받으므로 통과하고, 로컬에서 정말 필요하면
     ALLOW_PRODUCTION_DB=true 로 **의도를 밝히고** 연다.
+
+    alembic 도 여기에 걸린다(alembic/env.py 가 이 모듈을 임포트한다). 배포는 마이그레이션을
+    돌리지 않으므로 영향이 없고, 운영 마이그레이션은 원래 의도적이어야 하니 그대로 둔다.
     """
     marker = settings.production_db_marker.strip()
     if not marker or marker not in database_url:
@@ -42,7 +45,8 @@ def guard_production_db(database_url: str) -> None:
         f"운영 DB 로 접속하려고 합니다(APP_ENV={settings.app_env!r}).\n"
         "  - 개발용 DB 를 쓰려면 .env 의 DATABASE_URL 을 개발 DB 로 바꾸세요.\n"
         "  - 운영 데이터를 정말 봐야 한다면 ALLOW_PRODUCTION_DB=true 를 명시하세요.\n"
-        "  - 운영 컨테이너인데 이 오류가 났다면 APP_ENV=production 이 빠진 것입니다."
+        "  - 운영 컨테이너인데 이 오류가 났다면 APP_ENV=production 이 빠진 것입니다.\n"
+        "  - 운영 마이그레이션(alembic)이라면 ALLOW_PRODUCTION_DB=true 를 붙여 실행하세요."
     )
 
 
