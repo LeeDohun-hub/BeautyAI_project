@@ -66,7 +66,7 @@ AI 저장소가 private 이라 GHCR 패키지도 private 이다. `read:packages`
 | Secret | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | S3 읽기 권한만 있는 IAM 사용자 |
 | Secret | `AWS_REGION` | 예: `ap-northeast-2` |
 | Secret | `RUNTIME_BUNDLE_S3_URI` | `s3://<버킷>/runtime_data` |
-| Secret | `DEPLOY_HOST` | EC2 퍼블릭 IP(Elastic IP) 또는 도메인 |
+| Secret | `DEPLOY_HOST` | **AI 인스턴스**의 퍼블릭 IP(Elastic IP) 또는 도메인 |
 | Secret | `DEPLOY_USER` | 예: `ubuntu` / `ec2-user` |
 | Secret | `DEPLOY_SSH_KEY` | `YoPalAI.pem` **내용 전체**(`-----BEGIN` 줄 포함) |
 | Secret | `DEPLOY_AI_DIR` | 예: `/home/ubuntu/beautyai` |
@@ -77,8 +77,18 @@ AI 저장소가 private 이라 GHCR 패키지도 private 이다. `read:packages`
 | 종류 | 이름 | 값 |
 |---|---|---|
 | Variable | `DEPLOY_BRANCH` | `main` |
-| Secret | `DEPLOY_HOST` / `DEPLOY_USER` / `DEPLOY_SSH_KEY` | AI 와 같은 값 |
+| Secret | `DEPLOY_HOST` | **WEB 인스턴스**의 IP/도메인 (AI 와 다를 수 있다 — 아래 참고) |
+| Secret | `DEPLOY_USER` | 예: `ubuntu` / `ec2-user` |
+| Secret | `DEPLOY_SSH_KEY` | `YoPalette.pem` **내용 전체** |
 | Secret | `DEPLOY_WEB_DIR` | 예: `/home/ubuntu/beautyweb` |
+
+> **AI 와 WEB 은 서로 다른 인스턴스일 가능성이 높다.** 근거 둘:
+> `YoPalAI.pem` 과 `YoPalette.pem` 이 **서로 다른 키**이고, 두 스택의 Caddy 가 **둘 다
+> `80:80`·`443:443` 을 잡는다**(`docker-compose.prod.yml` / `docker-compose.aws.yml`).
+> 같은 호스트라면 나중에 뜨는 쪽이 포트 바인딩에 실패한다 — 자동배포가 조용히 깨지는 지점이다.
+> 각 저장소가 자기 시크릿을 쓰므로 **한 호스트든 두 호스트든 워크플로는 그대로 동작한다.**
+> 다만 한 호스트라면 Caddy 를 하나로 합치고(Caddyfile 병합) 다른 쪽 caddy 서비스를 빼야 한다.
+> `DEPLOY_READY_CHECKLIST.md` 는 Caddy 도입 **이전** 문서라 "같은 호스트" 라고 쓰여 있다 — 그대로 믿지 말 것.
 
 > `environment: production` 을 쓰므로, Settings → Environments 에 `production` 을 만들어야
 > 시크릿이 주입된다. 여기에 **승인 규칙(Required reviewers)** 을 걸면 "수동 승인 후 배포"로

@@ -158,14 +158,19 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
+            # ⚠ 반드시 배포 디렉터리에서 실행한다. compose 의 상대경로(./Caddyfile 등)와
+            #   프로젝트명 판정이 CWD 에 걸려 있어, -f 로만 가리키면 다른 스택을 볼 수 있다.
+            cd "${{ secrets.DEPLOY_AI_DIR }}"
+            C="docker compose -p beautyai_prod -f docker-compose.prod.yml --env-file .env.prod --env-file .env.images"
             # /ready 는 카탈로그·모델 워밍(≈20초)이 끝나야 200 이다. 넉넉히 기다린다.
+            # ⚠ /health(생존)가 아니라 /ready(준비)여야 한다 — 워밍 전에 성공으로 오판하면
+            #   프론트가 먼저 뜨고 첫 사용자가 30초를 기다린다.
             for i in $(seq 1 30); do
-              if docker compose -p beautyai_prod -f "${{ secrets.DEPLOY_AI_DIR }}/docker-compose.prod.yml" \
-                   --env-file "${{ secrets.DEPLOY_AI_DIR }}/.env.prod" \
-                   exec -T backend python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/ready')" 2>/dev/null; then
+              if $C exec -T backend python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/ready')" 2>/dev/null; then
                 echo "ready OK ($((i*10))s)"; exit 0
               fi
               sleep 10
             done
             echo "::error::/ready 가 300초 안에 200 을 주지 않았습니다"
+            $C logs --tail 50 backend || true
             exit 1
