@@ -1,0 +1,167 @@
+# AI 자동배포 — 배포 브랜치에 push 되고 CI 가 통과하면 EC2 에 반영한다.
+#
+# 왜 러너에서 이미지를 굽고 레지스트리로 보내나:
+#   EC2 에서 빌드하면 torch(CPU) 를 매번 받아 3.2GB 이미지를 만든다(로컬 PC 에서 15분 내
+#   실패한 기록이 DEPLOY_READY_CHECKLIST.md 에 있다). 러너가 굽고 서버는 pull 만 한다.
+#
+# 왜 S3 를 경유하나:
+#   backend/Dockerfile.prod 는 `COPY dist/runtime_data /data` 로 373MB 런타임 번들(모델·
+#   매니페스트)을 이미지에 굽는데, 그 번들의 원천인 data/(18GB)와 dist/ 는 .gitignore 다.
+#   러너는 체크아웃만으로는 번들을 가질 수 없다 → S3 에서 받아온다.
+#
+# 번들이 바뀌었을 때(모델 교체·매니페스트 크롤)는 **로컬에서 한 번** 올려야 한다:
+#   python scripts/build_runtime_bundle.py
+#   aws s3 sync dist/runtime_data "$RUNTIME_BUNDLE_S3_URI" --delete
+#
+# 필요한 Secrets/Variables 는 docs/CD_SETUP.md 참조.
+name: Deploy AI
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ai
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # CI 가 성공했을 때 + 배포 브랜치일 때만. workflow_dispatch 는 수동 실행이라 통과시킨다.
+    # ⚠ 배포 브랜치를 바꾸면 vars.DEPLOY_BRANCH(저장소 Variables)만 고치면 된다.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == vars.DEPLOY_BRANCH)
+    permissions:
+      contents: read
+      packages: write
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # workflow_run 은 기본적으로 기본 브랜치를 체크아웃한다 — 실제로 통과한 커밋을 집는다.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      # 시크릿이 하나라도 비면 여기서 이름을 찍고 멈춘다. 뒤에서 알 수 없는 에러로
+      # 죽는 것보다 낫다(빈 시크릿은 조용히 빈 문자열로 치환된다).
+      - name: 배포 시크릿 점검
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          RUNTIME_BUNDLE_S3_URI: ${{ secrets.RUNTIME_BUNDLE_S3_URI }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_AI_DIR: ${{ secrets.DEPLOY_AI_DIR }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          missing=""
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION \
+                      RUNTIME_BUNDLE_S3_URI DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY \
+                      DEPLOY_AI_DIR GHCR_PULL_TOKEN; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::다음 Secret 이 비어 있습니다:$missing (docs/CD_SETUP.md 참조)"
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 런타임 번들 내려받기 (S3 → dist/runtime_data)
+        run: |
+          set -euo pipefail
+          aws s3 sync "${{ secrets.RUNTIME_BUNDLE_S3_URI }}" dist/runtime_data --delete --only-show-errors
+          # Dockerfile.prod 의 가드와 같은 검사를 미리 한다 — 여기서 걸리면 원인이 명확하다.
+          test -d dist/runtime_data/models
+          test -d dist/runtime_data/manifests
+          test -s dist/runtime_data/manifests/amazon_dead_asins.txt
+          test -s dist/runtime_data/manifests/amazon_asin_status.json
+          echo "번들 $(du -sh dist/runtime_data | cut -f1) / 매니페스트 $(ls dist/runtime_data/manifests | wc -l)개"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 이미지 빌드·푸시
+        id: build
+        run: |
+          set -euo pipefail
+          # GHCR 경로는 소문자만 받는다(계정명이 대문자를 포함할 수 있다).
+          REG="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          TAG="${GITHUB_SHA::12}"
+          docker build -f backend/Dockerfile.prod \
+            -t "$REG/beautyai-backend:$TAG" -t "$REG/beautyai-backend:latest" .
+          # VITE_API_BASE_URL 은 반드시 빈 값이어야 한다 — nginx 가 /api 를 프록시하므로
+          # 절대주소를 구우면 배포 도메인이 바뀔 때 API 가 전멸한다.
+          docker build -f frontend/Dockerfile.prod --build-arg VITE_API_BASE_URL= \
+            -t "$REG/beautyai-frontend:$TAG" -t "$REG/beautyai-frontend:latest" frontend
+          docker push --all-tags "$REG/beautyai-backend"
+          docker push --all-tags "$REG/beautyai-frontend"
+          echo "backend=$REG/beautyai-backend:$TAG" >> "$GITHUB_OUTPUT"
+          echo "frontend=$REG/beautyai-frontend:$TAG" >> "$GITHUB_OUTPUT"
+
+      # compose 파일과 Caddyfile 은 저장소가 원본이다. 서버에 git 자격증명을 두지 않으려고
+      # (이 저장소는 private) pull 대신 필요한 파일만 복사한다. .env.prod 는 서버에만 있다.
+      - name: compose · Caddyfile 전송
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "docker-compose.prod.yml,Caddyfile"
+          target: ${{ secrets.DEPLOY_AI_DIR }}
+
+      - name: EC2 반영
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          AI_BACKEND_IMAGE: ${{ steps.build.outputs.backend }}
+          AI_FRONTEND_IMAGE: ${{ steps.build.outputs.frontend }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: AI_BACKEND_IMAGE,AI_FRONTEND_IMAGE
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_AI_DIR }}"
+            echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
+            # 이번에 배포할 태그를 별도 env 파일로 남긴다(다음 수동 재기동 때도 같은 태그가 뜬다).
+            printf 'AI_BACKEND_IMAGE=%s\nAI_FRONTEND_IMAGE=%s\n' "$AI_BACKEND_IMAGE" "$AI_FRONTEND_IMAGE" > .env.images
+            # ⚠ -p beautyai_prod: 프로젝트명을 분리하지 않으면 같은 호스트의 개발 스택을 갈아친다.
+            C="docker compose -p beautyai_prod -f docker-compose.prod.yml --env-file .env.prod --env-file .env.images"
+            $C pull backend frontend
+            $C up -d --no-build
+            $C ps
+
+      - name: 준비 상태 확인
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            # /ready 는 카탈로그·모델 워밍(≈20초)이 끝나야 200 이다. 넉넉히 기다린다.
+            for i in $(seq 1 30); do
+              if docker compose -p beautyai_prod -f "${{ secrets.DEPLOY_AI_DIR }}/docker-compose.prod.yml" \
+                   --env-file "${{ secrets.DEPLOY_AI_DIR }}/.env.prod" \
+                   exec -T backend python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/ready')" 2>/dev/null; then
+                echo "ready OK ($((i*10))s)"; exit 0
+              fi
+              sleep 10
+            done
+            echo "::error::/ready 가 300초 안에 200 을 주지 않았습니다"
+            exit 1
