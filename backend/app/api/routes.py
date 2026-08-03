@@ -37,6 +37,7 @@ from app.schemas.api import (
     RecommendationRequest,
     RecommendationResponse,
     SkinScores,
+    VirtualSurgeryPreviewCardsResponse,
     VirtualSurgeryResponse,
 )
 from app.services import amazon_catalog
@@ -980,6 +981,24 @@ async def simulate_virtual_surgery(
         ))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not simulate this image.") from exc
+
+
+@router.post("/virtual-surgery/preview-cards", response_model=VirtualSurgeryPreviewCardsResponse)
+async def preview_virtual_surgery_cards(
+    image: UploadFile = File(...),
+    # 변화 강도. 슬라이더 숫자(%)를 대신한다 — 의학적 의미가 없는 워프 강도가 '62%' 처럼
+    # 결과지에 실리면 수술 수치로 읽힌다.
+    intensity: str = Form(default="balanced"),
+) -> VirtualSurgeryPreviewCardsResponse:
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="An image file is required.")
+    image_bytes = await image.read()
+    from app.services.virtual_surgery_simulator import preview_cards
+
+    try:
+        return VirtualSurgeryPreviewCardsResponse(**preview_cards(image_bytes, intensity=intensity))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Could not build previews for this image.") from exc
 
 
 @router.post("/analyze-nail-design", response_model=AnalyzeNailDesignResponse)

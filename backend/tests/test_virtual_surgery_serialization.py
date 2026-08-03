@@ -139,3 +139,37 @@ def test_concern_maps_to_both_nose_and_balance():
         out = _prioritize([dict(r) for r in recs], ["코 라인"])
         assert out[0]["category"] == category, f"{category} 가 맨 위여야 한다"
         assert out[0]["selected"] is True
+
+
+def test_face_line_and_jaw_balance_are_independent():
+    """두 값이 **합산**되던 시절엔 슬라이더가 2개인데 자유도가 1개였다.
+
+    그 탓에 합이 같은 프리셋은 결과가 완전히 같았다(실측: '부드러운 동안형' vs '입체
+    세련형' 픽셀차 0.02 — 카드가 달라도 그림이 같았다). face_line=양, jaw_balance=위치로
+    분리했으니, **합이 같아도 결과가 달라야** 한다.
+    """
+    import numpy as np
+
+    from app.services.virtual_surgery_simulator import _reshape_face
+
+    rgb = np.random.default_rng(0).integers(0, 255, (200, 200, 3), dtype=np.uint8)
+    pts = np.array([[60, 40], [140, 40], [150, 120], [100, 180], [50, 120]], dtype=np.int32)
+    mask = np.ones((200, 200), dtype=np.float32)
+
+    # 합이 같은 두 조합(0.3+0.7 vs 0.7+0.3)이 서로 다른 그림을 내야 한다.
+    a = _reshape_face(rgb, mask, pts, 0.3, 0.7)
+    b = _reshape_face(rgb, mask, pts, 0.7, 0.3)
+    assert np.abs(a.astype(int) - b.astype(int)).mean() > 1.0
+
+
+def test_card_presets_are_distinct():
+    """카드 프리셋이 서로 충분히 달라야 미리보기가 구분된다."""
+    from app.services.virtual_surgery_simulator import CARD_PRESETS
+
+    seen = set()
+    for preset in CARD_PRESETS:
+        tuning = preset["tuning"]
+        # (양, 위치) 쌍이 겹치면 얼굴선 결과가 사실상 같아진다.
+        key = (tuning["face_line"] // 10, tuning["jaw_balance"] // 10)
+        assert key not in seen, f"{preset['id']} 의 얼굴선 프리셋이 다른 카드와 겹친다"
+        seen.add(key)

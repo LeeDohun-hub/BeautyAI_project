@@ -157,6 +157,22 @@ class VirtualSurgeryRecommendation(BaseModel):
     selected: bool = False
 
 
+class VirtualSurgeryPreviewCard(BaseModel):
+    id: str
+    title: str
+    summary: str
+    preview_image: str
+
+
+class VirtualSurgeryPreviewCardsResponse(BaseModel):
+    """카드별 '내 얼굴 적용' 미리보기. 카드가 일러스트였을 때는 고르고 나서야 결과를 봤다."""
+
+    detected: bool
+    message: str
+    original_image: str
+    cards: list[VirtualSurgeryPreviewCard] = Field(default_factory=list)
+
+
 class VirtualSurgeryResponse(BaseModel):
     detected: bool
     message: str

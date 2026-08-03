@@ -84,11 +84,23 @@ def _face_bounds(points: np.ndarray, w: int, h: int) -> tuple[int, int, int, int
     )
 
 
-def _reshape_face(rgb: np.ndarray, face_mask: np.ndarray, face_pts: np.ndarray, strength: float) -> np.ndarray:
+def _reshape_face(
+    rgb: np.ndarray,
+    face_mask: np.ndarray,
+    face_pts: np.ndarray,
+    strength: float,
+    jaw_focus: float = 0.5,
+) -> np.ndarray:
     """Subtle horizontal remap inside the face oval.
 
     The effect is deliberately capped so the preview stays in "planning" territory,
     not identity-changing retouching.
+
+    strength  = 얼마나 줄일지, jaw_focus = **어디를** 줄일지(0=중안부 쪽, 1=턱끝 쪽).
+    ⚠ 예전엔 face_line 과 jaw_balance 를 **더해서** 강도 하나로만 썼다. 그래서 슬라이더가
+      2개인데 자유도는 1개였고, 합이 같은 프리셋은 결과가 완전히 같았다(실측: '부드러운
+      동안형' vs '입체 세련형' 픽셀차 0.02 — 카드가 달라도 그림이 같았다).
+      두 값을 분리해야 카드 4장이 서로 구분된다.
     """
     if strength <= 0:
         return rgb
@@ -99,7 +111,12 @@ def _reshape_face(rgb: np.ndarray, face_mask: np.ndarray, face_pts: np.ndarray, 
     y_top, y_bottom = float(ys.min()), float(ys.max())
     yy, xx = np.indices((h, w), dtype=np.float32)
     vertical = np.clip((yy - y_top) / max(1.0, y_bottom - y_top), 0.0, 1.0)
-    lower_face_weight = np.exp(-((vertical - 0.70) ** 2) / 0.12)
+    # jaw_focus 가 높을수록 축소가 아래(턱)로 내려가고 좁게 모인다 → 'V라인'.
+    # 낮으면 중안부까지 완만하게 퍼진다 → '계란형/동안형'.
+    focus = float(np.clip(jaw_focus, 0.0, 1.0))
+    center = 0.55 + 0.25 * focus
+    spread = 0.20 - 0.11 * focus
+    lower_face_weight = np.exp(-((vertical - center) ** 2) / max(0.04, spread))
     cap = _MAX_FACE_NARROWING
     scale = 1.0 - min(cap, strength * cap) * lower_face_weight * face_mask
     # 하한은 상한에 맞춰 따라간다. 예전엔 0.86 고정이라 상한을 올려도 여기서 잘려나갔다.
@@ -189,6 +206,98 @@ def _prioritize(recs: list[dict], concerns: list[str] | None) -> list[dict]:
     for rec in recs:
         rec["selected"] = rec.get("category") in order
     return sorted(recs, key=lambda rec: order.get(rec.get("category", ""), len(order) + 1))
+
+
+def _detect(rgb: np.ndarray):
+    """Face Mesh 1회 실행. **가장 비싼 단계**라, 카드 여러 장을 만들 때 이걸 재사용한다."""
+    import mediapipe as mp
+
+    with mp.solutions.face_mesh.FaceMesh(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+    ) as mesh:
+        return mesh.process(rgb)
+
+
+def _render(rgb, lm, face_mask, face_pts, tuning: dict, frontal: float) -> np.ndarray:
+    """랜드마크가 이미 있을 때 미리보기 한 장을 그린다(카드별 프리셋 렌더에 재사용)."""
+    h, w = rgb.shape[:2]
+    strength = np.clip(tuning["face_line"] / 100.0, 0.0, 1.0) * frontal
+    out = _reshape_face(rgb, face_mask, face_pts, strength, tuning["jaw_balance"] / 100.0)
+    out, _ = _soften_blemishes(out, face_mask, np.clip(tuning["blemish_care"] / 100.0, 0.0, 1.0))
+    return _add_contour_guides(out, lm, w, h, np.clip(tuning["nose_contour"] / 100.0, 0.0, 1.0))
+
+
+# 개선 방향 카드 = 슬라이더 프리셋. **백엔드가 단일 출처**다 — 예전엔 프론트에만 있어서
+# 미리보기를 만들 수 없었고(카드는 일러스트였다), 값이 두 곳에 흩어질 위험도 있었다.
+CARD_PRESETS: tuple[dict, ...] = (
+    {"id": "oval", "title": "계란형 밸런스",
+     "summary": "전체 얼굴선은 유지하면서 턱선과 광대 폭을 부드럽게 정리합니다.",
+     "tuning": {"face_line": 44, "jaw_balance": 32, "nose_contour": 28, "blemish_care": 50}},
+    {"id": "vline", "title": "V라인 윤곽",
+     "summary": "하관과 턱끝 중심으로 갸름한 인상을 강조합니다.",
+     "tuning": {"face_line": 68, "jaw_balance": 64, "nose_contour": 32, "blemish_care": 45}},
+    # ⚠ 카드끼리 face_line(양)과 jaw_balance(위치)가 **둘 다 비슷하면 그림이 같아진다.**
+    #   '동안형'은 넓고 약하게(중안부까지), '세련형'은 코 중심이라 얼굴선은 거의 안 건드린다.
+    {"id": "soft", "title": "부드러운 동안형",
+     "summary": "각진 인상을 줄이고 볼륨감과 부드러운 얼굴선을 우선합니다.",
+     "tuning": {"face_line": 30, "jaw_balance": 15, "nose_contour": 20, "blemish_care": 62}},
+    {"id": "defined", "title": "입체 세련형",
+     "summary": "코 라인과 중안부 입체감을 살려 또렷한 인상을 만듭니다.",
+     "tuning": {"face_line": 18, "jaw_balance": 55, "nose_contour": 85, "blemish_care": 45}},
+)
+
+# 변화 강도. 슬라이더의 숫자(%)를 대신한다 — "코 라인 62%" 같은 값이 결과지에 실려 병원에
+# 가면 수술 수치처럼 읽히는데, 실제로는 의학적 의미가 없는 워프 강도라 오해만 만든다.
+INTENSITY_SCALE = {"natural": 0.6, "balanced": 1.0, "defined": 1.35}
+
+
+def preview_cards(image_bytes: bytes, intensity: str = "balanced") -> dict:
+    """카드별로 '내 얼굴에 적용한' 미리보기를 만든다.
+
+    Face Mesh 는 **1회만** 돌리고 워프만 카드 수만큼 반복한다 — 탐지가 가장 비싼 단계라,
+    이렇게 하면 카드 4장이 단일 시뮬레이션과 큰 차이 없는 시간에 나온다.
+    """
+    rgb = _load_rgb(image_bytes)
+    h, w = rgb.shape[:2]
+    result = _detect(rgb)
+    if not result.multi_face_landmarks:
+        return {
+            "detected": False,
+            "message": "얼굴을 찾지 못했습니다. 정면 얼굴과 밝은 조명의 사진으로 다시 시도해 주세요.",
+            "original_image": _to_data_url(rgb),
+            "cards": [],
+        }
+
+    lm = result.multi_face_landmarks[0].landmark
+    face_pts = _points(lm, FACE_OVAL, w, h)
+    face_mask = _soft_mask((h, w), face_pts, max(15, int(w * 0.025)))
+    frontal = _frontal_factor(_frontal_offset(lm, w, h))
+    scale = INTENSITY_SCALE.get((intensity or "balanced").strip().lower(), 1.0)
+
+    cards = []
+    for preset in CARD_PRESETS:
+        tuning = {key: min(100, int(value * scale)) for key, value in preset["tuning"].items()}
+        cards.append({
+            "id": preset["id"],
+            "title": preset["title"],
+            "summary": preset["summary"],
+            "preview_image": _to_data_url(_render(rgb, lm, face_mask, face_pts, tuning, frontal)),
+        })
+
+    message = "카드별 미리보기를 만들었습니다."
+    if frontal <= 0.0:
+        message = "얼굴이 옆으로 돌아가 있어 얼굴선 보정은 적용하지 않았습니다. 정면 사진이면 카드별 차이가 더 잘 보입니다."
+    elif frontal < 1.0:
+        message = "정면에서 조금 벗어나 있어 얼굴선 보정을 약하게 적용했습니다."
+    return {
+        "detected": True,
+        "message": message,
+        "original_image": _to_data_url(rgb),
+        "cards": cards,
+    }
 
 
 def _frontal_offset(landmarks, w: int, h: int) -> float:
@@ -283,16 +392,7 @@ def simulate(
     rgb = _load_rgb(image_bytes)
     original_url = _to_data_url(rgb)
     h, w = rgb.shape[:2]
-
-    import mediapipe as mp
-
-    with mp.solutions.face_mesh.FaceMesh(
-        static_image_mode=True,
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-    ) as mesh:
-        result = mesh.process(rgb)
+    result = _detect(rgb)
 
     if not result.multi_face_landmarks:
         return {
@@ -315,8 +415,8 @@ def simulate(
     offset = _frontal_offset(lm, w, h)
     frontal = _frontal_factor(offset)
 
-    face_strength = np.clip((face_line + jaw_balance) / 200.0, 0.0, 1.0) * frontal
-    out = _reshape_face(rgb, face_mask, face_pts, face_strength)
+    face_strength = np.clip(face_line / 100.0, 0.0, 1.0) * frontal
+    out = _reshape_face(rgb, face_mask, face_pts, face_strength, jaw_balance / 100.0)
     out, blemish_count = _soften_blemishes(out, face_mask, np.clip(blemish_care / 100.0, 0.0, 1.0))
     out = _add_contour_guides(out, lm, w, h, np.clip(nose_contour / 100.0, 0.0, 1.0))
 
