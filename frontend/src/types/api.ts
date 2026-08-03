@@ -216,6 +216,8 @@ export type VirtualSurgeryRecommendation = {
   category: string;
   score: number;
   summary: string;
+  /** 1단계에서 고른 부위에 해당하는 추천인지. 점수가 아니라 정렬·표시에만 쓰인다. */
+  selected?: boolean;
 };
 
 export type VirtualSurgeryResponse = {

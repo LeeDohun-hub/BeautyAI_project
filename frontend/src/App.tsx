@@ -1293,13 +1293,31 @@ export default function App() {
   const [virtualSurgeryLoading, setVirtualSurgeryLoading] = useState(false);
   const [virtualSurgeryDragOver, setVirtualSurgeryDragOver] = useState(false);
   const [virtualSurgeryStep, setVirtualSurgeryStep] = useState(0);
-  const [virtualSurgeryProfile, setVirtualSurgeryProfile] = useState({
+  // 부위·변화 이미지는 **복수 선택**이고 배열 순서가 곧 우선순위다(첫 항목이 1순위).
+  // 예전엔 문자열 하나라 새로 누르면 이전 선택이 사라졌고, 그 값이 백엔드로 가지도 않아
+  // 사용자가 무엇을 골라도 추천이 똑같았다(사용자 지적 2026-08-03).
+  const [virtualSurgeryProfile, setVirtualSurgeryProfile] = useState<{
+    gender: string;
+    ageGroup: string;
+    concerns: string[];
+    desiredMoods: string[];
+    privacyConsent: boolean;
+  }>({
     gender: 'female',
     ageGroup: '20s',
-    concern: '윤곽·얼굴형',
-    desiredMood: '자연스러운 변화',
+    concerns: ['윤곽·얼굴형'],
+    desiredMoods: ['자연스러운 변화'],
     privacyConsent: false,
   });
+  /** 선택 토글. 이미 있으면 빼고, 없으면 뒤에 붙인다(=나중에 고를수록 후순위). */
+  const toggleSurgeryChoice = (key: 'concerns' | 'desiredMoods', option: string, max: number) =>
+    setVirtualSurgeryProfile((prev) => {
+      const current = prev[key];
+      if (current.includes(option)) return { ...prev, [key]: current.filter((v) => v !== option) };
+      // 상한을 넘으면 **추가하지 않는다**. 오래된 걸 조용히 버리면 1순위가 뒤바뀐다.
+      if (current.length >= max) return prev;
+      return { ...prev, [key]: [...current, option] };
+    });
   const [virtualSurgeryTarget, setVirtualSurgeryTarget] = useState('oval');
   // 네일 디자인 분석(리트리벌). 인덱스·모델이 배포에 없으면 결과의 feature_available 이 false 로 온다.
   const [nailPreview, setNailPreview] = useState<string>('');
@@ -1643,7 +1661,7 @@ export default function App() {
     setVirtualSurgeryLoading(true);
     setError('');
     try {
-      const result = await simulateVirtualSurgery(file, virtualSurgeryTuning);
+      const result = await simulateVirtualSurgery(file, virtualSurgeryTuning, virtualSurgeryProfile);
       setVirtualSurgeryResult(result);
       if (result.detected) setVirtualSurgeryStep((step) => Math.max(step, 2));
       if (!result.detected) setError(result.message);
@@ -1662,7 +1680,7 @@ export default function App() {
     setVirtualSurgeryLoading(true);
     setError('');
     try {
-      const result = await simulateVirtualSurgery(virtualSurgeryFile, virtualSurgeryTuning);
+      const result = await simulateVirtualSurgery(virtualSurgeryFile, virtualSurgeryTuning, virtualSurgeryProfile);
       setVirtualSurgeryResult(result);
       if (result.detected) setVirtualSurgeryStep((step) => Math.max(step, 2));
       if (!result.detected) setError(result.message);
@@ -4100,10 +4118,12 @@ export default function App() {
       '--nose-contour': `${virtualSurgeryTuning.noseContour}%`,
       '--blemish-care': `${virtualSurgeryTuning.blemishCare}%`,
     } as CSSProperties;
+    // 백엔드가 사용자가 고른 부위를 위로 정렬해 주고 `selected` 로 표시해 준다. 제목에 그
+    // 표시를 실어, 왜 이 순서인지가 결과지에서 드러나게 한다(고른 게 반영됐음을 보여주는 유일한 단서).
     const displayedRecommendationCards = virtualSurgeryResult?.recommendations.length
       ? virtualSurgeryResult.recommendations.map((item, index) => [
           String(index + 1).padStart(2, '0'),
-          item.title,
+          item.selected ? `${item.title} · ${t('선택하신 부위')}` : item.title,
           item.summary,
           item.score,
         ] as const)
@@ -4469,27 +4489,39 @@ export default function App() {
                     </FormControl>
                   </Stack>
                   <Box>
-                    <Typography fontWeight={900} sx={{ mb: 1 }}>{t('가장 개선하고 싶은 부위')}</Typography>
+                    <Typography fontWeight={900} sx={{ mb: 0.5 }}>{t('개선하고 싶은 부위')}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      {t('여러 개 고를 수 있어요. 먼저 고른 순서가 우선순위입니다.')}
+                    </Typography>
                     <Box className="virtual-choice-grid">
-                      {concernOptions.map((option) => (
-                        <Button
-                          key={option}
-                          variant={virtualSurgeryProfile.concern === option ? 'contained' : 'outlined'}
-                          onClick={() => setVirtualSurgeryProfile((prev) => ({ ...prev, concern: option }))}
-                        >
-                          {t(option)}
-                        </Button>
-                      ))}
+                      {concernOptions.map((option) => {
+                        const rank = virtualSurgeryProfile.concerns.indexOf(option);
+                        return (
+                          <Button
+                            key={option}
+                            variant={rank >= 0 ? 'contained' : 'outlined'}
+                            onClick={() => toggleSurgeryChoice('concerns', option, 3)}
+                          >
+                            {/* 순위를 숫자로 보여줘야 '먼저 고른 게 1순위'라는 규칙이 눈에 보인다. */}
+                            {rank >= 0 ? `${rank + 1}. ` : ''}{t(option)}
+                          </Button>
+                        );
+                      })}
                     </Box>
                   </Box>
                   <Box>
-                    <Typography fontWeight={900} sx={{ mb: 1 }}>{t('원하는 변화 이미지')}</Typography>
+                    <Typography fontWeight={900} sx={{ mb: 0.5 }}>{t('원하는 변화 이미지')}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      {t('최대 2개까지 고를 수 있어요.')}
+                    </Typography>
                     <Box className="virtual-choice-grid">
                       {desiredMoodOptions.map((option) => (
                         <Button
                           key={option}
-                          variant={virtualSurgeryProfile.desiredMood === option ? 'contained' : 'outlined'}
-                          onClick={() => setVirtualSurgeryProfile((prev) => ({ ...prev, desiredMood: option }))}
+                          variant={virtualSurgeryProfile.desiredMoods.includes(option) ? 'contained' : 'outlined'}
+                          // 서로 모순되는 조합('자연스러운 변화' + '또렷하고 세련된 인상')을 다 고르면
+                          // 추천이 갈피를 못 잡는다. 2개로 묶어 방향이 남게 한다.
+                          onClick={() => toggleSurgeryChoice('desiredMoods', option, 2)}
                         >
                           {t(option)}
                         </Button>

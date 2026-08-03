@@ -954,11 +954,19 @@ async def simulate_virtual_surgery(
     jaw_balance: int = Form(default=28),
     nose_contour: int = Form(default=34),
     blemish_care: int = Form(default=56),
+    # 1단계에서 고른 값. 콤마 구분 문자열로 받는다(multipart 라 배열보다 단순하고,
+    # 값이 화면 문구 그대로라 서버가 사전에 없는 항목을 받아도 무시될 뿐 깨지지 않는다).
+    # 순서가 곧 우선순위다 — 첫 항목이 1순위.
+    concerns: str = Form(default=""),
+    desired_moods: str = Form(default=""),
 ) -> VirtualSurgeryResponse:
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="An image file is required.")
     image_bytes = await image.read()
     from app.services.virtual_surgery_simulator import simulate
+
+    def _csv(raw: str) -> list[str]:
+        return [part.strip() for part in (raw or "").split(",") if part.strip()][:6]
 
     try:
         return VirtualSurgeryResponse(**simulate(
@@ -967,6 +975,8 @@ async def simulate_virtual_surgery(
             jaw_balance=max(0, min(100, jaw_balance)),
             nose_contour=max(0, min(100, nose_contour)),
             blemish_care=max(0, min(100, blemish_care)),
+            concerns=_csv(concerns),
+            desired_moods=_csv(desired_moods),
         ))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not simulate this image.") from exc

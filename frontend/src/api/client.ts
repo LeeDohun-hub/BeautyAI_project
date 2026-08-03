@@ -118,13 +118,21 @@ export async function analyzeFaceShape(file: File): Promise<FaceShapeResponse> {
   return data;
 }
 
-export async function simulateVirtualSurgery(file: File, tuning: VirtualSurgeryTuning): Promise<VirtualSurgeryResponse> {
+export async function simulateVirtualSurgery(
+  file: File,
+  tuning: VirtualSurgeryTuning,
+  // 1단계에서 고른 값. **순서가 우선순위**라 배열 그대로 콤마로 잇는다.
+  // 이게 없으면 사용자가 무엇을 골라도 추천이 똑같다(2026-08-03 이전 동작).
+  choices: { concerns?: string[]; desiredMoods?: string[] } = {},
+): Promise<VirtualSurgeryResponse> {
   const form = new FormData();
   form.append('image', file);
   form.append('face_line', String(tuning.faceLine));
   form.append('jaw_balance', String(tuning.jawBalance));
   form.append('nose_contour', String(tuning.noseContour));
   form.append('blemish_care', String(tuning.blemishCare));
+  form.append('concerns', (choices.concerns ?? []).join(','));
+  form.append('desired_moods', (choices.desiredMoods ?? []).join(','));
   const { data } = await api.post<VirtualSurgeryResponse>('/api/virtual-surgery/simulate', form);
   return data;
 }

@@ -152,6 +152,9 @@ class VirtualSurgeryRecommendation(BaseModel):
     category: str
     score: int
     summary: str
+    # 사용자가 1단계에서 고른 부위에 해당하는 추천인지. 점수는 사진 측정값이라 건드리지 않고
+    # 이 플래그와 정렬로만 사용자의 선택을 반영한다(고른 것만으로 근거가 세지면 안 된다).
+    selected: bool = False
 
 
 class VirtualSurgeryResponse(BaseModel):

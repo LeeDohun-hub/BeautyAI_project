@@ -137,6 +137,38 @@ def _add_contour_guides(rgb: np.ndarray, landmarks, w: int, h: int, nose_strengt
     return cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
 
 
+# 사용자가 1단계에서 고르는 '개선하고 싶은 부위' → 추천 카테고리.
+# 화면 문구를 그대로 키로 쓴다(i18n 과 같은 방식) — 사전에 없는 값이 와도 무시될 뿐 안 깨진다.
+_CONCERN_TO_CATEGORY = {
+    "윤곽·얼굴형": "face_frame",
+    "턱끝·하관": "face_frame",
+    "광대·볼 폭": "face_frame",
+    "코 라인": "nose_contour",
+    "중안부 비율": "balance",
+    "점·잡티 제거": "blemish",
+}
+
+
+def _prioritize(recs: list[dict], concerns: list[str] | None) -> list[dict]:
+    """사용자가 고른 부위를 위로 올린다(1순위가 가장 위).
+
+    ⚠ 점수를 조작하지 않고 **정렬만** 바꾼다. 점수는 '사진에서 그렇게 보인다'는 측정값이라,
+    사용자가 골랐다고 올리면 근거가 무너진다(설계안 §10 의 '단정 금지' 와 같은 이유).
+    대신 `selected` 플래그를 실어 프론트가 '선택하신 부위' 로 표시할 수 있게 한다.
+    """
+    if not concerns:
+        return recs
+    # 1순위(첫 항목)가 가장 앞. 같은 카테고리로 매핑되는 부위가 여럿이면 먼저 고른 쪽이 이긴다.
+    order: dict[str, int] = {}
+    for rank, concern in enumerate(concerns):
+        category = _CONCERN_TO_CATEGORY.get(concern)
+        if category is not None and category not in order:
+            order[category] = rank
+    for rec in recs:
+        rec["selected"] = rec.get("category") in order
+    return sorted(recs, key=lambda rec: order.get(rec.get("category", ""), len(order) + 1))
+
+
 def _recommendations(face_result: dict, blemish_count: int) -> list[dict]:
     metrics = face_result.get("metrics", {})
     wh = float(metrics.get("width_height", 0.78) or 0.78)
@@ -189,7 +221,16 @@ def simulate(
     jaw_balance: int = 28,
     nose_contour: int = 34,
     blemish_care: int = 56,
+    concerns: list[str] | None = None,
+    desired_moods: list[str] | None = None,
 ) -> dict:
+    """concerns/desired_moods 는 1단계에서 사용자가 고른 값이다(1순위가 첫 항목).
+
+    예전엔 이 값들이 프론트 state 에만 있고 백엔드로 오지 않아, **사용자가 '코 라인'을
+    골라도 추천이 전혀 달라지지 않았다**(사용자 지적 2026-08-03). 결과지까지 이어지려면
+    입력이 여기까지 와야 한다. 다만 점수는 사진 측정값이라 건드리지 않고 **순서와 표시**에만
+    반영한다 — 고른 것만으로 근거가 세지면 안 되기 때문이다.
+    """
     rgb = _load_rgb(image_bytes)
     original_url = _to_data_url(rgb)
     h, w = rgb.shape[:2]
@@ -226,7 +267,7 @@ def simulate(
     out = _add_contour_guides(out, lm, w, h, np.clip(nose_contour / 100.0, 0.0, 1.0))
 
     face_result = analyze_face_shape(image_bytes)
-    recommendations = _recommendations(face_result, blemish_count)
+    recommendations = _prioritize(_recommendations(face_result, blemish_count), concerns)
     x1, y1, x2, y2 = _face_bounds(face_pts, w, h)
 
     return {
@@ -240,6 +281,10 @@ def simulate(
             "face_box": [x1, y1, x2, y2],
             "blemish_candidates": blemish_count,
             "naturalness_score": int(max(52, 94 - face_strength * 22 - (nose_contour / 100.0) * 8)),
+            # 사용자가 고른 값을 그대로 돌려준다 — 결과지가 '무엇을 원한다고 했는지'를
+            # 다시 프론트 state 에서 끌어오지 않고 응답 하나로 그릴 수 있게(출력·저장 일관성).
+            "concerns": list(concerns or []),
+            "desired_moods": list(desired_moods or []),
         },
         "disclaimer": "비의료 참고용 가상 미용 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.",
     }
