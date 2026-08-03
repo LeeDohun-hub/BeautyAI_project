@@ -24,6 +24,11 @@ jobs:
           node-version: "24"
       - run: npm install
         working-directory: frontend
+      # ⚠ build(tsc+vite) 는 Rules of Hooks 를 보지 않는다. 조건부로 호출되는 렌더 함수
+      #   안에 useEffect 를 넣어 성형 화면이 운영에서 빈 화면으로 죽었는데, 그때 tsc·CI·
+      #   백엔드 테스트가 전부 초록불이었다(2026-08-03). lint 가 그 유일한 방어선이다.
+      - run: npm run lint
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
 

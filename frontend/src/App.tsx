@@ -1813,7 +1813,9 @@ export default function App() {
    *
    * 아티스트에게 진단받았거나 이미 자기 톤을 아는 사람에게 다시 찍으라고 하지 않기 위한
    * 경로다. 결과 모양이 분석 결과와 같아서 이후 아이템매칭·무드 흐름이 그대로 이어진다. */
-  async function useSavedPersonalColor() {
+  // ⚠ 이름을 use... 로 두면 안 된다. 훅이 아닌데 ESLint(react-hooks)도 사람도 훅으로 읽어
+  //   '콜백 안에서 훅 호출' 오류가 난다. 실제로 그 경고가 떠서 바꿨다(2026-08-03).
+  async function applySavedPersonalColor() {
     const label = authUser?.personal_color;
     if (!label) return;
     setLoading('personal-color');
@@ -2825,7 +2827,7 @@ export default function App() {
                       variant="outlined"
                       color="secondary"
                       disabled={loading === 'personal-color'}
-                      onClick={() => void useSavedPersonalColor()}
+                      onClick={() => void applySavedPersonalColor()}
                     >
                       {t('저장된 퍼스널 컬러로 바로 보기')} ·{' '}
                       {tPhrase(WEB_PERSONAL_COLOR_LABELS[authUser.personal_color] ?? authUser.personal_color)}
@@ -4494,7 +4496,7 @@ export default function App() {
             <Grid container spacing={2}>
               <Grid item xs={12} md={6}>
                 <Stack spacing={2}>
-                  <Typography variant="h5" fontWeight={900}>{t('개인정보 입력')}</Typography>
+                  <Typography variant="h5" fontWeight={900}>{t('기본정보·목표 설정')}</Typography>
                   <Typography color="text.secondary">{t('성형 추천은 얼굴 비율과 사용자가 원하는 개선 방향을 함께 봅니다.')}</Typography>
                   <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
                     <FormControl fullWidth size="small">
@@ -4731,7 +4733,7 @@ export default function App() {
               <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={2}>
                 <Box>
                   <Typography className="report-brand">YoPalette</Typography>
-                  <Typography variant="h4" fontWeight={900}>{t('성형 밸런스 결과지')}</Typography>
+                  <Typography variant="h4" fontWeight={900}>{t('상담용 리포트')}</Typography>
                   <Typography color="text.secondary">{new Date().toISOString().slice(0, 10)}</Typography>
                 </Box>
                 <Chip label={t('비의료 참고용')} color="primary" variant="outlined" sx={{ alignSelf: { xs: 'flex-start', md: 'center' } }} />
@@ -4795,7 +4797,7 @@ export default function App() {
                 <Box>
                   <Chip label="AI Surgery Plan" color="primary" variant="outlined" sx={{ mb: 1 }} />
                   <Typography variant="h4" fontWeight={900}>{t('가상 성형 추천 시스템')}</Typography>
-                  <Typography color="text.secondary">{t('개인정보 입력부터 성형 밸런스 결과지까지 단계별로 진행합니다.')}</Typography>
+                  <Typography color="text.secondary">{t('기본정보 입력부터 상담용 리포트까지 단계별로 진행합니다.')}</Typography>
                 </Box>
                 <Button startIcon={<ArrowLeft size={16} />} onClick={goHome}>{t('홈으로')}</Button>
               </Stack>
