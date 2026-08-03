@@ -211,6 +211,19 @@ body {
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
+/* 성형 업로드 아이콘. 예전엔 .nail-dropzone-icon 을 빌려 썼는데, 네일 모듈의 스타일을
+   고치면 성형 화면이 같이 바뀐다 — 두 기능은 서로 무관하므로 자기 클래스를 갖는다. */
+.virtual-upload-icon {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  color: var(--yp-accent);
+  background: var(--yp-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(29, 143, 199, 0.2);
+}
+
 .virtual-upload-drop:hover,
 .virtual-upload-drop.is-over {
   border-color: var(--yp-accent);

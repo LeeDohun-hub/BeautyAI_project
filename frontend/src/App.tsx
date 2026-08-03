@@ -4195,7 +4195,7 @@ export default function App() {
                       <img src={virtualSurgeryPreview} alt={t('가상 성형 추천에 사용할 얼굴 사진')} />
                     ) : (
                       <Stack alignItems="center" spacing={1.2} sx={{ textAlign: 'center', px: 2 }}>
-                        <Box className="nail-dropzone-icon"><ImagePlus size={30} /></Box>
+                        <Box className="virtual-upload-icon"><ImagePlus size={30} /></Box>
                         <Typography variant="h6" fontWeight={900}>{t('얼굴 사진 업로드')}</Typography>
                         <Typography variant="body2" color="text.secondary">
                           {t('정면 얼굴과 밝은 조명의 JPG·PNG 사진을 권장합니다.')}
@@ -4452,7 +4452,7 @@ export default function App() {
           <img src={virtualSurgeryPreview} alt={t('가상 성형 분석용 얼굴 사진')} />
         ) : (
           <Stack alignItems="center" spacing={1.2} sx={{ textAlign: 'center', px: 2 }}>
-            <Box className="nail-dropzone-icon"><ImagePlus size={30} /></Box>
+            <Box className="virtual-upload-icon"><ImagePlus size={30} /></Box>
             <Typography variant="h6" fontWeight={900}>{t('얼굴 사진 업로드')}</Typography>
             <Typography variant="body2" color="text.secondary">{t('정면 얼굴과 밝은 조명의 JPG·PNG 사진을 권장합니다.')}</Typography>
           </Stack>
