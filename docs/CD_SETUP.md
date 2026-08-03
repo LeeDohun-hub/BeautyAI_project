@@ -16,14 +16,23 @@
 
 ### 1-1. 런타임 번들을 S3 에 올린다 (AI)
 
+AWS CLI 가 필요하다: `winget install Amazon.AWSCLI` → 새 터미널 → `aws configure`
+(S3 쓰기 권한이 있는 키).
+
 ```powershell
 cd C:\WorkSpace\Beauty_Project\BeautyAI_project
-python scripts\build_runtime_bundle.py
-aws s3 sync dist\runtime_data s3://<버킷>/runtime_data --delete
+$env:RUNTIME_BUNDLE_S3_URI = "s3://<버킷>/runtime_data"
+python scripts\publish_runtime_bundle.py --dry-run   # 무엇이 바뀌는지 먼저 확인
+python scripts\publish_runtime_bundle.py             # 빌드 + 업로드
 ```
+
+`publish_runtime_bundle.py` 는 번들 빌드와 업로드를 **한 명령으로 묶는다**. 이 파이프라인의
+유일한 조용한 실패 모드가 **"모델·매니페스트를 바꿨는데 S3 재업로드를 잊는 것"** 이기
+때문이다 — 코드는 정상 배포되는데 데이터만 옛것이라 에러 없이 커버리지만 떨어진다.
 
 **모델이나 매니페스트를 바꿀 때마다 이걸 다시 해야 한다.** 코드만 바꿨으면 필요 없다.
 (예: 올리브영/아마존 크롤을 새로 돌렸다 → 다시 올려야 배포에 반영된다.)
+배포 로그에도 `번들 최신 파일: <날짜>` 가 찍히니, 낡았는지 거기서 눈으로 확인할 수 있다.
 
 ### 1-2. EC2 준비
 

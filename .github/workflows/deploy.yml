@@ -86,6 +86,10 @@ jobs:
           test -s dist/runtime_data/manifests/amazon_dead_asins.txt
           test -s dist/runtime_data/manifests/amazon_asin_status.json
           echo "번들 $(du -sh dist/runtime_data | cut -f1) / 매니페스트 $(ls dist/runtime_data/manifests | wc -l)개"
+          # 번들이 낡았는지 **로그에서 눈으로** 잡을 수 있게 최신 파일 날짜를 남긴다.
+          # 이 파이프라인의 유일한 조용한 실패 모드가 '매니페스트를 바꾸고 S3 재업로드를
+          # 잊는 것' 이라(코드만 새 것으로 나가고 데이터는 옛것), 배포 로그에 박아둔다.
+          echo "번들 최신 파일: $(find dist/runtime_data -type f -printf '%TY-%Tm-%Td %TH:%TM  %P\n' | sort -r | head -1)"
 
       - uses: docker/login-action@v3
         with:
