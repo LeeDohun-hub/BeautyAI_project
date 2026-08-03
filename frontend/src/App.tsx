@@ -48,25 +48,6 @@ import type { AnalysisMode, DetectedNail, NailShade, AnalyzeNailDesignResponse, 
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
 // 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
-function buildShopLinks(product: Product) {
-  const query = encodeURIComponent(`${product.brand} ${product.name}`.trim());
-  const amazonUs =
-    product.product_url && /amazon\.com/i.test(product.product_url)
-      ? product.product_url
-      : `https://www.amazon.com/s?k=${query}`;
-  const amazonJp =
-    product.product_url && /amazon\.co\.jp/i.test(product.product_url)
-      ? product.product_url
-      : `https://www.amazon.co.jp/s?k=${query}`;
-  return {
-    oliveyoung: `https://global.oliveyoung.com/display/search?query=${query}`,
-    amazon_us: amazonUs,
-    amazon_jp: amazonJp,
-    naver: `https://search.shopping.naver.com/search/all?query=${query}`,
-    matsukiyo: `https://www.matsukiyococokara-online.com/search?text=${query}`,
-    ...product.platform_links,
-  };
-}
 
 // K-뷰티 브랜드 판별용(부분 일치, 소문자). 올리브영은 이 브랜드일 때만 노출한다.
 const KBEAUTY_BRANDS = [
@@ -76,29 +57,9 @@ const KBEAUTY_BRANDS = [
   'rom&nd', 'romand', 'peripera', 'clio', 'dr.jart', 'dr jart', 'manyo', 'abib',
   'axis-y', 'heimish', 'klairs', 'd.alba', 'mediheal', 'goodal', 'hince', 'espoir',
 ];
-const isKBeauty = (brand: string) => {
-  const b = (brand || '').toLowerCase();
-  return KBEAUTY_BRANDS.some((k) => b.includes(k));
-};
 
 // 각 쇼핑몰 버튼: 브랜드 시그니처 컬러 + 실제 사이트 파비콘으로 매칭.
 // kbeautyOnly가 true인 채널은 K-뷰티 브랜드 상품에만 노출한다.
-const SHOP_PLATFORMS = [
-  { key: 'amazon_us', label: 'Amazon(EN)', domain: 'amazon.com', bg: '#FF9900', fg: '#131A22', hover: '#E68A00', kbeautyOnly: false },
-  { key: 'amazon_jp', label: 'Amazon(JP)', domain: 'amazon.co.jp', bg: '#FFB020', fg: '#131A22', hover: '#E69D1C', kbeautyOnly: false },
-  { key: 'naver', label: '네이버', domain: 'naver.com', bg: '#03C75A', fg: '#FFFFFF', hover: '#02A94C', kbeautyOnly: false },
-  { key: 'matsukiyo', label: '마츠키요', domain: 'matsukiyococokara-online.com', bg: '#174EA6', fg: '#FFFFFF', hover: '#123F86', kbeautyOnly: false },
-  { key: 'oliveyoung', label: '올리브영', domain: 'global.oliveyoung.com', bg: '#80BA27', fg: '#FFFFFF', hover: '#6FA31F', kbeautyOnly: false },
-] as const;
-
-const PLATFORM_FILTERS: { value: RecommendationPlatform; label: string }[] = [
-  { value: 'all', label: '모든 플랫폼' },
-  { value: 'amazon_us', label: 'Amazon(EN)' },
-  { value: 'amazon_jp', label: 'Amazon(JP)' },
-  { value: 'naver', label: '네이버' },
-  { value: 'matsukiyo', label: '마츠키요' },
-  { value: 'oliveyoung', label: '올리브영' },
-];
 
 // 라쿠텐(퍼스널컬러/무드 아이템 추천 전용). 라쿠텐 상품은 실제 상품 URL을 직링크로 제공한다.
 const RAKUTEN_PLATFORM = {
@@ -333,130 +294,12 @@ const commonSkinConcerns: ChipOption[] = [
   { value: '알레르기', label: '알레르기' },
 ];
 
-const femaleSkinConcerns: ChipOption[] = [
-  { value: '트러블', label: '트러블' },
-  { value: '모공', label: '모공' },
-  { value: '주름', label: '주름' },
-  { value: '홍조', label: '홍조' },
-  { value: '색소침착', label: '색소침착' },
-  { value: '유분', label: '유분' },
-  { value: '칙칙함', label: '칙칙함' },
-  { value: '다크서클', label: '다크서클' },
-  { value: '탄력저하', label: '탄력저하' },
-  ...commonSkinConcerns,
-];
 
-const maleSkinConcerns: ChipOption[] = [
-  { value: '트러블', label: '트러블' },
-  { value: '모공', label: '모공' },
-  { value: '유분·번들거림', label: '유분·번들거림' },
-  { value: '면도 후 자극', label: '면도 후 자극' },
-  { value: '주름', label: '주름' },
-  { value: '다크서클', label: '다크서클' },
-  ...commonSkinConcerns,
-];
 
-const makeupConcernOptions: ChipOption[] = [
-  { value: '파운데이션 밀림', label: '파운데이션 밀림' },
-  { value: '들뜸', label: '들뜸' },
-  { value: '지속력', label: '지속력 부족' },
-  { value: '다크닝', label: '다크닝(산화)' },
-  { value: '피부톤', label: '피부톤 안 맞음' },
-  { value: '속건조', label: '속건조' },
-  { value: '광택', label: '광택 표현' },
-  {
-    value: '커버력',
-    label: '커버력 부족',
-    children: [
-      { value: '잡티 커버', label: '잡티 커버' },
-      { value: '홍조 커버', label: '홍조 커버' },
-      { value: '모공 커버', label: '모공 커버' },
-    ],
-  },
-];
 
-const areaConcernOptions: ChipOption[] = [
-  { value: '눈가', label: '눈가' },
-  { value: '입술', label: '입술' },
-  { value: '목·데콜테', label: '목·데콜테' },
-  { value: '코', label: '코' },
-  { value: '턱', label: '턱' },
-  { value: '이마', label: '이마' },
-  { value: '볼', label: '볼' },
-];
 
-const maleExtraOptions = [
-  { value: '두피·헤어', label: '두피·헤어' },
-  { value: '바디', label: '바디' },
-];
 
 // 다중선택 칩. 부모를 고르면 children이 들여쓰기되어 펼쳐지고, 부모를 끄면 자식도 함께 해제됩니다.
-function NestedChipSelect({
-  options,
-  value,
-  onChange,
-}: {
-  options: ChipOption[];
-  value: string[];
-  onChange: (next: string[]) => void;
-}) {
-  // 표시는 번역하고 값(opt.value)은 한국어 그대로 넘긴다 — 값은 백엔드 매칭 키다.
-  const t = useT();
-  const groupSx = { display: 'flex', flexWrap: 'wrap', gap: 1 } as const;
-  const itemSx = { border: '1px solid #d6deea !important', borderRadius: '8px !important' } as const;
-
-  const toggle = (v: string, opt?: ChipOption) => {
-    const has = value.includes(v);
-    let next = has ? value.filter((x) => x !== v) : [...value, v];
-    if (has && opt?.children?.length) {
-      const kids = opt.children.map((c) => c.value);
-      next = next.filter((x) => !kids.includes(x));
-    }
-    onChange(next);
-  };
-
-  return (
-    <Box>
-      <Box sx={groupSx}>
-        {options.map((opt) => (
-          <ToggleButton
-            key={opt.value}
-            value={opt.value}
-            selected={value.includes(opt.value)}
-            onClick={() => toggle(opt.value, opt)}
-            size="small"
-            sx={itemSx}
-          >
-            {t(opt.label)}
-          </ToggleButton>
-        ))}
-      </Box>
-      {options
-        .filter((o) => o.children?.length && value.includes(o.value))
-        .map((parent) => (
-          <Box key={parent.value} sx={{ mt: 1, ml: 1.5, pl: 1.5, borderLeft: '2px solid #e3e9f2' }}>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-              {t(parent.label)} · {t('세부 선택')}
-            </Typography>
-            <Box sx={groupSx}>
-              {parent.children!.map((child) => (
-                <ToggleButton
-                  key={child.value}
-                  value={child.value}
-                  selected={value.includes(child.value)}
-                  onClick={() => toggle(child.value)}
-                  size="small"
-                  sx={itemSx}
-                >
-                  {t(child.label)}
-                </ToggleButton>
-              ))}
-            </Box>
-          </Box>
-        ))}
-    </Box>
-  );
-}
 
 // 상담은 결과지까지 본 뒤 질문하는 흐름이라 마지막에 둔다(사용자 지시 2026-07-29).
 const steps = ['설문', '피부 입력', '피부 분석', '추천', '결과지 출력', '상담'];
@@ -487,19 +330,7 @@ const scoreLabels: Record<keyof SkinScores, string> = {
   oiliness: '유분',
 };
 
-const skinTypeLabels = [
-  { value: 'dry', label: '건성' },
-  { value: 'oily', label: '지성' },
-  { value: 'combination', label: '복합성' },
-  { value: 'normal', label: '중성' },
-  { value: 'sensitive', label: '민감성' },
-];
 
-const routineLevelLabels = [
-  { value: 'minimal', label: '간단한 루틴' },
-  { value: 'basic', label: '기본 루틴' },
-  { value: 'advanced', label: '집중 관리 루틴' },
-];
 
 const raceIdentityOptions = [
   '동아시아 (한국·중국·일본·대만)',
@@ -2590,7 +2421,6 @@ export default function App() {
       setPersonalColorProfile((profile) => ({ ...profile, [key]: value }));
     };
 
-    const reportSourceProducts = (selectedMood && moodItems?.products.length ? moodItems.products : personalColorItems?.products) ?? [];
     const pickedIdentities = new Set(reportPicks.map(productIdentityKey));
     // 담을 수 있는 최대 개수 = **컬럼 수**. 남성은 4컬럼(베이스/브로우/컨실러/립밤)이라 4개다.
     // 컬럼 수보다 크게 두면 사용자가 다 담아도 칸이 남아, 아래 자동 채우기가 '담지 않은 상품'을
@@ -4178,12 +4008,6 @@ export default function App() {
       '좌우 균형 개선',
       '피부결까지 깨끗하게',
     ];
-    const tuningItems = [
-      { key: 'faceLine', label: '얼굴 프레임', helper: '광대와 얼굴 폭을 자연스럽게 정리' },
-      { key: 'jawBalance', label: '턱 밸런스', helper: '하관 길이와 턱끝 인상을 부드럽게 조정' },
-      { key: 'noseContour', label: '코 라인', helper: '콧대와 코끝의 입체감을 과하지 않게 제안' },
-      { key: 'blemishCare', label: '점·잡티 제거', helper: '클릭 제거형 피부 보정 후보로 분리' },
-    ] as const;
     const selectedTarget = targetCards.find((item) => item.id === virtualSurgeryTarget) ?? targetCards[0];
     const resultCards = virtualSurgeryResult?.recommendations.length
       ? virtualSurgeryResult.recommendations
