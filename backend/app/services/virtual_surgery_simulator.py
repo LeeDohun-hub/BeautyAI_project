@@ -16,6 +16,21 @@ from PIL import Image, ImageOps
 
 from app.services.face_shape_analyzer import analyze as analyze_face_shape
 
+# 워프 상한(얼굴 폭을 최대 몇 %까지 줄이나). 슬라이더를 끝까지 밀었을 때의 값이다.
+#
+# 7.5% 였는데 **원본과 나란히 놓고 봐야 겨우 알아챌 수준**이라, 사용자가 "게이지가 안 먹는다"고
+# 느꼈다(실측 비교, 2026-08-03). 카드별 미리보기를 붙이면 카드 4장이 서로 구분되지 않는다.
+# 같은 사진에 7.5 / 12 / 18% 를 돌려 눈으로 비교한 결과:
+#   7.5% — 차이를 못 느낀다
+#   12%  — 하관 변화가 보이면서 **같은 사람으로 남는다**  ← 채택
+#   18%  — 원본에 없던 갸름함이 생겨 '필터' 로 넘어간다(주석의 identity-changing 경계)
+_MAX_FACE_NARROWING = 0.12
+
+# 정면에서 벗어난 사진은 워프를 줄인다. 축소가 얼굴 중심선 기준 좌우 대칭이라,
+# 각도가 있으면 한쪽만 눌려 왜곡이 커진다 — 상한을 올릴수록 이 문제도 같이 커진다.
+_FRONTAL_FULL = 0.12   # 이보다 정면이면 강도 그대로
+_FRONTAL_NONE = 0.30   # 이보다 틀어지면 워프하지 않는다(추천·분석은 그대로 제공)
+
 FACE_OVAL = [
     10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
     397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
@@ -85,8 +100,10 @@ def _reshape_face(rgb: np.ndarray, face_mask: np.ndarray, face_pts: np.ndarray, 
     yy, xx = np.indices((h, w), dtype=np.float32)
     vertical = np.clip((yy - y_top) / max(1.0, y_bottom - y_top), 0.0, 1.0)
     lower_face_weight = np.exp(-((vertical - 0.70) ** 2) / 0.12)
-    scale = 1.0 - min(0.075, strength * 0.075) * lower_face_weight * face_mask
-    map_x = cx + (xx - cx) / np.clip(scale, 0.86, 1.0)
+    cap = _MAX_FACE_NARROWING
+    scale = 1.0 - min(cap, strength * cap) * lower_face_weight * face_mask
+    # 하한은 상한에 맞춰 따라간다. 예전엔 0.86 고정이라 상한을 올려도 여기서 잘려나갔다.
+    map_x = cx + (xx - cx) / np.clip(scale, 1.0 - cap - 0.02, 1.0)
     map_y = yy
     warped = cv2.remap(rgb, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
     alpha = np.clip(face_mask[..., None] * 0.86, 0.0, 1.0)
@@ -137,15 +154,20 @@ def _add_contour_guides(rgb: np.ndarray, landmarks, w: int, h: int, nose_strengt
     return cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
 
 
-# 사용자가 1단계에서 고르는 '개선하고 싶은 부위' → 추천 카테고리.
+# 사용자가 1단계에서 고르는 '개선하고 싶은 부위' → 추천 카테고리(복수 가능).
 # 화면 문구를 그대로 키로 쓴다(i18n 과 같은 방식) — 사전에 없는 값이 와도 무시될 뿐 안 깨진다.
-_CONCERN_TO_CATEGORY = {
-    "윤곽·얼굴형": "face_frame",
-    "턱끝·하관": "face_frame",
-    "광대·볼 폭": "face_frame",
-    "코 라인": "nose_contour",
-    "중안부 비율": "balance",
-    "점·잡티 제거": "blemish",
+#
+# ⚠ 값이 **집합**인 이유: `_recommendations` 는 얼굴 지표에 따라 `nose_contour` 와 `balance`
+#   중 **하나만** 만든다(eye_ratio 분기). '코 라인'을 골랐는데 그 사진이 balance 쪽으로
+#   판정되면 매칭이 통째로 실패해, 고른 게 무시된 것처럼 보였다(실측). balance 추천 문구도
+#   "코 라인 하이라이트와 눈앞머리 음영"이라 실제로 코를 다룬다 — 둘 다 걸어주는 게 맞다.
+_CONCERN_TO_CATEGORIES = {
+    "윤곽·얼굴형": {"face_frame"},
+    "턱끝·하관": {"face_frame"},
+    "광대·볼 폭": {"face_frame"},
+    "코 라인": {"nose_contour", "balance"},
+    "중안부 비율": {"balance", "nose_contour"},
+    "점·잡티 제거": {"blemish"},
 }
 
 
@@ -161,12 +183,39 @@ def _prioritize(recs: list[dict], concerns: list[str] | None) -> list[dict]:
     # 1순위(첫 항목)가 가장 앞. 같은 카테고리로 매핑되는 부위가 여럿이면 먼저 고른 쪽이 이긴다.
     order: dict[str, int] = {}
     for rank, concern in enumerate(concerns):
-        category = _CONCERN_TO_CATEGORY.get(concern)
-        if category is not None and category not in order:
-            order[category] = rank
+        for category in _CONCERN_TO_CATEGORIES.get(concern, ()):
+            if category not in order:
+                order[category] = rank
     for rec in recs:
         rec["selected"] = rec.get("category") in order
     return sorted(recs, key=lambda rec: order.get(rec.get("category", ""), len(order) + 1))
+
+
+def _frontal_offset(landmarks, w: int, h: int) -> float:
+    """정면에서 얼마나 벗어났는지(0=정면). 눈 사이 거리로 정규화한 코끝 좌우 쏠림.
+
+    얼굴이 돌아가면 코끝이 두 눈의 중점에서 한쪽으로 밀린다. 랜드마크 3점이면 되고
+    카메라 내부 파라미터가 필요 없어(solvePnP 대비) 사진 한 장 입력에 적합하다.
+    """
+    eye_l = np.array([landmarks[33].x * w, landmarks[33].y * h], dtype=np.float32)
+    eye_r = np.array([landmarks[263].x * w, landmarks[263].y * h], dtype=np.float32)
+    nose = np.array([landmarks[1].x * w, landmarks[1].y * h], dtype=np.float32)
+    inter_eye = float(np.linalg.norm(eye_r - eye_l))
+    if inter_eye <= 1.0:
+        return 0.0
+    mid = (eye_l + eye_r) / 2.0
+    # 눈을 잇는 선 방향으로의 성분만 본다(고개를 갸웃한 roll 에는 영향받지 않게).
+    axis = (eye_r - eye_l) / inter_eye
+    return float(abs(np.dot(nose - mid, axis)) / inter_eye)
+
+
+def _frontal_factor(offset: float) -> float:
+    """워프 강도에 곱할 계수(1=그대로, 0=워프 안 함)."""
+    if offset <= _FRONTAL_FULL:
+        return 1.0
+    if offset >= _FRONTAL_NONE:
+        return 0.0
+    return float((_FRONTAL_NONE - offset) / (_FRONTAL_NONE - _FRONTAL_FULL))
 
 
 def _recommendations(face_result: dict, blemish_count: int) -> list[dict]:
@@ -261,7 +310,12 @@ def simulate(
     face_pts = _points(lm, FACE_OVAL, w, h)
     face_mask = _soft_mask((h, w), face_pts, max(15, int(w * 0.025)))
 
-    face_strength = np.clip((face_line + jaw_balance) / 200.0, 0.0, 1.0)
+    # 정면 게이트 — 축소는 얼굴 중심선 기준 좌우 대칭이라, 각도가 있으면 한쪽만 눌린다.
+    # 상한을 12% 로 올리면서 이 왜곡도 같이 커지므로 강도를 각도에 따라 낮춘다.
+    offset = _frontal_offset(lm, w, h)
+    frontal = _frontal_factor(offset)
+
+    face_strength = np.clip((face_line + jaw_balance) / 200.0, 0.0, 1.0) * frontal
     out = _reshape_face(rgb, face_mask, face_pts, face_strength)
     out, blemish_count = _soften_blemishes(out, face_mask, np.clip(blemish_care / 100.0, 0.0, 1.0))
     out = _add_contour_guides(out, lm, w, h, np.clip(nose_contour / 100.0, 0.0, 1.0))
@@ -270,9 +324,17 @@ def simulate(
     recommendations = _prioritize(_recommendations(face_result, blemish_count), concerns)
     x1, y1, x2, y2 = _face_bounds(face_pts, w, h)
 
+    # 잡티 보정과 코 하이라이트는 각도와 무관하므로 계속 적용된다. 그래서 '분석은 됐지만
+    # 얼굴선 보정만 뺐다'는 걸 말해 줘야 사용자가 "왜 안 바뀌지?" 로 돌아가지 않는다.
+    message = "얼굴 비율 기반 추천과 자연스러운 미리보기를 생성했습니다."
+    if frontal <= 0.0:
+        message = "얼굴이 옆으로 돌아가 있어 얼굴선 보정은 적용하지 않았습니다. 정면 사진이면 더 정확합니다."
+    elif frontal < 1.0:
+        message = "정면에서 조금 벗어나 있어 얼굴선 보정을 약하게 적용했습니다. 정면 사진이면 더 정확합니다."
+
     return {
         "detected": True,
-        "message": "얼굴 비율 기반 추천과 자연스러운 미리보기를 생성했습니다.",
+        "message": message,
         "original_image": original_url,
         "preview_image": _to_data_url(out),
         "face_shape": face_result,
@@ -285,6 +347,9 @@ def simulate(
             # 다시 프론트 state 에서 끌어오지 않고 응답 하나로 그릴 수 있게(출력·저장 일관성).
             "concerns": list(concerns or []),
             "desired_moods": list(desired_moods or []),
+            # 정면도(0=정면). 프론트가 '정면 사진 다시 올리기' 안내를 띄울 근거로 쓴다.
+            "frontal_offset": round(offset, 3),
+            "frontal_factor": round(frontal, 2),
         },
         "disclaimer": "비의료 참고용 가상 미용 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.",
     }

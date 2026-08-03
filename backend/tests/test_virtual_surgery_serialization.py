@@ -93,3 +93,49 @@ def test_unknown_concern_is_ignored():
     ]
     out = _prioritize([dict(r) for r in recs], ["없는항목", "코 라인"])
     assert [r["category"] for r in out] == ["nose_contour", "face_frame"]
+
+
+# ── 워프 상한 + 정면 게이트 (2026-08-03) ────────────────────────────────────────
+# "비율조절 게이지바 실제로 바뀌지도 않는것 같음" — 상한이 7.5% 라 끝까지 밀어도 체감이
+# 없었다. 12% 로 올리되, 축소가 얼굴 중심선 기준 대칭이라 각도가 있으면 한쪽만 눌린다.
+
+def test_warp_cap_is_visible_but_not_identity_changing():
+    """상한은 눈으로 확인해 정한 값이다. 임의로 되돌리거나 키우지 못하게 고정한다.
+
+    같은 사진 실측: 7.5% 는 차이를 못 느끼고, 18% 는 원본에 없던 갸름함이 생겨
+    시뮬레이터 주석이 경계로 삼은 identity-changing 영역으로 넘어간다.
+    """
+    from app.services.virtual_surgery_simulator import _MAX_FACE_NARROWING
+
+    assert 0.10 <= _MAX_FACE_NARROWING <= 0.14
+
+
+def test_frontal_gate_scales_warp_down_as_face_turns():
+    from app.services.virtual_surgery_simulator import (
+        _FRONTAL_FULL, _FRONTAL_NONE, _frontal_factor,
+    )
+
+    assert _frontal_factor(0.0) == 1.0                      # 정면 → 그대로
+    assert _frontal_factor(_FRONTAL_FULL) == 1.0            # 경계까지는 그대로
+    assert _frontal_factor(_FRONTAL_NONE) == 0.0            # 많이 돌면 워프 안 함
+    assert _frontal_factor(_FRONTAL_NONE + 1.0) == 0.0      # 그 너머도 0
+    mid = _frontal_factor((_FRONTAL_FULL + _FRONTAL_NONE) / 2)
+    assert 0.0 < mid < 1.0                                  # 사이는 연속적으로 감소
+
+
+def test_concern_maps_to_both_nose_and_balance():
+    """`_recommendations` 는 nose_contour 와 balance 중 **하나만** 만든다(eye_ratio 분기).
+
+    '코 라인'을 한쪽에만 걸면, 그 사진이 반대쪽으로 판정될 때 고른 게 통째로 무시된다
+    (실측: 코를 골랐는데 잡티 추천이 맨 위로 왔다).
+    """
+    from app.services.virtual_surgery_simulator import _prioritize
+
+    for category in ("nose_contour", "balance"):
+        recs = [
+            {"title": "잡티", "category": "blemish", "score": 64, "summary": ""},
+            {"title": "코", "category": category, "score": 72, "summary": ""},
+        ]
+        out = _prioritize([dict(r) for r in recs], ["코 라인"])
+        assert out[0]["category"] == category, f"{category} 가 맨 위여야 한다"
+        assert out[0]["selected"] is True
