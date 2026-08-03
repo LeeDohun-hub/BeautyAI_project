@@ -22,11 +22,6 @@ services:
       retries: 5
 
   backend:
-    # 태그를 밖에서 주입할 수 있게 한다(CI 배포용). 기본값은 로컬 빌드 태그라
-    # `up -d --build` 로 돌리던 종전 흐름은 그대로 동작한다.
-    # CI 는 러너에서 이미지를 굽고 GHCR 에 올린 뒤, 서버에서는 이 변수를 그 태그로 채워
-    # `pull` 만 한다 — EC2 에서 torch 를 빌드하지 않기 위해서다(3.2GB·수 분).
-    image: ${AI_BACKEND_IMAGE:-beautyai-backend:local}
     build:
       # 컨텍스트가 저장소 루트다 — 런타임 번들(dist/runtime_data)이 backend/ 밖에 있어서.
       # 루트 .dockerignore 가 data/(18GB) 등을 잘라내 컨텍스트는 작게 유지된다.
@@ -74,7 +69,6 @@ services:
           - beautyai-backend
 
   frontend:
-    image: ${AI_FRONTEND_IMAGE:-beautyai-frontend:local}
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
