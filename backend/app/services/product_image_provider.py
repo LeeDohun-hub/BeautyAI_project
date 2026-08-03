@@ -1,11 +1,12 @@
 """상품 대표 이미지 실시간 보강.
 
 DB/카탈로그 상품은 이미지가 없거나 죽은 URL(예: 올리브영 CDN 403)을 가진 경우가 많다.
-Amazon 이미지 API가 막혀 있어, 이미 연결된 실시간 검색 API/카탈로그로 대체 이미지를 끌어온다.
+Amazon 이미지 **API**는 유료·자격심사라 못 쓰지만, 우리가 이미 갖고 있는 아마존 Beauty
+**카탈로그(CSV)의 imageUrl** 과 라쿠텐 검색 결과로 대체 이미지를 끌어온다.
 
 여러 소스를 우선순위대로 **캐스케이드**해, 하나가 비거나 죽으면 다음 소스로 넘어간다:
-- 한국(KR): 네이버 쇼핑(`image`) → 올리브영 글로벌 카탈로그(`imageUrl`).
-- 일본(JP): 라쿠텐 이치바(`mediumImageUrls`) → 올리브영 글로벌 카탈로그 → 네이버.
+- 한국(KR): 올리브영 국내몰 카탈로그 → 올리브영 글로벌 카탈로그 → 아마존 Beauty 카탈로그.
+- 일본(JP): 라쿠텐 이치바(`mediumImageUrls`) → 올리브영 글로벌 카탈로그 → 아마존 JP 카탈로그.
 
 브랜드가 어긋난 엉뚱한 이미지가 붙지 않도록, 브랜드를 아는 경우 브랜드 토큰이
 겹치는 결과만 채택한다. 후보 URL은 실제로 이미지가 응답하는지 검증(`_is_live_image`)해서
@@ -20,12 +21,18 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Iterable
+from urllib.parse import urlsplit
 
 import httpx
 
 from app.core.config import get_settings
-from app.services.amazon_catalog import product_form
+from app.services.amazon_catalog import match_for_region, product_form, sized_image_url
 from app.services.oliveyoung_catalog import match_oliveyoung
+from app.services.oliveyoung_kr_search import match_kr_catalog
+# ⚠ 모듈 최상단에서 임포트한다(순환 없음 — platform_resolver 는 이 모듈을 임포트하지 않는다).
+# 함수 안 지연 임포트로 두면 `_resolve_image` 의 try/except 가 ImportError 까지 삼켜서
+# **KR 이미지가 전부 조용히 빈값**이 된다(실측: 실패 원인이 로그에 안 남아 커버리지 0 으로 보였다).
+from app.services.platform_resolver import matching_brand
 from app.services.rakuten_client import RakutenClient
 
 NAVER_SHOP_API = "https://openapi.naver.com/v1/search/shop.json"
@@ -166,36 +173,84 @@ def rakuten_image(brand: str, name: str) -> str:
     return result
 
 
+def oliveyoung_kr_image(brand: str, name: str) -> str:
+    """올리브영 **국내몰** 카탈로그(로컬 CSV)에서 매칭 상품의 대표 이미지를 찾는다.
+
+    KR 카드에는 이게 1순위다: 한글 상품명끼리 매칭하고(글로벌 카탈로그는 영문명),
+    이미지 보유 75.1%(4,757/6,332)에 생존 100%(표본 250) 였다. 매칭 자체는 KR 올리브영
+    **버튼과 같은** `match_kr_catalog` 라 버튼이 여는 goodsNo 의 사진이 붙는다.
+    """
+    match = match_kr_catalog(brand, name)
+    return match.image_url if match else ""
+
+
 def oliveyoung_catalog_image(brand: str, name: str) -> str:
     """올리브영 글로벌 카탈로그(로컬 CSV)에서 브랜드+상품명 매칭 상품의 대표 이미지를 찾는다."""
     match = match_oliveyoung(brand, name)
     return match.image_url if match else ""
 
 
+def _amazon_image(brand: str, name: str, region: str) -> str:
+    """아마존 Beauty 카탈로그에서 대표 이미지를 가져온다(m.media-amazon.com).
+
+    매칭은 아마존 **버튼과 같은** `match_for_region` 을 쓴다 — 버튼이 여는 ASIN 의 사진이라
+    '검색 1위 추측'보다 정확하고, 버튼과 사진이 서로 다른 상품일 수 없다.
+
+    아마존 CDN 은 (1)다른 도메인 Referer 로도 200/JPEG 를 주고(핫링크 차단 없음),
+    (2)ASIN 이 폐기(404)된 상품의 이미지도 계속 서빙한다 — 실측 확인. 그래서 죽은 링크
+    문제와 무관하게 이미지 소스로 쓸 수 있다.
+    """
+    match = match_for_region(matching_brand(brand, name), name, region)
+    if not match or not match.image_url:
+        return ""
+    return sized_image_url(match.image_url)
+
+
+def amazon_image(brand: str, name: str) -> str:
+    return _amazon_image(brand, name, "kr")
+
+
+def amazon_jp_image(brand: str, name: str) -> str:
+    return _amazon_image(brand, name, "jp")
+
+
+# 카탈로그 매처는 **풀네임**으로만 질의한다. `_resolve_image` 의 짧은 질의(용량·뒷부분을
+# 떼어낸 것)는 검색 API 0건을 피하려는 장치인데, 카탈로그 매칭에 넣으면 라인 토큰이 줄어
+# 커버리지 분모가 작아지고 **형제 상품**(같은 브랜드의 다른 라인)이 문턱을 넘는다 → 버튼과
+# 다른 상품 사진이 붙는다. 카탈로그는 0건이 정상 결과이므로 재시도할 이유도 없다.
+amazon_image.full_name_only = True  # type: ignore[attr-defined]
+amazon_jp_image.full_name_only = True  # type: ignore[attr-defined]
+oliveyoung_kr_image.full_name_only = True  # type: ignore[attr-defined]
+oliveyoung_catalog_image.full_name_only = True  # type: ignore[attr-defined]
+
+
 # 지역별 이미지 소스 우선순위. 앞에서부터 시도해 살아있는 첫 이미지를 채택한다.
-# 올리브영 이미지는 미리보기에 쓰지 않는다(사용자 지시 2026-07-27): CDN 죽은 URL·403이 잦고
-# 상품카드 미리보기 신뢰도가 낮아, KR=네이버·JP=라쿠텐 이미지로만 채운다(없으면 placeholder).
+#
+# 올리브영 이미지 배제(2026-07-27) **해제됨**(2026-08-03, 사용자 결정). 배제의 전제였던
+# '핫링크 차단 / 죽은 URL·403이 잦다' 가 실측으로 성립하지 않았다:
+#   - Referer 없음 / 다른 도메인(cross-site) / 올영 자기 도메인 → 응답이 **완전히 동일**.
+#     실제 Chrome 으로 다른 오리진에서 <img> 24/24 렌더(nosniff 헤더도 없음).
+#   - 생존율: image.oliveyoung.co.kr 250/250, image.oliveyoung.com 244/250(97.6%).
+# 남은 위험(죽은 URL 2.4%)은 `_is_live_image` 가 이미 걸러낸다 → 아마존과 달리 올영은
+# 신뢰 호스트에 넣지 않고 매번 검증한다.
+#
+# ⚠ 네이버 쇼핑 검색 API 는 2026-07-31 종료됐다(HTTP 200 + total 0 으로 조용히 죽는다).
+# 캐스케이드에서 뺀 이유는 '죽은 소스라 못 채우기 때문'만이 아니라, 상품당 최대 4회(질의 변형)
+# 헛 HTTP 왕복을 만들어 item-match 지연을 그만큼 늘리기 때문이다. `naver_image` 함수 자체는
+# 남겨둔다(회귀 테스트 + 네이버가 대체 API 로 돌아올 경우 재연결 지점).
 _PROVIDER_CASCADE: dict[str, list[Callable[[str, str], str]]] = {
-    "kr": [naver_image],
-    "jp": [rakuten_image, naver_image],
+    "kr": [oliveyoung_kr_image, oliveyoung_catalog_image, amazon_image],
+    "jp": [rakuten_image, oliveyoung_catalog_image, amazon_jp_image],
 }
 
-
-def _is_oliveyoung_image(url: str) -> bool:
-    """올리브영 이미지 CDN URL인지(미리보기에서 배제 대상)."""
-    return "oliveyoung" in (url or "").lower()
-
-
-def _has_oliveyoung_direct_link(item: object) -> bool:
-    """카드의 올리브영 버튼이 '상품 직링크'인지(검색 링크가 아닌 prdtNo/goodsNo 상세페이지).
-
-    직링크면 그 상품이 특정되므로 카탈로그 이미지를 신뢰할 수 있다. 검색 링크는 어떤 상품이
-    열릴지 모르니 종전대로 지역 소스 이미지로 교체한다.
-    """
-    url = ((getattr(item, "platform_links", None) or {}).get("oliveyoung") or "").lower()
-    return bool(url) and ("product/detail" in url or "getgoodsdetail" in url)
-
 _IMAGE_MAGIC = (b"\xff\xd8", b"\x89PNG", b"GIF8", b"RIFF")
+
+# 검증 없이 신뢰하는 이미지 CDN. 아마존 미디어 CDN 은 실측(무작위 120건, 4개 카탈로그) 전부
+# 200/JPEG 였고, 다른 도메인 Referer 로도 열리며(핫링크 차단 없음), ASIN 이 폐기(404)된 상품의
+# 이미지도 계속 서빙한다. 반면 검증은 카드당 왕복 ~0.27s 를 더하고, 8스레드 동시 검증에서는
+# 3초 타임아웃에 걸려 **살아있는 이미지를 버리는** 오탐이 났다(실측 33건 중 3건).
+# 만에 하나 죽어도 프론트 `ProductImage` 의 onError 가 placeholder 로 떨어뜨린다(=현재 상태).
+_TRUSTED_IMAGE_HOSTS = frozenset({"m.media-amazon.com"})
 
 
 def _is_live_image(url: str) -> bool:
@@ -203,11 +258,13 @@ def _is_live_image(url: str) -> bool:
 
     HTTP 200 + 앞부분 매직바이트(JPEG/PNG/GIF/WEBP)로 판별한다. 올리브영 CDN은 유효
     이미지를 `application/octet-stream`으로도 주므로 content-type이 아니라 바이트로 본다.
-    결과는 TTL 캐시로 재확인을 줄인다.
+    결과는 TTL 캐시로 재확인을 줄인다. `_TRUSTED_IMAGE_HOSTS` 는 확인 없이 통과시킨다.
     """
     url = (url or "").strip()
     if not url:
         return False
+    if urlsplit(url).netloc.lower() in _TRUSTED_IMAGE_HOSTS:
+        return True
     key = f"live::{url}"
     cached = _cache_get(key)
     if cached is not _MISS:
@@ -268,24 +325,26 @@ def _resolve_image(
     name: str,
     current: str,
     providers: list[Callable[[str, str], str]],
-    oy_direct: bool = False,
 ) -> str | None:
     """현재 이미지가 살아있으면 유지(None 반환), 아니면 소스 캐스케이드로 살아있는 이미지를 찾는다.
 
     반환값: 새로 채택한 URL, 유지면 None, 전부 실패면 "" (placeholder로 비움).
 
-    oy_direct=True(카드의 구매 버튼이 올리브영 **상품 직링크**)면 올리브영 카탈로그 이미지를
-    유지한다. 올영 이미지 배제 지시(2026-07-27)는 '죽은 URL·403이 잦다'는 이유였고 그 판정은
-    _is_live_image 가 이미 하는데, 배제만 남으니 **정답 이미지를 버리고 검색으로 추측한 다른
-    상품 이미지**가 붙었다(실측: medicube 바디로션·아누아 선크림 카드). 직링크가 가리키는
-    상품의 카탈로그 이미지는 정의상 그 상품이라 추측보다 정확하다.
+    출처(호스트)로 걸러내지 않는다 — 판정 기준은 '살아있는가' 하나다. 예전엔 올리브영 URL 이면
+    살아있어도 버렸는데(2026-07-27 배제), 그 결과 **정답 이미지를 버리고 검색으로 추측한 다른
+    상품 이미지**가 붙었다(실측: medicube 바디로션·아누아 선크림 카드). 배제 전제(핫링크 차단·
+    높은 사망률)는 2026-08-03 실측에서 성립하지 않아 해제했다(위 캐스케이드 주석 참고).
     """
-    if current and _is_live_image(current) and (oy_direct or not _is_oliveyoung_image(current)):
-        return None
+    if current and _is_live_image(current):
+        # 이미 아마존 이미지를 들고 있는 상품(DB 시드)은 크기 지시자만 카드 규격으로 통일한다.
+        # 지시자 없는 원본은 1500px/190KB 짜리도 있어, 카드 10장이면 2MB 를 그냥 태운다.
+        sized = sized_image_url(current)
+        return None if sized == current else sized
     # 풀네임 → 짧은 질의 순으로 시도한다(긴 영문명은 대부분 0건).
+    # 단, 카탈로그 매처(full_name_only)는 짧은 질의를 주면 형제 상품이 매칭되므로 풀네임만 준다.
     queries = [name, *(_short_queries(brand, name))]
     for provider in providers:
-        for query in queries:
+        for query in ([name] if getattr(provider, "full_name_only", False) else queries):
             if not query:
                 continue
             try:
@@ -323,7 +382,6 @@ def fill_missing_images(items: Iterable[object], region: str) -> int:
                 str(getattr(item, "name", "") or ""),
                 str(getattr(item, "image_url", "") or "").strip(),
                 providers,
-                _has_oliveyoung_direct_link(item),
             ): item
             for item in targets
         }

@@ -161,6 +161,49 @@ def test_urls(monkeypatch, tmp_path):
     assert ac.amazon_jp_url("B01X").endswith("amazon.co.jp/dp/B01X")
 
 
+def test_match_for_region_translates_for_us_and_keeps_japanese_for_jp(monkeypatch, tmp_path):
+    """버튼(platform_resolver)과 카드 이미지(product_image_provider)가 함께 쓰는 진입점.
+
+    KR 은 한글명을 영문화해 US 카탈로그로, JP 는 일본어명 그대로 JP 카탈로그로 간다.
+    """
+    _use_manifest(monkeypatch, tmp_path)
+    jp = tmp_path / "amazon_beauty_jp.csv"
+    with jp.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_HEADER)
+        w.writerow(("B0JPANUA1", "anua", "ANUA アヌア ドクダミ77 スージングトナー 250ml", "4.6", "900", ""))
+    ac.clear_cache()
+
+    kr = ac.match_for_region("라네즈", "라네즈 워터뱅크 블루 히알루론산 크림 50ml", "kr")
+    assert kr is not None and kr.asin == "B05LAN"
+    jp_match = ac.match_for_region("아누아", "アヌア ドクダミ77 トナー", "jp")
+    assert jp_match is not None and jp_match.asin == "B0JPANUA1"
+    # 일본어 상품명을 KR(=US 카탈로그) 로 넘기면 매칭이 없어야 한다(지역 분기 확인).
+    assert ac.match_for_region("아누아", "アヌア ドクダミ77 トナー", "kr") is None
+
+
+def test_match_for_region_none_when_catalog_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(ac, "_manifest_path", lambda: tmp_path / "absent.csv")
+    ac.clear_cache()
+    assert ac.match_for_region("CLIO", "Clio Kill Cover Founwear Cushion", "kr") is None
+
+
+def test_sized_image_url_normalizes_amazon_cdn():
+    """카탈로그마다 다른 크기 지시자를 카드 규격(500px)으로 통일한다.
+
+    Kaggle/크롤 행은 `._AC_UL320_`(320px), HF 행은 지시자가 없어 원본(1500px/190KB)이 온다.
+    """
+    base = "https://m.media-amazon.com/images/I/71MXYsvfsVL"
+    assert ac.sized_image_url(base + "._AC_UL320_.jpg") == base + "._SL500_.jpg"
+    assert ac.sized_image_url(base + ".jpg") == base + "._SL500_.jpg"
+    assert ac.sized_image_url(base + "._SX592_BO1,204,203,200_.jpg") == base + "._SL500_.jpg"
+    # 아마존 CDN 이 아니거나 형식이 다르면 손대지 않는다.
+    assert ac.sized_image_url("https://image.oliveyoung.com/prdtImg/1085/a.png") == (
+        "https://image.oliveyoung.com/prdtImg/1085/a.png"
+    )
+    assert ac.sized_image_url("") == ""
+
+
 # ── 2026-07-30 버그리포트 회귀 방어 ────────────────────────────────────────────
 # 사용자가 보고한 오매칭 4건의 원인별 게이트를 각각 고정한다.
 

@@ -425,6 +425,47 @@ def amazon_jp_url(asin: str) -> str:
     return _AMAZON_JP + asin
 
 
+def match_for_region(brand: str, name: str, region: str) -> AmazonMatch | None:
+    """지역별 '이 상품의 아마존 카탈로그 매칭'(없으면 None).
+
+    KR: 한글/일본어 상품명을 amazon_search_query 로 영문화 → US 카탈로그(영문 타이틀).
+    JP: 일본어 상품명 그대로 → JP 카탈로그(일본어 타이틀, 실 JP ASIN).
+
+    아마존 **버튼**(platform_resolver._amazon_link)과 **카드 이미지**
+    (product_image_provider.amazon_image)가 반드시 같은 매칭을 쓰게 하려고 뽑아냈다.
+    둘이 따로 매칭하면 버튼이 여는 상품과 카드 사진이 다른 상품이 될 수 있다.
+    """
+    if (region or "").strip().lower() == "jp":
+        return match_amazon(brand, name, region="jp")
+    en_query = amazon_search_query(brand, name)
+    if not en_query or not catalog_available():
+        return None
+    return match_amazon(brand, en_query)
+
+
+# 카드에 쓸 이미지 해상도. 카탈로그마다 크기 지시자가 제각각이라(Kaggle/크롤 `._AC_UL320_`,
+# HF 는 지시자 없음) 카드 그리드에서 해상도가 들쭉날쭉해진다 → 하나로 통일한다.
+# m.media-amazon.com 은 원본보다 큰 값을 요청해도 400 이 아니라 **원본 크기**를 준다(실측:
+# 21FsVQFu3-L → 485x500). 핫링크(다른 도메인 Referer) 차단도 없다(실측 200/JPEG).
+_AMAZON_IMAGE_HOST = "m.media-amazon.com"
+_AMAZON_IMAGE_SIZE = "_SL500_"
+_AMAZON_IMAGE_RE = re.compile(
+    rf"^(https://{re.escape(_AMAZON_IMAGE_HOST)}/images/I/[^/.]+)(?:\.[^/]*)?\.(jpg|jpeg|png)$", re.I
+)
+
+
+def sized_image_url(url: str) -> str:
+    """아마존 이미지 URL 의 크기 지시자를 500px 로 바꾼다(형식이 다르면 원본 그대로).
+
+    `.../I/{id}._AC_UL320_.jpg` → `.../I/{id}._SL500_.jpg`
+    `.../I/{id}.jpg`(HF 행, 지시자 없음) → `.../I/{id}._SL500_.jpg`
+    """
+    match = _AMAZON_IMAGE_RE.match((url or "").strip())
+    if not match:
+        return (url or "").strip()
+    return f"{match.group(1)}.{_AMAZON_IMAGE_SIZE}.{match.group(2).lower()}"
+
+
 def _en_brand(brand: str) -> str:
     return _KO_TO_EN_BRAND.get((brand or "").strip(), brand)
 

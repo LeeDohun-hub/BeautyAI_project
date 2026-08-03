@@ -297,9 +297,12 @@ _SHOP_BRAND_RE = re.compile(
 )
 
 
-def _matching_brand(brand: str, name: str) -> str:
+def matching_brand(brand: str, name: str) -> str:
     """아마존/올리브영 매칭에 쓸 브랜드. brand가 이미 실브랜드면 그대로, 샵이름/미상이면
-    상품명에서 알려진 브랜드를 뽑아 쓴다(라쿠텐/네이버 샵이름 문제 보정)."""
+    상품명에서 알려진 브랜드를 뽑아 쓴다(라쿠텐/네이버 샵이름 문제 보정).
+
+    카드 이미지(product_image_provider._amazon_image)도 이 함수를 거쳐 매칭한다 — 버튼은
+    보정된 브랜드로, 이미지는 원본 샵이름으로 매칭하면 둘이 서로 다른 상품을 가리키게 된다."""
     b_low = (brand or "").lower()
     if any(k in b_low for k in _KNOWN_BRAND_NAMES) and not _SHOP_BRAND_RE.search(brand or ""):
         return brand
@@ -319,19 +322,18 @@ def _amazon_link(brand: str, name: str, region: str) -> str:
 
     KR: 한글/일본어 상품명을 amazon_search_query로 영문화 → US 카탈로그 매칭 → amazon.com/dp.
     JP: 먼저 '일본어 상품명 그대로' JP 카탈로그(amazon.co.jp 크롤, 실 JP ASIN)와 일본어 토큰
-        매칭 → amazon.co.jp/dp (404 없음). 없으면 버튼 없음. US/HF ASIN은 재활용하지 않는다."""
+        매칭 → amazon.co.jp/dp (404 없음). 없으면 버튼 없음. US/HF ASIN은 재활용하지 않는다.
+
+    지역별 매칭 자체는 amazon_catalog.match_for_region 이 한다 — 카드 이미지
+    (product_image_provider.amazon_image)가 **같은 매칭**을 써서 버튼이 여는 상품과
+    카드 사진이 어긋나지 않게 하려고 공용 함수로 뺐다."""
     if region == "jp":
         override = _verified_amazon_jp_override(brand, name)
         if override:
             return override
-        jp_match = amazon_catalog.match_amazon(brand, name, region="jp")
-        if jp_match:
-            return amazon_catalog.amazon_jp_url(jp_match.asin)
-        return ""
-    en_query = amazon_catalog.amazon_search_query(brand, name)
-    if not en_query or not amazon_catalog.catalog_available():
-        return ""
-    match = amazon_catalog.match_amazon(brand, en_query)
+        jp_match = amazon_catalog.match_for_region(brand, name, "jp")
+        return amazon_catalog.amazon_jp_url(jp_match.asin) if jp_match else ""
+    match = amazon_catalog.match_for_region(brand, name, region)
     return amazon_catalog.amazon_com_url(match.asin) if match else ""
 
 
@@ -353,7 +355,7 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
     brand, name = product.brand or "", product.name or ""
     source = getattr(product, "source", "") or ""
     # 아마존/올리브영 매칭용 브랜드(라쿠텐/네이버 샵이름 → 상품명 속 실브랜드로 보정).
-    match_brand = _matching_brand(brand, name)
+    match_brand = matching_brand(brand, name)
     existing_links = dict(getattr(product, "platform_links", None) or {})
 
     direct_rakuten_url = product.product_url if source == "rakuten" and product.product_url else existing_links.get("rakuten", "")

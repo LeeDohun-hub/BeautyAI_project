@@ -1166,7 +1166,7 @@ def recommend(
     for col in response.product_columns:
         col.products = _dedup_by_display_name(col.products)
     response.products = _dedup_by_display_name(response.products)
-    # 카드 이미지 보강(KR=네이버, JP=라쿠텐 검색 이미지, 이미 있으면 유지).
+    # 카드 이미지 보강(KR=아마존 카탈로그, JP=라쿠텐→아마존JP, 이미 있으면 유지).
     fill_missing_images(enrichable, region)
     return response
 
@@ -1410,7 +1410,7 @@ def personal_color_item_match(
     # 즉답 모드도 주입으로 개수가 늘어나므로(실측 17건) 같이 다시 배분한다.
     if overselect or instant:
         products = _balance_item_categories(products, limit=10, per_category=2, gender=gender)
-    # 이미지가 없거나 죽은(또는 올리브영) 이미지는 지역별 실시간 검색(KR=네이버, JP=라쿠텐)으로 교체.
+    # 이미지가 없거나 죽은(또는 올리브영) 이미지는 지역별 소스(KR=아마존 카탈로그, JP=라쿠텐)로 교체.
     if not instant:
         fill_missing_images(products, region)
 

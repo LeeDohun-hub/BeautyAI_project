@@ -32,20 +32,21 @@ def _item(brand: str, name: str, image_url: str = "", oy_url: str = "") -> Simpl
 
 
 _OY_DETAIL = "https://global.oliveyoung.com/product/detail?prdtNo=GA250430394"
+_OY_SEARCH = "https://global.oliveyoung.com/display/search?query=medicube"
 _OY_IMAGE = "https://image.oliveyoung.com/prdtImg/1085/correct.png"
 
 
 def _stub_cascade(monkeypatch, url: str) -> None:
     """지역 이미지 소스를 고정 URL 로 대체한다.
 
-    ⚠ `naver_image` 를 monkeypatch 해도 안 먹는다 — `_PROVIDER_CASCADE` 가 임포트 시점에
+    ⚠ 개별 provider 를 monkeypatch 해도 안 먹는다 — `_PROVIDER_CASCADE` 가 임포트 시점에
     함수 **객체**를 담아두기 때문. 캐스케이드 자체를 갈아끼워야 실제 네트워크 호출이 없다.
     """
     monkeypatch.setitem(pip._PROVIDER_CASCADE, "kr", [lambda brand, name: url])
 
 
-def test_keeps_oliveyoung_image_when_card_has_direct_link(monkeypatch):
-    """직링크가 가리키는 상품의 카탈로그 이미지는 '추측'보다 정확하므로 유지한다."""
+def test_keeps_live_oliveyoung_image(monkeypatch):
+    """살아있는 올리브영 이미지는 유지한다 — 그 상품의 정답 사진이라 '추측'보다 정확하다."""
     monkeypatch.setattr(pip, "_is_live_image", lambda url: True)
     _stub_cascade(monkeypatch, "https://example.com/wrong.jpg")
 
@@ -54,25 +55,49 @@ def test_keeps_oliveyoung_image_when_card_has_direct_link(monkeypatch):
     assert item.image_url == _OY_IMAGE
 
 
-def test_replaces_oliveyoung_image_when_link_is_only_a_search(monkeypatch):
-    """검색 링크는 어떤 상품이 열릴지 모른다 → 종전대로 지역 소스 이미지로 교체한다."""
+def test_keeps_oliveyoung_image_without_direct_link(monkeypatch):
+    """올영 이미지 배제 해제(2026-08-03) 회귀 방어.
+
+    예전엔 '올영 버튼이 검색 링크면 이미지도 못 믿는다'며 교체했는데, 이미지는 링크가 아니라
+    **그 상품 행**에서 온 것이라 링크 종류와 무관하다. 배제의 전제였던 핫링크 차단·높은 사망률은
+    실측으로 성립하지 않았다(cross-site Referer 로도 응답 동일, 실제 Chrome 렌더 24/24).
+    """
     monkeypatch.setattr(pip, "_is_live_image", lambda url: True)
-    _stub_cascade(monkeypatch, "https://example.com/naver.jpg")
+    _stub_cascade(monkeypatch, "https://example.com/other.jpg")
 
-    search_link = "https://global.oliveyoung.com/display/search?query=medicube"
-    item = _item("medicube", "medicube Red Clear Capsule Body Lotion 230ml", _OY_IMAGE, search_link)
+    item = _item("medicube", "medicube Red Clear Capsule Body Lotion 230ml", _OY_IMAGE, _OY_SEARCH)
     pip.fill_missing_images([item], "kr")
-    assert item.image_url == "https://example.com/naver.jpg"
+    assert item.image_url == _OY_IMAGE
 
 
-def test_replaces_dead_oliveyoung_image_even_with_direct_link(monkeypatch):
-    """죽은 이미지는 직링크 상품이라도 교체한다(올영 CDN 403/삭제 대응)."""
+def test_replaces_dead_oliveyoung_image(monkeypatch):
+    """죽은 이미지는 교체한다 — 배제를 푼 뒤에도 판정 기준은 '살아있는가' 하나다."""
     monkeypatch.setattr(pip, "_is_live_image", lambda url: not url.startswith("https://image.oliveyoung.com"))
     _stub_cascade(monkeypatch, "https://example.com/live.jpg")
 
     item = _item("medicube", "medicube Red Clear Capsule Body Lotion 230ml", _OY_IMAGE, _OY_DETAIL)
     pip.fill_missing_images([item], "kr")
     assert item.image_url == "https://example.com/live.jpg"
+
+
+def test_oliveyoung_images_are_still_http_verified(monkeypatch):
+    """아마존과 달리 올영은 신뢰 호스트가 아니다(글로벌 CDN 사망률 2.4% 실측)."""
+    calls: list[str] = []
+
+    class _Stream:
+        def __enter__(self):
+            return SimpleNamespace(status_code=404, iter_bytes=lambda chunk_size=8: iter([b""]))
+
+        def __exit__(self, *exc):
+            return False
+
+    def _stream(method, url, **kwargs):
+        calls.append(url)
+        return _Stream()
+
+    monkeypatch.setattr(pip.httpx, "stream", _stream)
+    assert pip._is_live_image(_OY_IMAGE) is False
+    assert calls == [_OY_IMAGE]
 
 
 def test_naver_image_rejects_different_product_form(monkeypatch):
@@ -119,3 +144,79 @@ def test_naver_image_no_top_result_fallback_for_brand_only_query(monkeypatch):
     assert pip.naver_image("medicube", "medicube") == ""
     # 상품 토큰이 있는 질의라면 종전처럼 1위 결과 폴백을 허용한다(한글명 브랜드 대응).
     assert pip.naver_image("medicube", "medicube red capsule body lotion") == "https://example.com/other.jpg"
+
+
+# ── 아마존 카탈로그 이미지(KR 소스 교체, 2026-08-03) ──────────────────────────────
+# 네이버 쇼핑 API 가 2026-07-31 종료되면서 KR 이미지 소스가 통째로 사라져 카드가 전부
+# placeholder 가 됐다. 대체 소스는 아마존 Beauty 카탈로그의 imageUrl 이다.
+
+_AMAZON_IMG = "https://m.media-amazon.com/images/I/71MXYsvfsVL._AC_UL320_.jpg"
+_AMAZON_IMG_500 = "https://m.media-amazon.com/images/I/71MXYsvfsVL._SL500_.jpg"
+
+
+def test_amazon_image_uses_button_match_and_card_size(monkeypatch):
+    """카드 이미지는 아마존 **버튼과 같은 매칭**(match_for_region)의 사진을 쓴다."""
+    seen: list[tuple[str, str, str]] = []
+
+    def _match(brand, name, region):
+        seen.append((brand, name, region))
+        return SimpleNamespace(asin="B0X", title="t", image_url=_AMAZON_IMG, score=1.0)
+
+    monkeypatch.setattr(pip, "match_for_region", _match)
+    assert pip.amazon_image("CLIO", "CLIO Kill Cover Founwear Cushion") == _AMAZON_IMG_500
+    assert pip.amazon_jp_image("CLIO", "クリオ キルカバー クッション") == _AMAZON_IMG_500
+    assert [region for _, _, region in seen] == ["kr", "jp"]
+
+
+def test_amazon_image_empty_when_no_match(monkeypatch):
+    monkeypatch.setattr(pip, "match_for_region", lambda brand, name, region: None)
+    assert pip.amazon_image("CLIO", "CLIO Kill Cover Founwear Cushion") == ""
+    # 매칭돼도 카탈로그 행에 이미지가 없으면(JP ESCI 행) 빈 값.
+    monkeypatch.setattr(
+        pip,
+        "match_for_region",
+        lambda brand, name, region: SimpleNamespace(asin="B0X", title="t", image_url="", score=1.0),
+    )
+    assert pip.amazon_image("CLIO", "CLIO Kill Cover Founwear Cushion") == ""
+
+
+def test_catalog_provider_never_gets_short_queries(monkeypatch):
+    """카탈로그 매처에 짧은 질의를 주면 형제 상품(같은 브랜드 다른 라인)이 매칭된다.
+
+    짧은 질의는 검색 API 0건을 피하려는 장치라 카탈로그에는 해가 될 뿐이다 —
+    라인 토큰이 줄면 커버리지 분모가 작아져 문턱을 쉽게 넘고, 그렇게 붙은 사진은
+    버튼이 여는 상품과 다른 상품이 된다.
+    """
+    monkeypatch.setattr(pip, "_is_live_image", lambda url: False)
+    asked: list[str] = []
+
+    def _provider(brand, name):
+        asked.append(name)
+        return ""
+
+    _provider.full_name_only = True
+    monkeypatch.setitem(pip._PROVIDER_CASCADE, "kr", [_provider])
+    full = "CLIO Kill Cover Founwear Cushion 4 Ginger SPF50 15g"
+    pip.fill_missing_images([_item("CLIO", full)], "kr")
+    assert asked == [full]
+
+
+def test_amazon_cdn_is_trusted_without_http_check(monkeypatch):
+    """아마존 CDN 은 검증 없이 신뢰한다(핫링크 차단 없음 + 폐기 ASIN 도 이미지는 서빙).
+
+    검증은 카드당 왕복을 더하고, 동시 검증에서 타임아웃으로 살아있는 이미지를 버렸다.
+    """
+    def _boom(*args, **kwargs):
+        raise AssertionError("아마존 CDN URL 은 HTTP 확인을 하지 않아야 한다")
+
+    monkeypatch.setattr(pip.httpx, "stream", _boom)
+    assert pip._is_live_image(_AMAZON_IMG_500) is True
+    assert pip._is_live_image("") is False
+
+
+def test_existing_amazon_image_is_kept_and_resized(monkeypatch):
+    """DB 시드에 이미 아마존 이미지가 있으면 교체하지 않고 크기만 카드 규격으로 맞춘다."""
+    monkeypatch.setitem(pip._PROVIDER_CASCADE, "kr", [lambda brand, name: "https://example.com/other.jpg"])
+    item = _item("CLIO", "CLIO Kill Cover Founwear Cushion", _AMAZON_IMG)
+    pip.fill_missing_images([item], "kr")
+    assert item.image_url == _AMAZON_IMG_500
