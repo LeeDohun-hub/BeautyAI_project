@@ -6,6 +6,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./beautyai.db"
+    # ── 환경 가드 ──────────────────────────────────────────────────────────────
+    # 로컬 개발이 운영 DB 를 그대로 치는 사고를 막는다.
+    # 2026-08-03 확인: .env 와 .env.prod 의 DATABASE_URL 이 글자 하나까지 같아, 로컬에서
+    # uvicorn 을 띄우거나 스크립트를 돌리면 운영 DB(회원 14·분석 111·이력 483)에 썼다.
+    # 운영 컨테이너만 APP_ENV=production 을 받는다(docker-compose.prod.yml).
+    app_env: str = "local"
+    # 운영 DB 를 알아보는 조각(Supabase 프로젝트 ref). DATABASE_URL 에 이 문자열이 있으면
+    # 운영 DB 로 본다. ⚠️ 운영 DB 를 옮기면 이 값도 같이 바꿔야 가드가 계속 동작한다.
+    production_db_marker: str = "ekmelstemgzjbjppoalg"
+    # 로컬에서 **의도적으로** 운영 DB 를 봐야 할 때만 켠다(데이터 확인·마이그레이션 리허설).
+    # 사고는 막되 필요한 작업은 막지 않기 위한 명시적 탈출구다.
+    allow_production_db: bool = False
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
     chroma_path: str = "./data/rag/chromadb"
@@ -85,6 +97,10 @@ class Settings(BaseSettings):
     personal_color_wb_fail_color_scale: float = 0.5
 
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() in {"production", "prod"}
 
     @property
     def cors_origin_list(self) -> list[str]:

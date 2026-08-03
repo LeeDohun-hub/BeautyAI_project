@@ -26,7 +26,28 @@ def resolve_database_url(database_url: str) -> str:
     return f"sqlite:///{settings.project_root / path}"
 
 
+def guard_production_db(database_url: str) -> None:
+    """운영 DB 를 로컬에서 실수로 여는 것을 막는다.
+
+    조용히 경고만 찍으면 아무도 안 본다 — 엔진을 만들기 전에 예외로 끊는다.
+    운영 컨테이너는 APP_ENV=production 을 받으므로 통과하고, 로컬에서 정말 필요하면
+    ALLOW_PRODUCTION_DB=true 로 **의도를 밝히고** 연다.
+    """
+    marker = settings.production_db_marker.strip()
+    if not marker or marker not in database_url:
+        return
+    if settings.is_production or settings.allow_production_db:
+        return
+    raise RuntimeError(
+        f"운영 DB 로 접속하려고 합니다(APP_ENV={settings.app_env!r}).\n"
+        "  - 개발용 DB 를 쓰려면 .env 의 DATABASE_URL 을 개발 DB 로 바꾸세요.\n"
+        "  - 운영 데이터를 정말 봐야 한다면 ALLOW_PRODUCTION_DB=true 를 명시하세요.\n"
+        "  - 운영 컨테이너인데 이 오류가 났다면 APP_ENV=production 이 빠진 것입니다."
+    )
+
+
 database_url = resolve_database_url(settings.database_url)
+guard_production_db(database_url)
 connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
 engine = create_engine(database_url, connect_args=connect_args, pool_pre_ping=True)
 # expire_on_commit=False 가 핵심이다. 기본값(True)이면 commit 시점에 이미 로드한 객체가 전부

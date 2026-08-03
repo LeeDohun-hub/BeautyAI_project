@@ -30,6 +30,9 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 이 필요합니다 — .env.prod 를 확인하세요}
+      # ⚠️ 지우지 말 것. 백엔드가 '운영 DB 인데 운영 환경이 아니다' 로 보고 부팅을 거부한다
+      # (app/core/database.py guard_production_db). 로컬이 운영 DB 를 치는 사고를 막는 가드다.
+      APP_ENV: production
       REDIS_URL: redis://redis:6379/0
       # 프론트와 같은 오리진(nginx 프록시)으로 들어오므로 CORS 는 사실상 불필요하지만,
       # 백엔드를 별도 도메인에 직접 노출할 경우를 위해 남겨둔다.
