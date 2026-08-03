@@ -87,3 +87,39 @@ def test_broaden_keyword_simplifies_compound_color(keyword, expected_first):
 
 def test_broaden_keyword_single_token_has_no_fallback():
     assert _broaden_keyword("ファンデーション") == []
+
+
+# ── 주입 게이트 회귀 (2026-08-03 사용자 리포트) ─────────────────────────────────
+# "한국 지역 + 모든 플랫폼 / 네이버 에서 네일 컬럼이 비어 있다."
+# 원인: 빈 컬럼을 채우는 주입이 **올리브영·아마존 탭에서만** 돌았다. KR 네일 후보를 만들던
+# 네이버 색상검색이 2026-07-31 종료돼 후보 소스가 사라졌는데, 채워줄 주입까지 탭에 막혀
+# 이중 공백이었다(카탈로그엔 네일 96건 존재). 플랫폼 탭은 '어디서 사나' 필터지 컬럼을
+# 비우는 장치가 아니다.
+
+def test_injected_product_keeps_direct_link_and_gains_others(monkeypatch):
+    """주입 상품에 다른 플랫폼 링크를 붙이되, 카탈로그 **직링크는 지켜야** 한다.
+
+    그냥 resolve 를 돌리면 국내몰 직링크(goodsNo)가 검색 링크로 격하된다 — Cloudflare 때문에
+    KR 국내몰은 검증이 불가해 resolve 가 검색 링크만 만들기 때문이다. 카탈로그가 확정해 준
+    상품을 다시 추측으로 되돌리는 셈이라, 병합하되 직링크가 이기게 한다.
+    """
+    from app.api import routes
+
+    direct = "https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=A000000251335"
+
+    def _fake_resolve(product, region, **kwargs):
+        # resolve 가 만드는 '추측' 링크들 — 올리브영은 검색 링크로 격하된 형태.
+        product.platform_links = {
+            "naver": "https://search.shopping.naver.com/search/all?query=x",
+            "oliveyoung": "https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query=x",
+        }
+        product.matched_platforms = sorted(product.platform_links)
+
+    monkeypatch.setattr(routes, "resolve_product_platforms", _fake_resolve)
+
+    item = SimpleNamespace(platform_links={"oliveyoung": direct}, matched_platforms=["oliveyoung"])
+    routes._attach_links_keeping_direct(item, "kr")
+
+    assert item.platform_links["oliveyoung"] == direct, "직링크가 검색 링크로 격하되면 안 된다"
+    assert item.platform_links["naver"], "네이버 탭에서 걸러지지 않으려면 링크가 붙어야 한다"
+    assert item.matched_platforms == ["naver", "oliveyoung"]

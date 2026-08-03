@@ -750,6 +750,23 @@ def _dedup_by_display_name(products: list) -> list:
     return [kept[key] for key in order]
 
 
+def _attach_links_keeping_direct(product, region: str) -> None:
+    """주입 상품에 나머지 플랫폼 링크를 붙인다 — 단, 갖고 있던 **직링크는 지키면서**.
+
+    주입 상품은 카탈로그 직링크(국내몰 goodsNo / 글로벌 prdtNo / 아마존 ASIN) 하나만 들고
+    온다. 그대로 두면 '모든 플랫폼' 이 아닌 탭에서 걸러져 컬럼이 다시 빈다.
+    그렇다고 `resolve_product_platforms` 를 그냥 돌리면 그 직링크를 **검색 링크로 격하**시킨다
+    (KR 국내몰은 Cloudflare 때문에 검증이 불가해 resolve 가 검색 링크만 만든다) — 카탈로그가
+    확정해 준 상품을 다시 추측으로 되돌리는 셈이다. 그래서 결과를 덮어쓰지 않고 병합한다.
+    """
+    direct = dict(getattr(product, "platform_links", None) or {})
+    resolve_product_platforms(product, region)
+    links = dict(getattr(product, "platform_links", None) or {})
+    links.update(direct)  # 직링크가 검색 링크를 이긴다
+    product.platform_links = links
+    product.matched_platforms = sorted(links)
+
+
 def _filter_by_requested_platform(products: list, platform: str) -> list:
     platform = normalize_platform(platform)
     if platform == "all":
@@ -1393,17 +1410,32 @@ def personal_color_item_match(
     #   출신이라 검증을 다시 거칠 필요가 없다.
     # 즉답 모드에서도 주입은 한다 — 카탈로그 조회는 전부 로컬(캐시)이라 빠르고, 안 하면
     # 즉답이 DB 폴백(영문명·색상 미매칭)만 남아 오히려 엉뚱한 카드가 깜빡인다(실측 8건 전부 DB).
+    # ⚠ 주입은 **플랫폼 탭과 무관하게** 돈다(2026-08-03 수정). 예전엔 올리브영/아마존 탭에서만
+    #   돌아서, '모든 플랫폼'·'네이버' 에서는 네일 컬럼이 그냥 비어 있었다(사용자 리포트).
+    #   원래 KR 네일 후보를 만들던 네이버 색상검색이 2026-07-31 종료돼 후보 소스가 사라졌는데,
+    #   채워줄 주입까지 탭에 막혀 있어 **이중 공백**이었다. 카탈로그엔 네일이 96건 있었다.
+    #   플랫폼 탭은 '어디서 살 수 있나'를 고르는 필터지, 컬럼을 비우는 장치가 아니다.
     if gender != "male":
         normalized_platform = normalize_platform(platform)
         thin = _thin_item_categories(products, gender)
-        if thin and normalized_platform == "oliveyoung":
-            # 지역별 카탈로그가 다르다: KR=국내몰(goodsNo), JP=글로벌몰(prdtNo).
-            if region == "kr":
+        if thin:
+            before = len(products)
+            if normalized_platform in {"amazon_us", "amazon_jp"}:
+                _inject_amazon_catalog(products, keywords, region, thin)
+            elif region == "kr":
+                # 지역별 카탈로그가 다르다: KR=국내몰(goodsNo), JP=글로벌몰(prdtNo).
                 _inject_kr_oliveyoung_catalog(products, keywords, thin)
             elif catalog_available():
                 _inject_jp_oliveyoung_catalog(products, keywords, thin)
-        elif thin and normalized_platform in {"amazon_us", "amazon_jp"}:
-            _inject_amazon_catalog(products, keywords, region, thin)
+            # 주입은 append 라 뒤쪽이 새 상품이다. 주입 상품은 자기 카탈로그 링크 하나만 들고
+            # 오므로, 나머지 플랫폼 링크를 붙인 뒤 **선택한 탭 기준으로 한 번 걸러**야 한다
+            # (본 목록의 _filter_by_requested_platform 은 이 지점보다 앞에서 이미 끝났다).
+            injected = products[before:]
+            if injected:
+                del products[before:]
+                for item in injected:
+                    _attach_links_keeping_direct(item, region)
+                products.extend(_filter_by_requested_platform(injected, platform))
         products.sort(key=lambda item: (item.score or 0, item.review_count or 0), reverse=True)
 
     # 넉넉히 뽑았으면 검증에서 살아남은 것들로 컬럼을 다시 균등 배분한다(위 overselect 참고).
