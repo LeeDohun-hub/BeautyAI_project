@@ -1325,6 +1325,16 @@ export default function App() {
   const [surgeryCardsLoading, setSurgeryCardsLoading] = useState(false);
   // 변화 강도 — 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다.
   const [surgeryIntensity, setSurgeryIntensity] = useState<VirtualSurgeryIntensity>('balanced');
+  // ⚠ 이 훅은 **컴포넌트 최상위**에 있어야 한다. 처음에 renderVirtualSurgeryFlowPage() 안에
+  //   넣었다가 화면이 통째로 빈 채로 떴다 — 그 함수는 조건부로 호출돼서 훅 호출 순서가
+  //   렌더마다 달라지고, React 가 즉시 throw 한다(Rules of Hooks). 실측으로 잡았다.
+  //   카드 화면(3단계)에 들어오면 미리보기를 한 번 받아온다. 강도 버튼이 다시 부른다.
+  useEffect(() => {
+    if (virtualSurgeryStep === 3 && virtualSurgeryFile && !surgeryCards.length && !surgeryCardsLoading) {
+      void loadSurgeryCards(surgeryIntensity);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [virtualSurgeryStep, virtualSurgeryFile]);
   // 네일 디자인 분석(리트리벌). 인덱스·모델이 배포에 없으면 결과의 feature_available 이 false 로 온다.
   const [nailPreview, setNailPreview] = useState<string>('');
   const [nailDragOver, setNailDragOver] = useState(false);
@@ -4421,15 +4431,6 @@ export default function App() {
       : virtualSurgeryStep === 2 ? Boolean(virtualSurgeryResult?.detected)
       : virtualSurgeryStep === 3 ? Boolean(virtualSurgeryTarget)
       : true;
-
-// 카드 화면(3단계)에 들어올 때 미리보기를 한 번 받아온다. 사진이 없으면 아무 일도 안 한다.
-    // 강도를 바꾸면 그 버튼이 다시 부른다.
-    useEffect(() => {
-      if (virtualSurgeryStep === 3 && virtualSurgeryFile && !surgeryCards.length && !surgeryCardsLoading) {
-        void loadSurgeryCards(surgeryIntensity);
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [virtualSurgeryStep, virtualSurgeryFile]);
 
     const goNextVirtualStep = () => setVirtualSurgeryStep((step) => Math.min(step + 1, flowSteps.length - 1));
     const goPrevVirtualStep = () => setVirtualSurgeryStep((step) => Math.max(step - 1, 0));
