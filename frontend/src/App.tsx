@@ -4151,12 +4151,10 @@ export default function App() {
       '--nose-contour': `${virtualSurgeryTuning.noseContour}%`,
       '--blemish-care': `${virtualSurgeryTuning.blemishCare}%`,
     } as CSSProperties;
-    // 백엔드가 사용자가 고른 부위를 위로 정렬해 주고 `selected` 로 표시해 준다. 제목에 그
-    // 표시를 실어, 왜 이 순서인지가 결과지에서 드러나게 한다(고른 게 반영됐음을 보여주는 유일한 단서).
     const displayedRecommendationCards = virtualSurgeryResult?.recommendations.length
       ? virtualSurgeryResult.recommendations.map((item, index) => [
           String(index + 1).padStart(2, '0'),
-          item.selected ? `${item.title} · ${t('선택하신 부위')}` : item.title,
+          item.title,
           item.summary,
           item.score,
         ] as const)
@@ -4764,6 +4762,13 @@ export default function App() {
                     <Paper elevation={0} className="virtual-reco-card">
                       <span className="virtual-reco-no">{String(index + 1).padStart(2, '0')}</span>
                       <Chip label={`${card.score}점`} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
+                      {/* 1단계에서 고른 부위임을 표시한다. 백엔드가 selected 로 알려주고 정렬도
+                          해 주는데, 결과지에 아무 표시가 없으면 '내 선택이 반영됐나'를 알 수 없다.
+                          ⚠ 예전엔 이 배지를 displayedRecommendationCards(다른 렌더러)에만 넣어서
+                          결과지에는 끝내 안 보였다 — 이 화면이 쓰는 건 resultCards 다. */}
+                      {'selected' in card && card.selected && (
+                        <Chip label={t('선택하신 부위')} size="small" color="secondary" sx={{ mb: 1, ml: 0.5 }} />
+                      )}
                       <Typography variant="h6" fontWeight={900}>{t(card.title)}</Typography>
                       <Typography color="text.secondary">{t(card.summary)}</Typography>
                     </Paper>
