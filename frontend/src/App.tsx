@@ -2545,11 +2545,11 @@ export default function App() {
     // 컬럼 수보다 크게 두면 사용자가 다 담아도 칸이 남아, 아래 자동 채우기가 '담지 않은 상품'을
     // 결과지에 올린다(실측: 남성이 4개를 담았는데 5번째로 엉뚱한 쿠션팩트가 실렸다).
     const reportMax = Math.min(PC_REPORT_MAX, itemMatchGroups.length || PC_REPORT_MAX);
-    // 자동 채우기는 **하나도 안 담았을 때만** 한다. 예전엔 모자란 칸을 늘 추천 상위로 채워서,
-    // 담은 적 없는 상품이 '내가 고른 것'처럼 결과지에 섞였다(사용자 지적 2026-07-30).
-    const reportItems = reportPicks.length
-      ? reportPicks.slice(0, reportMax)
-      : reportSourceProducts.slice(0, reportMax);
+    // 결과지에는 **담은 상품만** 싣는다. 자동 채우기는 없다(사용자 지시 2026-08-03).
+    // 2026-07-30 에 '모자란 칸만 채우던 것'을 '하나도 안 담았을 때만 채우기'로 좁혔는데,
+    // 그마저도 담은 적 없는 상품이 '장바구니' 제목 아래 실려 내가 고른 것처럼 보였다.
+    // 아무것도 안 담았으면 빈 자리표시(아래 report-product empty)만 나온다.
+    const reportItems = reportPicks.slice(0, reportMax);
     const isPicked = (product: RakutenProduct) => pickedIdentities.has(productIdentityKey(product));
     const toggleReportProduct = (product: RakutenProduct, checked: boolean) => {
       const identity = productIdentityKey(product);
@@ -3453,7 +3453,7 @@ export default function App() {
           <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
             {t(reportPicks.length
               ? 'Step 4에서 결과지에 담은 상품만 표시됩니다.'
-              : 'Step 4에서 상품을 담으면 그 상품이 표시됩니다. 지금은 추천 상위를 보여줍니다.')}
+              : 'Step 4에서 상품을 담으면 여기에 표시됩니다.')}
           </Typography>
 
           {/* 결과지를 본 뒤 바로 질문할 수 있게 상담을 같은 화면에서 연다. */}
@@ -5135,7 +5135,9 @@ export default function App() {
     // 모자란 칸을 추천 상위로 채우면, 담은 적 없는 상품이 '내가 고른 것'처럼 결과지에 섞인다
     // (사용자 지적 2026-07-30). 하나도 안 담았을 때만 추천 상위로 채워 빈 결과지를 막는다.
     const hasPicked = picked.length > 0;
-    const reportProducts = (hasPicked ? picked : allProducts).slice(0, SKIN_REPORT_MAX);
+    // 담은 상품만 싣는다 — 추천 상위로 자동 채우지 않는다(사용자 지시 2026-08-03).
+    // 퍼스널컬러 결과지와 같은 규칙이다.
+    const reportProducts = picked.slice(0, SKIN_REPORT_MAX);
     const reportDate = new Date().toISOString().slice(0, 10);
 
     return (
@@ -5189,9 +5191,14 @@ export default function App() {
                 </Box>
 
                 <Typography className="report-section-title">
-                  {t(hasPicked ? '장바구니' : '추천 상품')}
+                  {t('장바구니')}
                 </Typography>
                 <Box className="report-products">
+                  {!reportProducts.length && (
+                    // 담은 게 없으면 추천 상위로 채우지 않는다 — '장바구니' 제목 아래 담은 적
+                    // 없는 상품이 실리면 내가 고른 것처럼 보인다(사용자 지적 2026-08-03).
+                    <Typography className="report-empty">{t('담은 상품이 없습니다.')}</Typography>
+                  )}
                   {reportProducts.map((product, index) => (
                     <Box className="report-product" key={product.id}>
                       <Box className="report-product-thumb">
@@ -5231,7 +5238,7 @@ export default function App() {
         <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
           {t(hasPicked
             ? '추천 단계에서 결과지에 담은 상품만 표시됩니다.'
-            : '추천 단계에서 상품을 담으면 그 상품이 표시됩니다. 지금은 추천 상위를 보여줍니다.')}
+            : '추천 단계에서 상품을 담으면 여기에 표시됩니다.')}
         </Typography>
       </Box>
     );
