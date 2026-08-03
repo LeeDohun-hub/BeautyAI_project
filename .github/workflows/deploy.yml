@@ -38,7 +38,7 @@ jobs:
       # 러너 작업공간에서 그냥 띄우면 프로젝트명이 달라져 **두 번째 스택**이 뜬다.
       DEPLOY_DIR: /home/ubuntu/BeautyAI_project
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # workflow_run 은 기본 브랜치를 체크아웃하므로, 실제로 통과한 커밋을 집는다.
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}

@@ -8,7 +8,7 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -18,7 +18,7 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -31,7 +31,7 @@ jobs:
   images:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: 프로덕션 compose 문법 검증
         run: docker compose -f docker-compose.prod.yml --env-file .env.prod.example config >/dev/null
       - name: 프론트 프로덕션 이미지 빌드 (nginx 정적 서빙)
