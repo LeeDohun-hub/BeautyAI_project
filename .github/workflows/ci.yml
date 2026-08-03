@@ -37,6 +37,11 @@ jobs:
       - name: 프론트 프로덕션 이미지 빌드 (nginx 정적 서빙)
         run: docker build -f frontend/Dockerfile.prod -t beautyai-frontend:ci frontend
       - name: 백엔드 이미지 빌드
-        # torch CPU 휠을 받아 오느라 수 분 걸린다. 느리면 push 한정으로 조건을 걸 것.
+        # ⚠ torch CPU 휠을 받아 와 매번 수 분이 걸린다. 이 저장소는 private 이라 Actions
+        #   분이 과금 대상(무료 2,000분/월)인데, 이 잡 하나가 대부분을 먹는다.
+        #   그리고 **배포는 서버에서 다시 빌드**하므로(self-hosted 러너) 여기서 굽는 건
+        #   순수 검증용이다. 그래서 배포로 이어지는 흐름에서만 돌린다:
+        #   PR 과 기능 브랜치 push 에서는 건너뛴다(Dockerfile 을 건드리는 PR 은 수동 확인).
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', vars.DEPLOY_BRANCH)
         run: docker build -t beautyai-backend:ci backend
 

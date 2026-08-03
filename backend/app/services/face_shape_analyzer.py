@@ -37,6 +37,13 @@ def _clamp(value: float, lo: float, hi: float) -> int:
 
 
 def analyze(image_bytes: bytes) -> dict:
+    """얼굴형 분석.
+
+    ⚠ 랜드마크를 밖에서 받아 재사용하는 최적화를 시도했다가 되돌렸다(2026-08-03).
+      워밍 후 Face Mesh 는 0.17s 뿐이고, 호출부(가상 성형)와 여기의 리사이즈 크기가
+      달라(1000px vs 900px) eye_ratio 가 3% 어긋났다 — 문턱 분기에 영향을 준다.
+      재사용하려면 먼저 두 모듈의 `_load_rgb` 크기를 맞춰야 한다.
+    """
     rgb = _load_rgb(image_bytes)
     h, w = rgb.shape[:2]
     import mediapipe as mp

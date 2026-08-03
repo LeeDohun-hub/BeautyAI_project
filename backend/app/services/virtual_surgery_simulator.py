@@ -455,6 +455,14 @@ def simulate(
     out, blemish_count = _soften_blemishes(out, face_mask, np.clip(blemish_care / 100.0, 0.0, 1.0))
     out = _add_contour_guides(out, lm, w, h, np.clip(nose_contour / 100.0, 0.0, 1.0))
 
+    # ⚠ 여기서 Face Mesh 가 한 번 더 돈다(이 모듈에서 이미 한 번 돌렸다). 재사용을 시도했다가
+    #   되돌렸다 — 측정해 보니 **이득이 작고 부작용이 있었다**:
+    #   · 워밍 후 Face Mesh 는 0.17s 로, simulate 전체 0.58s 중 일부일 뿐이다
+    #     (예전에 3.7s 로 보였던 건 첫 호출의 모델 로딩 시간이었다).
+    #   · 이 모듈은 1000px, 얼굴형 분석기는 900px 로 리사이즈한다. 랜드마크 정밀도가
+    #     해상도에 따라 달라져 eye_ratio 가 1.361↔1.404(3%) 로 어긋났다. `_recommendations`
+    #     가 eye>1.15 같은 문턱으로 분기하므로, 경계 근처 얼굴에서 추천이 바뀔 수 있다.
+    #   해상도를 맞추기 전에는 각자 탐지하는 게 안전하다.
     face_result = analyze_face_shape(image_bytes)
     recommendations = _prioritize(_recommendations(face_result, blemish_count), concerns)
     referral = _screen_for_referral(image_bytes)
