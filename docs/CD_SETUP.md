@@ -34,20 +34,35 @@ python scripts\publish_runtime_bundle.py             # 빌드 + 업로드
 (예: 올리브영/아마존 크롤을 새로 돌렸다 → 다시 올려야 배포에 반영된다.)
 배포 로그에도 `번들 최신 파일: <날짜>` 가 찍히니, 낡았는지 거기서 눈으로 확인할 수 있다.
 
-### 1-2. EC2 준비
+### 1-2. EC2 준비 (2026-08-03 실측 반영 — 대부분 이미 되어 있다)
+
+두 스택은 **서로 다른 인스턴스**에서 이미 돌고 있다(Ubuntu 24.04 / Docker 29.1.3 /
+Compose 2.40.3, 사용자 `ubuntu`).
+
+| | AI | WEB |
+|---|---|---|
+| 호스트 | `ai.yopalette.com` | `www.yopalette.com` |
+| 디렉터리 | `/home/ubuntu/BeautyAI_project` | `/home/ubuntu/BeautyWEB_project` |
+| compose 프로젝트명 | `beautyai_project` | `beautyweb_project` |
+| compose 파일 | `docker-compose.prod.yml` | `docker-compose.aws.yml` (+`--profile local-db`) |
+| env | `.env.prod` (있음) | `.env` (있음) |
+
+**중요 — 프로젝트명은 디렉터리명에서 나온다.** 워크플로의 `-p` 값이나 실행 디렉터리를 바꾸면
+기존 스택을 갱신하는 대신 **두 번째 스택**이 뜨고, Caddy 가 80/443 을 이미 잡고 있어
+새 스택은 뜨다 말고 서비스는 옛 버전 그대로 남는다.
+
+AI 는 compose·Caddyfile 만 scp 하므로 추가 준비가 없다. WEB 은 `git reset --hard` 로
+소스를 갱신하는데 **원래 tar 로 푼 디렉터리라 git 저장소가 아니었다** → 한 번만:
 
 ```bash
-# AI — compose 와 .env.prod 가 있을 디렉터리. 저장소 클론은 필요 없다.
-mkdir -p ~/beautyai && cd ~/beautyai
-# .env.prod 를 여기에 둔다(git 에 없는 파일).
-
-# WEB — 저장소를 클론해 둔다(public 이라 자격증명 불필요).
-git clone https://github.com/LeeDohun-hub/BeautyWEB_project.git ~/beautyweb
-cd ~/beautyweb   # .env 를 여기에 둔다.
-
-# 공용 네트워크(양쪽 스택이 붙는다)
-docker network create beauty_stack || true
+cd ~/BeautyWEB_project
+git init && git remote add origin https://github.com/LeeDohun-hub/BeautyWEB_project.git
+git fetch origin main && git reset --hard origin/main   # .env·백업파일은 untracked 라 보존된다
 ```
+
+> 이 저장소는 public 이라 서버에 자격증명이 필요 없다. 위 명령으로 덮어써지는 것은 추적
+> 대상 파일뿐이고, 실측상 자바 소스의 차이는 **전부 개행문자(CRLF/LF)** 였다
+> (`git diff --ignore-all-space` 결과 0). `docker-compose.aws.yml`·`Caddyfile` 은 저장소와 동일.
 
 ### 1-3. GHCR 이미지를 EC2 가 받을 수 있게 (AI)
 
@@ -66,10 +81,10 @@ AI 저장소가 private 이라 GHCR 패키지도 private 이다. `read:packages`
 | Secret | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | S3 읽기 권한만 있는 IAM 사용자 |
 | Secret | `AWS_REGION` | 예: `ap-northeast-2` |
 | Secret | `RUNTIME_BUNDLE_S3_URI` | `s3://<버킷>/runtime_data` |
-| Secret | `DEPLOY_HOST` | **AI 인스턴스**의 퍼블릭 IP(Elastic IP) 또는 도메인 |
-| Secret | `DEPLOY_USER` | 예: `ubuntu` / `ec2-user` |
+| Secret | `DEPLOY_HOST` | `ai.yopalette.com` (Elastic IP 가 바뀌어도 도메인은 그대로) |
+| Secret | `DEPLOY_USER` | `ubuntu` |
 | Secret | `DEPLOY_SSH_KEY` | `YoPalAI.pem` **내용 전체**(`-----BEGIN` 줄 포함) |
-| Secret | `DEPLOY_AI_DIR` | 예: `/home/ubuntu/beautyai` |
+| Secret | `DEPLOY_AI_DIR` | `/home/ubuntu/BeautyAI_project` |
 | Secret | `GHCR_PULL_TOKEN` | `read:packages` PAT |
 
 ### BeautyWEB_project
@@ -77,18 +92,20 @@ AI 저장소가 private 이라 GHCR 패키지도 private 이다. `read:packages`
 | 종류 | 이름 | 값 |
 |---|---|---|
 | Variable | `DEPLOY_BRANCH` | `main` |
-| Secret | `DEPLOY_HOST` | **WEB 인스턴스**의 IP/도메인 (AI 와 다를 수 있다 — 아래 참고) |
-| Secret | `DEPLOY_USER` | 예: `ubuntu` / `ec2-user` |
-| Secret | `DEPLOY_SSH_KEY` | `YoPalette.pem` **내용 전체** |
-| Secret | `DEPLOY_WEB_DIR` | 예: `/home/ubuntu/beautyweb` |
+| Secret | `DEPLOY_HOST` | `www.yopalette.com` (**AI 와 다른 인스턴스다**) |
+| Secret | `DEPLOY_USER` | `ubuntu` |
+| Secret | `DEPLOY_SSH_KEY` | `YoPalette.pem` **내용 전체** (AI 와 다른 키) |
+| Secret | `DEPLOY_WEB_DIR` | `/home/ubuntu/BeautyWEB_project` |
 
-> **AI 와 WEB 은 서로 다른 인스턴스일 가능성이 높다.** 근거 둘:
-> `YoPalAI.pem` 과 `YoPalette.pem` 이 **서로 다른 키**이고, 두 스택의 Caddy 가 **둘 다
-> `80:80`·`443:443` 을 잡는다**(`docker-compose.prod.yml` / `docker-compose.aws.yml`).
-> 같은 호스트라면 나중에 뜨는 쪽이 포트 바인딩에 실패한다 — 자동배포가 조용히 깨지는 지점이다.
-> 각 저장소가 자기 시크릿을 쓰므로 **한 호스트든 두 호스트든 워크플로는 그대로 동작한다.**
-> 다만 한 호스트라면 Caddy 를 하나로 합치고(Caddyfile 병합) 다른 쪽 caddy 서비스를 빼야 한다.
-> `DEPLOY_READY_CHECKLIST.md` 는 Caddy 도입 **이전** 문서라 "같은 호스트" 라고 쓰여 있다 — 그대로 믿지 말 것.
+> **AI 와 WEB 은 서로 다른 EC2 인스턴스다**(2026-08-03 실측). `ai.yopalette.com` 과
+> `www.yopalette.com`/`jp.yopalette.com` 이 서로 다른 IP 로 해석되고, `YoPalAI.pem` 과
+> `YoPalette.pem` 도 서로 다른 키다. 두 스택의 Caddy 가 각자 `80:80`·`443:443` 을 잡으므로
+> 한 호스트에 몰 수도 없다.
+> `DEPLOY_READY_CHECKLIST.md` 의 "WEB and AI run on the same Docker host" 는 Caddy 도입
+> **이전** 서술이라 지금은 맞지 않는다 — 그대로 믿지 말 것.
+>
+> 참고: apex `yopalette.com` 에는 A 레코드가 없어서 WEB Caddyfile 의 apex 리다이렉트는
+> 현재 동작하지 않는다(Route 53 에 A 레코드를 추가하면 살아난다).
 
 > `environment: production` 을 쓰므로, Settings → Environments 에 `production` 을 만들어야
 > 시크릿이 주입된다. 여기에 **승인 규칙(Required reviewers)** 을 걸면 "수동 승인 후 배포"로

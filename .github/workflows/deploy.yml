@@ -143,8 +143,11 @@ jobs:
             echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
             # 이번에 배포할 태그를 별도 env 파일로 남긴다(다음 수동 재기동 때도 같은 태그가 뜬다).
             printf 'AI_BACKEND_IMAGE=%s\nAI_FRONTEND_IMAGE=%s\n' "$AI_BACKEND_IMAGE" "$AI_FRONTEND_IMAGE" > .env.images
-            # ⚠ -p beautyai_prod: 프로젝트명을 분리하지 않으면 같은 호스트의 개발 스택을 갈아친다.
-            C="docker compose -p beautyai_prod -f docker-compose.prod.yml --env-file .env.prod --env-file .env.images"
+            # ⚠ -p 는 **현재 돌고 있는 스택의 프로젝트명과 정확히 같아야** 한다.
+            #   서버 실측: com.docker.compose.project=beautyai_project (디렉터리명에서 유래).
+            #   다른 이름을 주면 기존 스택을 갱신하는 대신 **두 번째 스택**이 떠서, Caddy 가
+            #   80/443 을 이미 잡고 있으므로 새 스택이 뜨다 말고 서비스는 옛 버전 그대로 남는다.
+            C="docker compose -p beautyai_project -f docker-compose.prod.yml --env-file .env.prod --env-file .env.images"
             $C pull backend frontend
             $C up -d --no-build
             $C ps
@@ -161,7 +164,7 @@ jobs:
             # ⚠ 반드시 배포 디렉터리에서 실행한다. compose 의 상대경로(./Caddyfile 등)와
             #   프로젝트명 판정이 CWD 에 걸려 있어, -f 로만 가리키면 다른 스택을 볼 수 있다.
             cd "${{ secrets.DEPLOY_AI_DIR }}"
-            C="docker compose -p beautyai_prod -f docker-compose.prod.yml --env-file .env.prod --env-file .env.images"
+            C="docker compose -p beautyai_project -f docker-compose.prod.yml --env-file .env.prod --env-file .env.images"
             # /ready 는 카탈로그·모델 워밍(≈20초)이 끝나야 200 이다. 넉넉히 기다린다.
             # ⚠ /health(생존)가 아니라 /ready(준비)여야 한다 — 워밍 전에 성공으로 오판하면
             #   프론트가 먼저 뜨고 첫 사용자가 30초를 기다린다.
