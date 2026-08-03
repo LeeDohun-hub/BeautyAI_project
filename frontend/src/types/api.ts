@@ -220,6 +220,14 @@ export type VirtualSurgeryRecommendation = {
   selected?: boolean;
 };
 
+/** 미용 추천보다 **먼저** 보여야 하는 안내. 얼굴 사진에 진료가 필요한 소견이 보일 때 채워진다. */
+export type MedicalReferral = {
+  urgent: boolean;
+  label: string;
+  confidence: number;
+  message: string;
+};
+
 export type VirtualSurgeryResponse = {
   detected: boolean;
   message: string;
@@ -229,6 +237,7 @@ export type VirtualSurgeryResponse = {
   recommendations: VirtualSurgeryRecommendation[];
   metrics: Record<string, unknown>;
   disclaimer: string;
+  referral?: MedicalReferral | null;
 };
 
 export type ProductColumn = {

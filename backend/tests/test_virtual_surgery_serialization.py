@@ -173,3 +173,54 @@ def test_card_presets_are_distinct():
         key = (tuning["face_line"] // 10, tuning["jaw_balance"] // 10)
         assert key not in seen, f"{preset['id']} 의 얼굴선 프리셋이 다른 카드와 겹친다"
         seen.add(key)
+
+
+# ── 질환 선별 게이트 (설계 검토 §4, 2026-08-03) ────────────────────────────────
+# derma_tier1_gate.pt 는 바디 분석에만 쓰이고 성형 플로우엔 연결돼 있지 않았다.
+# 미용 목적 사진이라도 진료가 필요한 소견이 보이면 그쪽을 먼저 알려야 한다.
+
+def test_referral_is_empty_when_model_unavailable(monkeypatch):
+    """선별 모델이 배포에 없어도 성형 기능 자체는 계속 돌아야 한다."""
+    import app.services.virtual_surgery_simulator as vs
+
+    class _Analyzer:
+        @staticmethod
+        def analyze(_):
+            return {"model_available": False, "urgent": False}
+
+    monkeypatch.setattr("app.services.dermatology_analyzer.DermatologyAnalyzer", _Analyzer)
+    out = vs._screen_for_referral(b"x")
+    assert out["urgent"] is False and out["message"] == ""
+
+
+def test_referral_survives_analyzer_crash(monkeypatch):
+    """선별이 터져도 미용 추천을 막지 않는다(안내는 보조 정보다)."""
+    import app.services.virtual_surgery_simulator as vs
+
+    class _Boom:
+        @staticmethod
+        def analyze(_):
+            raise RuntimeError("model blew up")
+
+    monkeypatch.setattr("app.services.dermatology_analyzer.DermatologyAnalyzer", _Boom)
+    assert vs._screen_for_referral(b"x")["urgent"] is False
+
+
+def test_referral_reports_urgent_finding(monkeypatch):
+    import app.services.virtual_surgery_simulator as vs
+
+    class _Analyzer:
+        @staticmethod
+        def analyze(_):
+            return {
+                "model_available": True, "urgent": True,
+                "tier1_label": "urgent_referral", "tier1_confidence": 91.2,
+            }
+
+    monkeypatch.setattr("app.services.dermatology_analyzer.DermatologyAnalyzer", _Analyzer)
+    out = vs._screen_for_referral(b"x")
+    assert out["urgent"] is True
+    assert out["confidence"] == 91.2
+    # 진단이 아니라 선별임을 문구가 말해야 한다.
+    assert "진단이 아니라" in out["message"]
+    assert "전문의" in out["message"]

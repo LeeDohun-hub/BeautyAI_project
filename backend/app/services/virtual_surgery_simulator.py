@@ -208,6 +208,36 @@ def _prioritize(recs: list[dict], concerns: list[str] | None) -> list[dict]:
     return sorted(recs, key=lambda rec: order.get(rec.get("category", ""), len(order) + 1))
 
 
+def _screen_for_referral(image_bytes: bytes) -> dict:
+    """미용 추천 **전에** 질환 소견을 선별한다(설계안 §10 안전장치).
+
+    미용 목적으로 올린 사진이라도 진료가 필요한 소견이 보이면 그쪽을 먼저 알리는 게 맞다.
+    자산은 이미 있었다 — `derma_tier1_gate.pt` 는 바디 분석에서만 쓰이고 성형 플로우엔
+    연결돼 있지 않았다(설계 검토 2026-08-03).
+
+    ⚠ 추천을 **막지는 않는다**. 이건 진단이 아니라 선별이고, 오탐으로 기능을 잠그면
+    사용자가 안내 자체를 무시하게 된다. 정보를 더해 사용자가 판단하게 한다.
+    ⚠ Tier1(악성 recall 89%)만 신뢰한다 — Tier2 의 malignant 는 9지선다라 게이트로 쓰면
+    과잉 오탐이 난다(dermatology_analyzer 주석과 같은 이유).
+    """
+    try:
+        from app.services.dermatology_analyzer import SCREENING_NOTE, DermatologyAnalyzer
+
+        result = DermatologyAnalyzer().analyze(image_bytes)
+    except Exception:
+        # 선별 모델이 배포에 없거나 실패해도 성형 기능 자체는 계속 돌아야 한다.
+        return {"urgent": False, "label": "", "confidence": 0.0, "message": ""}
+
+    if not result.get("model_available") or not result.get("urgent"):
+        return {"urgent": False, "label": "", "confidence": 0.0, "message": ""}
+    return {
+        "urgent": True,
+        "label": str(result.get("tier1_label") or ""),
+        "confidence": float(result.get("tier1_confidence") or 0.0),
+        "message": "사진에서 진료가 필요할 수 있는 소견이 보입니다. 미용 시술보다 피부과 전문의 진료를 먼저 권합니다. " + SCREENING_NOTE,
+    }
+
+
 def _detect(rgb: np.ndarray):
     """Face Mesh 1회 실행. **가장 비싼 단계**라, 카드 여러 장을 만들 때 이걸 재사용한다."""
     import mediapipe as mp
@@ -365,6 +395,11 @@ def _recommendations(face_result: dict, blemish_count: int) -> list[dict]:
         })
 
     recs.append({
+        # ⚠ 여기서 모공/주름/색소를 나눠 말하지 않는다. 피부 회귀기(skin_model.TARGETS)는
+        #   6채널로 보이지만 실측상 6개를 구분하지 못한다(라벨이 같아 pore≈wrinkle, 출력
+        #   채널 상관 0.95+). 서비스는 이미 3그룹 표시로 낮춰 쓰고 있다. 성형 리포트에서만
+        #   세분해 말하면 모델이 못 주는 해상도를 약속하는 셈이라, 이 카드는 '사진에서 눈에
+        #   띄는 점·잡티' 라는 **이미지 기반 후보**로만 다룬다(설계 검토 §3).
         "title": "점·잡티 제거 후보",
         "category": "blemish",
         "score": min(92, 58 + blemish_count * 6),
@@ -422,6 +457,7 @@ def simulate(
 
     face_result = analyze_face_shape(image_bytes)
     recommendations = _prioritize(_recommendations(face_result, blemish_count), concerns)
+    referral = _screen_for_referral(image_bytes)
     x1, y1, x2, y2 = _face_bounds(face_pts, w, h)
 
     # 잡티 보정과 코 하이라이트는 각도와 무관하므로 계속 적용된다. 그래서 '분석은 됐지만
@@ -452,4 +488,5 @@ def simulate(
             "frontal_factor": round(frontal, 2),
         },
         "disclaimer": "비의료 참고용 가상 미용 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.",
+        "referral": referral,
     }

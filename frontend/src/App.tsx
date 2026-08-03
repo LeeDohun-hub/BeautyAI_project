@@ -4767,7 +4767,17 @@ export default function App() {
                   </Grid>
                 ))}
               </Grid>
+              {/* 진료 안내는 미용 고지보다 **위**에 둔다. 아래에 묻히면 못 본다. */}
+              {virtualSurgeryResult?.referral?.urgent && (
+                <Alert severity="warning" sx={{ mt: 2 }}>{virtualSurgeryResult.referral.message}</Alert>
+              )}
               <Alert severity="info" sx={{ mt: 2 }}>{virtualSurgeryResult?.disclaimer || t('비의료 참고용 가상 성형 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.')}</Alert>
+              {/* 한국 의료법 제56조(의료광고)·일본 医療広告ガイドライン 은 비포/애프터 이미지를
+                  별도로 규제한다. AI 미리보기가 정확히 그 형태라, 성격을 명시해 둔다.
+                  ⚠ 이 문구로 규제를 만족한다고 단정할 수 없다 — 법무 확인이 필요하다(설계 검토 §6). */}
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                {t('AI 미리보기는 사진을 참고용으로 변형한 이미지이며, 시술 전후를 비교한 사진이 아닙니다. 특정 의료기관·시술을 광고하지 않습니다.')}
+              </Typography>
             </Paper>
           </Box>
         </Box>

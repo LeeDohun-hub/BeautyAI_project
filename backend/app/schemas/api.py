@@ -173,6 +173,19 @@ class VirtualSurgeryPreviewCardsResponse(BaseModel):
     cards: list[VirtualSurgeryPreviewCard] = Field(default_factory=list)
 
 
+class MedicalReferral(BaseModel):
+    """미용 추천보다 **먼저** 나가야 하는 안내. 얼굴 사진에 질환 소견이 보일 때 채워진다.
+
+    미용 목적으로 올린 사진이라도, 진료가 필요한 소견이 보이면 그쪽을 먼저 알리는 게 맞다.
+    진단이 아니라 선별이며, 미용 추천을 막지는 않는다(사용자가 판단할 정보를 더할 뿐).
+    """
+
+    urgent: bool = False
+    label: str = ""
+    confidence: float = 0.0
+    message: str = ""
+
+
 class VirtualSurgeryResponse(BaseModel):
     detected: bool
     message: str
@@ -182,6 +195,7 @@ class VirtualSurgeryResponse(BaseModel):
     recommendations: list[VirtualSurgeryRecommendation] = Field(default_factory=list)
     metrics: dict[str, object] = Field(default_factory=dict)
     disclaimer: str
+    referral: MedicalReferral | None = None
 
 
 class RecommendationRequest(BaseModel):
