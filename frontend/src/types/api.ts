@@ -299,3 +299,21 @@ export type AnalyzeNailDesignResponse = {
   recommended_palette?: NailShade[];
   note: string;
 };
+
+/** 카드별 '내 얼굴 적용' 미리보기. 프리셋은 백엔드가 단일 출처다. */
+export type VirtualSurgeryPreviewCard = {
+  id: string;
+  title: string;
+  summary: string;
+  preview_image: string;
+};
+
+export type VirtualSurgeryPreviewCardsResponse = {
+  detected: boolean;
+  message: string;
+  original_image: string;
+  cards: VirtualSurgeryPreviewCard[];
+};
+
+/** 변화 강도. 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다. */
+export type VirtualSurgeryIntensity = 'natural' | 'balanced' | 'defined';

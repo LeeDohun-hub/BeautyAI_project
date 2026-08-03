@@ -40,10 +40,11 @@ import {
   SlidersHorizontal,
   Trash2,
   X,
+  Loader2,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, recommend, setSessionToken, simulateVirtualSurgery } from './api/client';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, setSessionToken, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
-import type { AnalysisMode, DetectedNail, NailShade, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning } from './types/api';
+import type { AnalysisMode, DetectedNail, NailShade, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
 // 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
@@ -1319,6 +1320,11 @@ export default function App() {
       return { ...prev, [key]: [...current, option] };
     });
   const [virtualSurgeryTarget, setVirtualSurgeryTarget] = useState('oval');
+  // 카드별 '내 얼굴 적용' 미리보기. 예전 카드는 일러스트라 고르고 나서야 결과를 봤다.
+  const [surgeryCards, setSurgeryCards] = useState<VirtualSurgeryPreviewCard[]>([]);
+  const [surgeryCardsLoading, setSurgeryCardsLoading] = useState(false);
+  // 변화 강도 — 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다.
+  const [surgeryIntensity, setSurgeryIntensity] = useState<VirtualSurgeryIntensity>('balanced');
   // 네일 디자인 분석(리트리벌). 인덱스·모델이 배포에 없으면 결과의 feature_available 이 false 로 온다.
   const [nailPreview, setNailPreview] = useState<string>('');
   const [nailDragOver, setNailDragOver] = useState(false);
@@ -1669,6 +1675,21 @@ export default function App() {
       setError('가상 성형 추천을 생성하지 못했습니다. 정면 얼굴 사진과 밝은 조명의 이미지를 다시 선택해 주세요.');
     } finally {
       setVirtualSurgeryLoading(false);
+    }
+  }
+
+  /** 카드 4장의 '내 얼굴 적용' 미리보기를 받아온다. 서버가 얼굴 탐지를 1회만 하므로 빠르다. */
+  async function loadSurgeryCards(intensity: VirtualSurgeryIntensity) {
+    if (!virtualSurgeryFile) return;
+    setSurgeryCardsLoading(true);
+    try {
+      const res = await previewVirtualSurgeryCards(virtualSurgeryFile, intensity);
+      setSurgeryCards(res.detected ? res.cards : []);
+    } catch {
+      // 미리보기는 보조 정보다 — 실패해도 카드 선택 자체는 계속할 수 있어야 한다.
+      setSurgeryCards([]);
+    } finally {
+      setSurgeryCardsLoading(false);
     }
   }
 
@@ -4333,7 +4354,10 @@ export default function App() {
   }
 
   function renderVirtualSurgeryFlowPage() {
-    const flowSteps = ['개인정보 입력', 'AI 성형 분석', '얼굴형 분석결과', '개선 얼굴형 선택', '비율 조절', '결과지 출력'];
+    // '비율 조절' 단계를 뺐다(2026-08-03). 슬라이더 4개 중 2개는 내부에서 합산돼 자유도가 1개였고,
+    // '코 라인 62%' 같은 숫자는 의학적 의미가 없는데 결과지에 실려 수술 수치로 읽힌다.
+    // 강도는 카드 화면의 3단계(자연스럽게/적당히/또렷하게)가 대신한다.
+    const flowSteps = ['개인정보 입력', 'AI 성형 분석', '얼굴형 분석결과', '개선 얼굴형 선택', '결과지 출력'];
     const targetCards = [
       {
         id: 'oval',
@@ -4396,8 +4420,16 @@ export default function App() {
       : virtualSurgeryStep === 1 ? Boolean(virtualSurgeryResult?.detected)
       : virtualSurgeryStep === 2 ? Boolean(virtualSurgeryResult?.detected)
       : virtualSurgeryStep === 3 ? Boolean(virtualSurgeryTarget)
-      : virtualSurgeryStep === 4 ? Boolean(virtualSurgeryResult?.detected)
       : true;
+
+// 카드 화면(3단계)에 들어올 때 미리보기를 한 번 받아온다. 사진이 없으면 아무 일도 안 한다.
+    // 강도를 바꾸면 그 버튼이 다시 부른다.
+    useEffect(() => {
+      if (virtualSurgeryStep === 3 && virtualSurgeryFile && !surgeryCards.length && !surgeryCardsLoading) {
+        void loadSurgeryCards(surgeryIntensity);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [virtualSurgeryStep, virtualSurgeryFile]);
 
     const goNextVirtualStep = () => setVirtualSurgeryStep((step) => Math.min(step + 1, flowSteps.length - 1));
     const goPrevVirtualStep = () => setVirtualSurgeryStep((step) => Math.max(step - 1, 0));
@@ -4625,69 +4657,69 @@ export default function App() {
         return (
           <Paper elevation={0} className="virtual-upload-panel">
             <Typography variant="h5" fontWeight={900}>{t('원하는 개선된 얼굴형 카드 선택')}</Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.5 }}>{t('부위별 슬라이더보다 먼저 목표 얼굴형을 고르면 추천 방향이 더 직관적입니다.')}</Typography>
-            <Grid container spacing={2} sx={{ mt: 1 }}>
-              {targetCards.map((card) => (
-                <Grid item xs={12} sm={6} md={3} key={card.id}>
-                  <Paper
-                    elevation={0}
-                    className={`virtual-target-card${virtualSurgeryTarget === card.id ? ' selected' : ''}`}
-                    onClick={() => {
-                      setVirtualSurgeryTarget(card.id);
-                      setVirtualSurgeryTuning(card.tuning);
-                    }}
-                  >
-                    <Box className={`virtual-target-face ${card.id}`} />
-                    <Typography variant="h6" fontWeight={900}>{t(card.title)}</Typography>
-                    <Typography variant="body2" color="text.secondary">{t(card.copy)}</Typography>
-                  </Paper>
-                </Grid>
+            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+              {t('각 카드를 내 사진에 적용한 미리보기입니다. 참고용이며 실제 결과를 보장하지 않습니다.')}
+            </Typography>
+
+            {/* 변화 강도 — 예전 '비율 조절' 단계의 슬라이더를 대신한다. 숫자(%)를 없앤 이유는
+                의학적 의미가 없는 워프 강도가 '62%' 처럼 수술 수치로 읽히기 때문이다. */}
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
+              <Typography fontWeight={900}>{t('변화 강도')}</Typography>
+              {([
+                ['natural', '자연스럽게'],
+                ['balanced', '적당히 변화'],
+                ['defined', '또렷하게'],
+              ] as const).map(([value, label]) => (
+                <Button
+                  key={value}
+                  size="small"
+                  variant={surgeryIntensity === value ? 'contained' : 'outlined'}
+                  disabled={surgeryCardsLoading}
+                  onClick={() => {
+                    setSurgeryIntensity(value);
+                    void loadSurgeryCards(value);
+                  }}
+                >
+                  {t(label)}
+                </Button>
               ))}
+              {surgeryCardsLoading && <Loader2 size={18} className="spin" />}
+            </Stack>
+
+            <Grid container spacing={2} sx={{ mt: 1 }}>
+              {targetCards.map((card) => {
+                const preview = surgeryCards.find((item) => item.id === card.id);
+                return (
+                  <Grid item xs={12} sm={6} md={3} key={card.id}>
+                    <Paper
+                      elevation={0}
+                      className={`virtual-target-card${virtualSurgeryTarget === card.id ? ' selected' : ''}`}
+                      onClick={() => {
+                        setVirtualSurgeryTarget(card.id);
+                        setVirtualSurgeryTuning(card.tuning);
+                      }}
+                    >
+                      {/* 미리보기가 오면 실제 얼굴을, 아직이면 기존 일러스트를 보여준다.
+                          실패해도 카드 선택 자체는 계속돼야 하므로 폴백을 남긴다. */}
+                      {preview ? (
+                        <Box
+                          component="img"
+                          src={preview.preview_image}
+                          alt={t(card.title)}
+                          className="virtual-target-preview"
+                          sx={{ width: '100%', borderRadius: 2, display: 'block', aspectRatio: '1 / 1', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <Box className={`virtual-target-face ${card.id}`} />
+                      )}
+                      <Typography variant="h6" fontWeight={900}>{t(card.title)}</Typography>
+                      <Typography variant="body2" color="text.secondary">{t(card.copy)}</Typography>
+                    </Paper>
+                  </Grid>
+                );
+              })}
             </Grid>
           </Paper>
-        );
-      }
-
-      if (virtualSurgeryStep === 4) {
-        return (
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={7}>
-              <Paper elevation={0} className="virtual-preview-panel">{beforeAfter}</Paper>
-            </Grid>
-            <Grid item xs={12} md={5}>
-              <Paper elevation={0} className="virtual-control-panel">
-                <Stack spacing={2.25}>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <Box className="module-icon"><SlidersHorizontal size={22} /></Box>
-                    <Box>
-                      <Typography variant="h6" fontWeight={900}>{t('비율, 게이지 퍼센티지 조절')}</Typography>
-                      <Typography variant="body2" color="text.secondary">{t(`선택한 목표: ${selectedTarget.title}`)}</Typography>
-                    </Box>
-                  </Stack>
-                  {tuningItems.map((item) => (
-                    <Box key={item.key}>
-                      <Stack direction="row" justifyContent="space-between" spacing={1}>
-                        <Typography fontWeight={800}>{t(item.label)}</Typography>
-                        <Typography color="primary" fontWeight={900}>{virtualSurgeryTuning[item.key]}%</Typography>
-                      </Stack>
-                      <Slider
-                        size="small"
-                        value={virtualSurgeryTuning[item.key]}
-                        min={0}
-                        max={100}
-                        onChange={(_, value) => setVirtualSurgeryTuning((prev) => ({ ...prev, [item.key]: value as number }))}
-                      />
-                      <Typography variant="caption" color="text.secondary">{t(item.helper)}</Typography>
-                    </Box>
-                  ))}
-                  <Button variant="contained" startIcon={<RefreshCcw size={18} />} disabled={!virtualSurgeryFile || virtualSurgeryLoading} onClick={() => void rerunVirtualSurgery()}>
-                    {t('현재 비율로 다시 생성')}
-                  </Button>
-                  {virtualSurgeryLoading && <LinearProgress />}
-                </Stack>
-              </Paper>
-            </Grid>
-          </Grid>
         );
       }
 
@@ -4712,14 +4744,13 @@ export default function App() {
                       <Typography variant="h6" fontWeight={900}>{t(selectedTarget.title)}</Typography>
                       <Typography color="text.secondary">{t(selectedTarget.copy)}</Typography>
                     </Paper>
+                    {/* 결과지에서 '조절 퍼센티지'를 뺐다. 의학적 의미가 없는 워프 강도인데, 병원에
+                        들고 가면 '62% 해주세요'가 된다. 대신 고른 강도만 말로 적는다. */}
                     <Paper elevation={0} className="virtual-report-summary">
-                      <Typography fontWeight={900}>{t('조절 퍼센티지')}</Typography>
-                      {tuningItems.map((item) => (
-                        <Stack key={item.key} direction="row" justifyContent="space-between">
-                          <Typography variant="body2">{t(item.label)}</Typography>
-                          <Typography variant="body2" fontWeight={900}>{virtualSurgeryTuning[item.key]}%</Typography>
-                        </Stack>
-                      ))}
+                      <Typography fontWeight={900}>{t('변화 강도')}</Typography>
+                      <Typography color="text.secondary">
+                        {t(surgeryIntensity === 'natural' ? '자연스럽게' : surgeryIntensity === 'defined' ? '또렷하게' : '적당히 변화')}
+                      </Typography>
                     </Paper>
                   </Stack>
                 </Grid>

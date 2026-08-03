@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning } from '../types/api';
+import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryTuning } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -187,5 +187,23 @@ export async function chat(message: string, scores?: SkinScores, survey?: Survey
 
 export async function getHistory(): Promise<HistoryItem[]> {
   const { data } = await api.get<HistoryItem[]>('/api/history');
+  return data;
+}
+
+/**
+ * 카드별 미리보기. 서버가 Face Mesh 를 1회만 돌리고 워프만 카드 수만큼 반복하므로
+ * 카드 4장이 단일 시뮬레이션보다 오히려 빠르다(실측 1.07s vs 3.74s).
+ */
+export async function previewVirtualSurgeryCards(
+  file: File,
+  intensity: VirtualSurgeryIntensity = 'balanced',
+): Promise<VirtualSurgeryPreviewCardsResponse> {
+  const form = new FormData();
+  form.append('image', file);
+  form.append('intensity', intensity);
+  const { data } = await api.post<VirtualSurgeryPreviewCardsResponse>(
+    '/api/virtual-surgery/preview-cards',
+    form,
+  );
   return data;
 }
