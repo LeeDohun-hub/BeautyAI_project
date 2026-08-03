@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   Box,
@@ -16,7 +16,7 @@ import {
   MenuItem,
   Paper,
   Select,
-  Slider,
+
   Stack,
   Step,
   StepLabel,
@@ -37,7 +37,7 @@ import {
   Send,
   ScanFace,
   Sparkles,
-  SlidersHorizontal,
+
   Trash2,
   X,
   Loader2,
@@ -4128,238 +4128,6 @@ export default function App() {
           </Stack>
         )}
       </Paper>
-    );
-  }
-
-  function renderVirtualSurgeryPage() {
-    const tuningItems = [
-      { key: 'faceLine', label: '얼굴 프레임', helper: '광대와 얼굴 폭을 자연스럽게 정리' },
-      { key: 'jawBalance', label: '턱 밸런스', helper: '하관 길이와 턱끝 인상을 부드럽게 조정' },
-      { key: 'noseContour', label: '코 라인', helper: '콧대와 코끝의 입체감을 과하지 않게 제안' },
-      { key: 'blemishCare', label: '점·잡티 제거', helper: '클릭 제거형 피부 보정 후보로 분리' },
-    ] as const;
-
-    const recommendationCards = [
-      ['01', '얼굴형 균형', '얼굴 폭 대비 하관 비율을 먼저 확인하고, 과한 축소보다 윤곽 정리 중심으로 추천합니다.'],
-      ['02', '포인트 보정', '점·잡티처럼 되돌릴 수 있는 보정부터 보여주고, 시술성 변화는 참고 단계로 분리합니다.'],
-      ['03', '자연스러움 점수', '변화 강도가 올라갈수록 원래 인상과의 차이를 표시해 소비자가 직접 조절하게 합니다.'],
-    ];
-
-    const previewStyle = {
-      '--face-line': `${virtualSurgeryTuning.faceLine}%`,
-      '--jaw-balance': `${virtualSurgeryTuning.jawBalance}%`,
-      '--nose-contour': `${virtualSurgeryTuning.noseContour}%`,
-      '--blemish-care': `${virtualSurgeryTuning.blemishCare}%`,
-    } as CSSProperties;
-    const displayedRecommendationCards = virtualSurgeryResult?.recommendations.length
-      ? virtualSurgeryResult.recommendations.map((item, index) => [
-          String(index + 1).padStart(2, '0'),
-          item.title,
-          item.summary,
-          item.score,
-        ] as const)
-      : recommendationCards.map(([no, title, copy]) => [no, title, copy, null] as const);
-
-    return (
-      <Box className="app-shell">
-        <AppLangToggle authUser={authUser} />
-        <Container maxWidth="lg" sx={{ py: { xs: 2, md: 4 } }}>
-          <Stack spacing={3}>
-            <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }} spacing={2}>
-              <Box>
-                <Chip label="Beauty Plan Lab" color="primary" variant="outlined" sx={{ mb: 1 }} />
-                <Typography variant="h4" fontWeight={900}>{t('가상 성형 추천 시스템')}</Typography>
-                <Typography color="text.secondary">
-                  {t('사진을 올리기 전에도 추천 흐름을 이해할 수 있도록, 얼굴 비율 분석·자연스러운 변화 강도·점 제거 후보를 한 화면에서 보여줍니다.')}
-                </Typography>
-              </Box>
-              <Button startIcon={<ArrowLeft size={16} />} onClick={goHome}>{t('홈으로')}</Button>
-            </Stack>
-
-            <Paper elevation={0} className="virtual-upload-panel">
-              <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} md={5}>
-                  <Box
-                    component="label"
-                    className={`virtual-upload-drop${virtualSurgeryDragOver ? ' is-over' : ''}`}
-                    onDragOver={(event: React.DragEvent) => { event.preventDefault(); setVirtualSurgeryDragOver(true); }}
-                    onDragLeave={() => setVirtualSurgeryDragOver(false)}
-                    onDrop={(event: React.DragEvent) => {
-                      event.preventDefault();
-                      setVirtualSurgeryDragOver(false);
-                      const file = event.dataTransfer.files?.[0];
-                      if (file) void handleVirtualSurgeryUpload(file);
-                    }}
-                  >
-                    {virtualSurgeryPreview ? (
-                      <img src={virtualSurgeryPreview} alt={t('가상 성형 추천에 사용할 얼굴 사진')} />
-                    ) : (
-                      <Stack alignItems="center" spacing={1.2} sx={{ textAlign: 'center', px: 2 }}>
-                        <Box className="virtual-upload-icon"><ImagePlus size={30} /></Box>
-                        <Typography variant="h6" fontWeight={900}>{t('얼굴 사진 업로드')}</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {t('정면 얼굴과 밝은 조명의 JPG·PNG 사진을 권장합니다.')}
-                        </Typography>
-                      </Stack>
-                    )}
-                    <input
-                      hidden
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) void handleVirtualSurgeryUpload(file);
-                        event.target.value = '';
-                      }}
-                    />
-                  </Box>
-                </Grid>
-                <Grid item xs={12} md={7}>
-                  <Stack spacing={1.5}>
-                    <Typography variant="h6" fontWeight={900}>{t('내 얼굴 기준 추천 생성')}</Typography>
-                    <Typography color="text.secondary">
-                      {t('업로드하면 얼굴형 지표, 자연스러움 점수, 점·잡티 후보와 전후 미리보기를 생성합니다.')}
-                    </Typography>
-                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                      <Button
-                        variant="contained"
-                        component="label"
-                        startIcon={<ImagePlus size={18} />}
-                        disabled={virtualSurgeryLoading}
-                      >
-                        {virtualSurgeryPreview ? t('다른 사진 선택') : t('사진 선택')}
-                        <input
-                          hidden
-                          type="file"
-                          accept="image/*"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (file) void handleVirtualSurgeryUpload(file);
-                            event.target.value = '';
-                          }}
-                        />
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        startIcon={<RefreshCcw size={18} />}
-                        disabled={!virtualSurgeryFile || virtualSurgeryLoading}
-                        onClick={() => void rerunVirtualSurgery()}
-                      >
-                        {t('현재 강도로 다시 생성')}
-                      </Button>
-                    </Stack>
-                    {virtualSurgeryLoading && <LinearProgress />}
-                    {virtualSurgeryResult && (
-                      <Alert severity={virtualSurgeryResult.detected ? 'success' : 'warning'}>
-                        {virtualSurgeryResult.message}
-                      </Alert>
-                    )}
-                  </Stack>
-                </Grid>
-              </Grid>
-            </Paper>
-
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={7}>
-                <Paper elevation={0} className="virtual-preview-panel">
-                  {virtualSurgeryResult?.detected ? (
-                    <Grid container spacing={1.5}>
-                      <Grid item xs={12} sm={6}>
-                        <Box className="virtual-result-image">
-                          <span>Before</span>
-                          <img src={virtualSurgeryResult.original_image} alt={t('원본 얼굴 사진')} />
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} sm={6}>
-                        <Box className="virtual-result-image">
-                          <span>Recommended</span>
-                          <img src={virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12}>
-                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                          {virtualSurgeryResult.face_shape?.shape && (
-                            <Chip label={virtualSurgeryResult.face_shape.shape} color="primary" variant="outlined" />
-                          )}
-                          <Chip label={`자연스러움 ${virtualSurgeryResult.metrics.naturalness_score ?? '-'}점`} variant="outlined" />
-                          <Chip label={`점·잡티 후보 ${virtualSurgeryResult.metrics.blemish_candidates ?? 0}개`} variant="outlined" />
-                        </Stack>
-                      </Grid>
-                    </Grid>
-                  ) : (
-                    <Box className="virtual-face-stage" style={previewStyle}>
-                      <Box className="virtual-before">
-                        <span>Before</span>
-                      </Box>
-                      <Box className="virtual-after">
-                        <span>Recommended</span>
-                      </Box>
-                      <Box className="virtual-face-outline">
-                        <Box className="virtual-eye virtual-eye-left" />
-                        <Box className="virtual-eye virtual-eye-right" />
-                        <Box className="virtual-nose" />
-                        <Box className="virtual-mouth" />
-                        <Box className="virtual-blemish one" />
-                        <Box className="virtual-blemish two" />
-                      </Box>
-                      <Box className="virtual-scan-line" />
-                    </Box>
-                  )}
-                </Paper>
-              </Grid>
-
-              <Grid item xs={12} md={5}>
-                <Paper elevation={0} className="virtual-control-panel">
-                  <Stack spacing={2.25}>
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Box className="module-icon"><SlidersHorizontal size={22} /></Box>
-                      <Box>
-                        <Typography variant="h6" fontWeight={900}>{t('추천 강도')}</Typography>
-                        <Typography variant="body2" color="text.secondary">{t('의료 판단이 아닌 비의료 미용 시뮬레이션 기준입니다.')}</Typography>
-                      </Box>
-                    </Stack>
-                    {tuningItems.map((item) => (
-                      <Box key={item.key}>
-                        <Stack direction="row" justifyContent="space-between" spacing={1}>
-                          <Typography fontWeight={800}>{t(item.label)}</Typography>
-                          <Typography color="primary" fontWeight={900}>{virtualSurgeryTuning[item.key]}%</Typography>
-                        </Stack>
-                        <Slider
-                          size="small"
-                          value={virtualSurgeryTuning[item.key]}
-                          min={0}
-                          max={100}
-                          onChange={(_, value) => setVirtualSurgeryTuning((prev) => ({ ...prev, [item.key]: value as number }))}
-                        />
-                        <Typography variant="caption" color="text.secondary">{t(item.helper)}</Typography>
-                      </Box>
-                    ))}
-                  </Stack>
-                </Paper>
-              </Grid>
-            </Grid>
-
-            <Grid container spacing={2}>
-              {displayedRecommendationCards.map(([no, title, copy, score]) => (
-                <Grid item xs={12} md={4} key={no}>
-                  <Paper elevation={0} className="virtual-reco-card">
-                    <span className="virtual-reco-no">{no}</span>
-                    {score !== null && (
-                      <Chip label={`${score}점`} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
-                    )}
-                    <Typography variant="h6" fontWeight={900}>{t(title)}</Typography>
-                    <Typography color="text.secondary">{t(copy)}</Typography>
-                  </Paper>
-                </Grid>
-              ))}
-            </Grid>
-
-            <Alert severity="info">
-              {t('다음 단계에서는 얼굴 사진 업로드 후 기존 Face Mesh 분석을 연결해 사용자별 추천과 전후 비교 이미지를 생성할 수 있습니다.')}
-            </Alert>
-          </Stack>
-        </Container>
-      </Box>
     );
   }
 
