@@ -425,7 +425,24 @@ def amazon_jp_url(asin: str) -> str:
     return _AMAZON_JP + asin
 
 
-def match_for_region(brand: str, name: str, region: str) -> AmazonMatch | None:
+# 이미지에 쓸 때의 문턱. 버튼(_MIN_SCORE=0.5)보다 엄격하다 — **쿼리 라인 토큰이 전부**
+# 후보 타이틀에 있어야 한다.
+#
+# 왜 따로 두나: 링크는 틀려도 '같은 브랜드의 다른 상품 페이지'로 가서 사용자가 알아채지만,
+# 사진은 카드에 그대로 붙어 **다른 상품을 그 상품이라고 보여준다**. 오차의 성격이 다르다.
+#
+# 왜 하필 1.0 인가(육안 판정 9건 실측): 정탐/오탐이 점수 0.5·0.667 에서 **완전히 겹쳐**
+# 중간 문턱으로는 안 갈린다. 역커버리지·자카드·'제목 여분 토큰 수'도 전부 겹쳤다.
+# 오탐 최고가 0.667 이므로, 오탐을 0 으로 만들려면 1.0 을 요구하는 수밖에 없다.
+#   실측 오탐(1.0 에서 사라짐): 바닐라코 UV디펜스 선크림→Prime Primer Sun,
+#     에스쁘아 더브로우 카라→Brow Easy Shaping Pencil, 페리페라 오버블러틴트→Ink Matte Blur
+# 대가는 커버리지다(올영 국내몰 표본 300건: 5.3% → 2.0%). 사용자 결정:
+# "라인이 다르면 아예 이미지를 안 붙인다"(정확도 우선). KR 은 올리브영 이미지가 1순위라
+# 아마존은 올영이 못 채운 자리만 맡으므로 체감 손실은 이보다 작다.
+IMAGE_MIN_SCORE = 1.0
+
+
+def match_for_region(brand: str, name: str, region: str, min_score: float = _MIN_SCORE) -> AmazonMatch | None:
     """지역별 '이 상품의 아마존 카탈로그 매칭'(없으면 None).
 
     KR: 한글/일본어 상품명을 amazon_search_query 로 영문화 → US 카탈로그(영문 타이틀).
@@ -436,11 +453,11 @@ def match_for_region(brand: str, name: str, region: str) -> AmazonMatch | None:
     둘이 따로 매칭하면 버튼이 여는 상품과 카드 사진이 다른 상품이 될 수 있다.
     """
     if (region or "").strip().lower() == "jp":
-        return match_amazon(brand, name, region="jp")
+        return match_amazon(brand, name, min_score=min_score, region="jp")
     en_query = amazon_search_query(brand, name)
     if not en_query or not catalog_available():
         return None
-    return match_amazon(brand, en_query)
+    return match_amazon(brand, en_query, min_score=min_score)
 
 
 # 카드에 쓸 이미지 해상도. 카탈로그마다 크기 지시자가 제각각이라(Kaggle/크롤 `._AC_UL320_`,

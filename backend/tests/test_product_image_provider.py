@@ -158,7 +158,7 @@ def test_amazon_image_uses_button_match_and_card_size(monkeypatch):
     """카드 이미지는 아마존 **버튼과 같은 매칭**(match_for_region)의 사진을 쓴다."""
     seen: list[tuple[str, str, str]] = []
 
-    def _match(brand, name, region):
+    def _match(brand, name, region, **kw):
         seen.append((brand, name, region))
         return SimpleNamespace(asin="B0X", title="t", image_url=_AMAZON_IMG, score=1.0)
 
@@ -169,13 +169,13 @@ def test_amazon_image_uses_button_match_and_card_size(monkeypatch):
 
 
 def test_amazon_image_empty_when_no_match(monkeypatch):
-    monkeypatch.setattr(pip, "match_for_region", lambda brand, name, region: None)
+    monkeypatch.setattr(pip, "match_for_region", lambda brand, name, region, **kw: None)
     assert pip.amazon_image("CLIO", "CLIO Kill Cover Founwear Cushion") == ""
     # 매칭돼도 카탈로그 행에 이미지가 없으면(JP ESCI 행) 빈 값.
     monkeypatch.setattr(
         pip,
         "match_for_region",
-        lambda brand, name, region: SimpleNamespace(asin="B0X", title="t", image_url="", score=1.0),
+        lambda brand, name, region, **kw: SimpleNamespace(asin="B0X", title="t", image_url="", score=1.0),
     )
     assert pip.amazon_image("CLIO", "CLIO Kill Cover Founwear Cushion") == ""
 

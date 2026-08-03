@@ -26,7 +26,12 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.core.config import get_settings
-from app.services.amazon_catalog import match_for_region, product_form, sized_image_url
+from app.services.amazon_catalog import (
+    IMAGE_MIN_SCORE,
+    match_for_region,
+    product_form,
+    sized_image_url,
+)
 from app.services.oliveyoung_catalog import match_oliveyoung
 from app.services.oliveyoung_kr_search import match_kr_catalog
 # ⚠ 모듈 최상단에서 임포트한다(순환 없음 — platform_resolver 는 이 모듈을 임포트하지 않는다).
@@ -196,11 +201,16 @@ def _amazon_image(brand: str, name: str, region: str) -> str:
     매칭은 아마존 **버튼과 같은** `match_for_region` 을 쓴다 — 버튼이 여는 ASIN 의 사진이라
     '검색 1위 추측'보다 정확하고, 버튼과 사진이 서로 다른 상품일 수 없다.
 
+    ⚠ 단, 문턱은 버튼보다 **엄격하다**(IMAGE_MIN_SCORE). 링크가 틀리면 '같은 브랜드의 다른
+    상품 페이지'로 가서 사용자가 알아채지만, 사진은 카드에 붙어 **다른 상품을 그 상품이라고
+    보여준다**. 그래서 라인이 확실하지 않으면 이미지는 붙이지 않는다(사용자 결정 2026-08-03,
+    정확도 우선). 이때 버튼은 그대로 나오고 이미지만 다음 소스로 넘어간다.
+
     아마존 CDN 은 (1)다른 도메인 Referer 로도 200/JPEG 를 주고(핫링크 차단 없음),
     (2)ASIN 이 폐기(404)된 상품의 이미지도 계속 서빙한다 — 실측 확인. 그래서 죽은 링크
     문제와 무관하게 이미지 소스로 쓸 수 있다.
     """
-    match = match_for_region(matching_brand(brand, name), name, region)
+    match = match_for_region(matching_brand(brand, name), name, region, min_score=IMAGE_MIN_SCORE)
     if not match or not match.image_url:
         return ""
     return sized_image_url(match.image_url)

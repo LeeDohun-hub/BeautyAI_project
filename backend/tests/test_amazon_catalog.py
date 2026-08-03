@@ -317,3 +317,29 @@ def test_rare_token_gate_off_for_cross_language_catalog(monkeypatch, tmp_path):
     # 영문 쿼리의 라인 토큰(heartleaf/soothing/toner)은 이 카탈로그에 df 0~1 이라 희귀 판정이
     # 무의미하다 → 게이트가 꺼지고, 브랜드+제형(토너)으로 매칭돼야 한다.
     assert ac._rare_tokens(frozenset({"heartleaf", "soothing", "toner"}), "jp") == frozenset()
+
+
+def test_image_threshold_is_stricter_than_button(monkeypatch, tmp_path):
+    """이미지는 '라인이 확실할 때만' 붙인다(사용자 결정 2026-08-03, 정확도 우선).
+
+    링크가 틀리면 같은 브랜드의 다른 상품 페이지로 가서 사용자가 알아채지만, 사진은 카드에
+    붙어 **다른 상품을 그 상품이라고 보여준다**. 오차의 성격이 달라 문턱을 나눴다.
+
+    육안 판정 9건 실측에서 정탐/오탐 점수가 0.5·0.667 로 완전히 겹쳤고(역커버리지·자카드·
+    제목 여분 토큰도 마찬가지), 오탐 최고가 0.667 이라 1.0 을 요구할 수밖에 없었다.
+    """
+    from app.services.amazon_catalog import IMAGE_MIN_SCORE, _MIN_SCORE
+
+    assert IMAGE_MIN_SCORE > _MIN_SCORE
+    assert IMAGE_MIN_SCORE >= 1.0, "부분 일치를 허용하면 다른 라인 사진이 붙는다"
+
+    # 부분 일치 후보: 버튼(0.5)은 받고 이미지(1.0)는 거절해야 한다.
+    # 쿼리 라인 토큰 3개 중 2개만 타이틀에 있다 → 커버리지 0.667.
+    _use_manifest(monkeypatch, tmp_path, rows=[
+        ("B0PART", "peripera", "Peripera Ink Matte Blur Lip Tint High Pigment 4g", "4.5", "900",
+         "https://m.media-amazon.com/images/I/AAA.jpg"),
+    ])
+    partial = ac.match_amazon("peripera", "peripera glasting blur tint")
+    assert partial is not None and partial.score < 1.0, "이 표본은 부분 일치여야 의미가 있다"
+    assert ac.match_amazon("peripera", "peripera glasting blur tint",
+                           min_score=IMAGE_MIN_SCORE) is None

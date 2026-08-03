@@ -97,7 +97,7 @@ def test_rakuten_source_adds_amazon_jp_only_when_asin_matched(monkeypatch) -> No
     monkeypatch.setattr(
         pr.amazon_catalog,
         "match_amazon",
-        lambda brand, query, region="us": SimpleNamespace(asin="B0MATCHJP"),
+        lambda brand, query, region="us", **kw: SimpleNamespace(asin="B0MATCHJP"),
     )
     product = _product("rakuten")
 
@@ -134,7 +134,7 @@ def test_naver_source_adds_amazon_us_only_when_asin_matched(monkeypatch) -> None
     monkeypatch.setattr(
         pr.amazon_catalog,
         "match_amazon",
-        lambda brand, query, region="us": SimpleNamespace(asin="B0MATCHUS"),
+        lambda brand, query, region="us", **kw: SimpleNamespace(asin="B0MATCHUS"),
     )
     product = _product("naver", "https://search.shopping.naver.com/catalog/123")
 
@@ -206,7 +206,7 @@ def test_jp_amazon_does_not_reuse_us_catalog_asin(monkeypatch) -> None:
     monkeypatch.setattr(
         pr.amazon_catalog,
         "match_amazon",
-        lambda brand, query, region="us": None if region == "jp" else SimpleNamespace(asin="B07C9CPRQQ"),
+        lambda brand, query, region="us", **kw: None if region == "jp" else SimpleNamespace(asin="B07C9CPRQQ"),
     )
     product = _product("database", "")
     product.brand = "Bobbi Brown"
