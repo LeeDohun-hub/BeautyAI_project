@@ -327,6 +327,9 @@ def preview_cards(image_bytes: bytes, intensity: str = "balanced") -> dict:
         "message": message,
         "original_image": _to_data_url(rgb),
         "cards": cards,
+        # 카드 화면이 사진 업로드 직후에 오므로, 품질 경고를 여기서 보여줘야 사용자가
+        # 결과지까지 간 뒤에야 '다시 찍으세요' 를 듣는 일이 없다.
+        "photo_quality": assess_photo_quality(rgb, face_pts),
     }
 
 
@@ -355,6 +358,108 @@ def _frontal_factor(offset: float) -> float:
     if offset >= _FRONTAL_NONE:
         return 0.0
     return float((_FRONTAL_NONE - offset) / (_FRONTAL_NONE - _FRONTAL_FULL))
+
+
+# ── 사진 품질 게이트 ────────────────────────────────────────────────────────────
+# 문턱은 실측으로 잡았다(2026-08-04, docs/ 실사진 표본 + 인위적 열화본 대조).
+# 지어낸 숫자를 쓰면 정상 사진이 막히거나(사용자 이탈) 아무것도 안 걸린다.
+#
+#   지표                     정상 사진       열화본        문턱
+#   흐림(라플라시안 분산)    145~338        2.0          < 40
+#   밝기(얼굴 평균)          133~138        40           < 70
+#   과노출(>248 픽셀 비율)   0.000          0.767        > 0.15
+#   가림(피부중앙값 이탈)    0.086~0.150    0.373~0.651  > 0.28
+#   해상도(얼굴 폭 px)       678~836        —            < 250
+#
+# 해상도 문턱의 근거: 얼굴 폭을 단계적으로 줄이며 눈비율을 재보니 170~190px 에서
+# 원본 대비 최대 3.79% 어긋났고, 한 표본은 400px 아래에서 검출 자체가 실패했다.
+# `_recommendations` 가 eye>1.15 같은 문턱으로 분기하므로 3% 오차는 추천을 바꾼다.
+_QUALITY_BLUR_MIN = 40.0
+_QUALITY_DARK_MAX = 70.0
+_QUALITY_CLIPPED_MAX = 0.15
+_QUALITY_OCCLUSION_MAX = 0.28
+_QUALITY_FACE_WIDTH_MIN = 250
+
+
+def _face_region_stats(rgb: np.ndarray, face_pts: np.ndarray) -> dict[str, float]:
+    h, w = rgb.shape[:2]
+    # cv2.fillConvexPoly 는 int32 만 받는다. 실사용 경로(_points)는 이미 int32 지만,
+    # 이 함수는 밖에서도 부를 수 있으므로 여기서 맞춰 둔다 — dtype 때문에 죽는 건 함정이다.
+    face_pts = np.asarray(face_pts, dtype=np.int32)
+    x1, y1 = np.maximum(face_pts.min(axis=0).astype(int), 0)
+    x2 = min(int(face_pts[:, 0].max()), w - 1)
+    y2 = min(int(face_pts[:, 1].max()), h - 1)
+    crop = rgb[y1:y2, x1:x2]
+    if crop.size == 0 or crop.shape[0] < 5 or crop.shape[1] < 5:
+        return {}
+    gray = crop @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    # 라플라시안 분산 = 초점 지표. 흐리면 고주파가 사라져 분산이 급락한다(150 → 2).
+    lap = (
+        gray[:-2, 1:-1] + gray[1:-1, :-2] - 4 * gray[1:-1, 1:-1] + gray[1:-1, 2:] + gray[2:, 1:-1]
+    )
+
+    # 가림: 얼굴 오벌 **안쪽**만 본다. 사각 크롭을 쓰면 배경·머리카락이 섞여 오탐이 난다.
+    mask = _soft_mask((h, w), face_pts, 0) > 0.5
+    inside = rgb[mask].astype(np.float32)
+    occlusion = 0.0
+    if inside.shape[0] >= 100:
+        median = np.median(inside, axis=0)
+        # 손·마스크·선글라스는 피부 중앙값에서 채널합 110 이상 벌어진다. 조명 그라데이션은
+        # 완만해서 이 비율을 크게 올리지 않는다(정상 사진 실측 최대 0.150).
+        occlusion = float((np.abs(inside - median).sum(axis=1) > 110).mean())
+
+    return {
+        "blur": float(lap.var()),
+        "brightness": float(gray.mean()),
+        "clipped": float((gray > 248).mean()),
+        "occlusion": occlusion,
+        "face_width": float(face_pts[:, 0].max() - face_pts[:, 0].min()),
+    }
+
+
+def assess_photo_quality(rgb: np.ndarray, face_pts: np.ndarray) -> dict:
+    """사진 품질을 재서 문제를 목록으로 돌려준다.
+
+    ⚠ **막지 않는다.** 사진이 완벽하지 않아도 분석은 제공하고, '정확도가 떨어질 수 있다'를
+    알리기만 한다. 게이트가 결과를 안 주면 사용자는 이유를 모른 채 이탈한다 —
+    얼굴을 아예 못 찾은 경우만 기존대로 별도 처리한다.
+    """
+    stats = _face_region_stats(rgb, face_pts)
+    if not stats:
+        return {"ok": True, "issues": [], "metrics": {}}
+
+    issues: list[dict[str, str]] = []
+    if stats["face_width"] < _QUALITY_FACE_WIDTH_MIN:
+        issues.append({
+            "code": "small_face",
+            "message": "얼굴이 작게 나와 비율 측정이 부정확할 수 있습니다. 얼굴이 화면을 채우도록 가까이서 찍어 주세요.",
+        })
+    if stats["blur"] < _QUALITY_BLUR_MIN:
+        issues.append({
+            "code": "blurry",
+            "message": "사진이 흔들렸거나 초점이 맞지 않습니다. 다시 찍으면 더 정확합니다.",
+        })
+    if stats["brightness"] < _QUALITY_DARK_MAX:
+        issues.append({
+            "code": "dark",
+            "message": "사진이 어둡습니다. 창가나 밝은 조명 아래에서 찍어 주세요.",
+        })
+    if stats["clipped"] > _QUALITY_CLIPPED_MAX:
+        issues.append({
+            "code": "overexposed",
+            "message": "빛이 너무 강해 얼굴 일부가 하얗게 날아갔습니다. 직사광선을 피해 주세요.",
+        })
+    if stats["occlusion"] > _QUALITY_OCCLUSION_MAX:
+        issues.append({
+            "code": "occluded",
+            "message": "얼굴 일부가 가려진 것 같습니다. 머리카락·손·마스크·안경을 치우면 더 정확합니다.",
+        })
+
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "metrics": {key: round(value, 3) for key, value in stats.items()},
+    }
 
 
 def _recommendations(face_result: dict, blemish_count: int) -> list[dict]:
@@ -495,6 +600,7 @@ def simulate(
             "frontal_offset": round(offset, 3),
             "frontal_factor": round(frontal, 2),
         },
+        "photo_quality": assess_photo_quality(rgb, face_pts),
         "disclaimer": "비의료 참고용 가상 미용 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.",
         "referral": referral,
     }

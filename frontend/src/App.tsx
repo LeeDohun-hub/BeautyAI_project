@@ -50,7 +50,7 @@ import {
 } from 'lucide-react';
 import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, setSessionToken, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
-import type { AnalysisMode, DetectedNail, NailShade, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
+import type { AnalysisMode, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
 // 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
@@ -1273,6 +1273,8 @@ export default function App() {
   // 카드별 '내 얼굴 적용' 미리보기. 예전 카드는 일러스트라 고르고 나서야 결과를 봤다.
   const [surgeryCards, setSurgeryCards] = useState<VirtualSurgeryPreviewCard[]>([]);
   const [surgeryCardsLoading, setSurgeryCardsLoading] = useState(false);
+  // 사진 품질 경고. 카드 화면에서 보여줘야 결과지까지 간 뒤에 '다시 찍으세요'를 듣지 않는다.
+  const [photoQuality, setPhotoQuality] = useState<PhotoQuality | null>(null);
   // 변화 강도 — 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다.
   const [surgeryIntensity, setSurgeryIntensity] = useState<VirtualSurgeryIntensity>('balanced');
   // ⚠ 이 훅은 **컴포넌트 최상위**에 있어야 한다. 처음에 renderVirtualSurgeryFlowPage() 안에
@@ -1645,9 +1647,11 @@ export default function App() {
     try {
       const res = await previewVirtualSurgeryCards(virtualSurgeryFile, intensity);
       setSurgeryCards(res.detected ? res.cards : []);
+      setPhotoQuality(res.photo_quality ?? null);
     } catch {
       // 미리보기는 보조 정보다 — 실패해도 카드 선택 자체는 계속할 수 있어야 한다.
       setSurgeryCards([]);
+      setPhotoQuality(null);
     } finally {
       setSurgeryCardsLoading(false);
     }
@@ -4397,6 +4401,19 @@ export default function App() {
               ))}
               {surgeryCardsLoading && <Loader2 size={18} className="spin" />}
             </Stack>
+
+            {/* 사진 품질 경고 — 여기서 보여줘야 결과지까지 간 뒤에 '다시 찍으세요'를 듣지 않는다.
+                결과를 막지는 않는다. 카드는 그대로 고를 수 있고 정확도만 떨어진다고 알린다. */}
+            {photoQuality && !photoQuality.ok && photoQuality.issues.length > 0 && (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>
+                  {t('사진을 다시 찍으면 더 정확합니다')}
+                </Typography>
+                {photoQuality.issues.map((issue) => (
+                  <Typography key={issue.code} variant="body2">・{t(issue.message)}</Typography>
+                ))}
+              </Alert>
+            )}
 
             <Grid container spacing={2} sx={{ mt: 1 }}>
               {targetCards.map((card) => {

@@ -164,6 +164,23 @@ class VirtualSurgeryPreviewCard(BaseModel):
     preview_image: str
 
 
+class PhotoQualityIssue(BaseModel):
+    code: str
+    message: str
+
+
+class PhotoQuality(BaseModel):
+    """사진 품질 점검 결과.
+
+    ⚠ 결과를 **막지 않는다**. 문제가 있어도 분석은 그대로 주고 '정확도가 떨어질 수 있다'만
+    알린다 — 게이트가 결과를 안 주면 사용자는 이유를 모른 채 이탈한다.
+    """
+
+    ok: bool = True
+    issues: list[PhotoQualityIssue] = Field(default_factory=list)
+    metrics: dict[str, float] = Field(default_factory=dict)
+
+
 class VirtualSurgeryPreviewCardsResponse(BaseModel):
     """카드별 '내 얼굴 적용' 미리보기. 카드가 일러스트였을 때는 고르고 나서야 결과를 봤다."""
 
@@ -171,6 +188,7 @@ class VirtualSurgeryPreviewCardsResponse(BaseModel):
     message: str
     original_image: str
     cards: list[VirtualSurgeryPreviewCard] = Field(default_factory=list)
+    photo_quality: PhotoQuality | None = None
 
 
 class MedicalReferral(BaseModel):
@@ -196,6 +214,7 @@ class VirtualSurgeryResponse(BaseModel):
     metrics: dict[str, object] = Field(default_factory=dict)
     disclaimer: str
     referral: MedicalReferral | None = None
+    photo_quality: PhotoQuality | None = None
 
 
 class RecommendationRequest(BaseModel):

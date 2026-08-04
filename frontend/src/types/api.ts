@@ -228,6 +228,16 @@ export type MedicalReferral = {
   message: string;
 };
 
+/**
+ * 사진 품질 점검. **결과를 막지 않는다** — 문제가 있어도 분석은 그대로 오고,
+ * '정확도가 떨어질 수 있다'만 알린다.
+ */
+export type PhotoQuality = {
+  ok: boolean;
+  issues: { code: string; message: string }[];
+  metrics: Record<string, number>;
+};
+
 export type VirtualSurgeryResponse = {
   detected: boolean;
   message: string;
@@ -238,6 +248,7 @@ export type VirtualSurgeryResponse = {
   metrics: Record<string, unknown>;
   disclaimer: string;
   referral?: MedicalReferral | null;
+  photo_quality?: PhotoQuality | null;
 };
 
 export type ProductColumn = {
@@ -327,6 +338,7 @@ export type VirtualSurgeryPreviewCardsResponse = {
   message: string;
   original_image: string;
   cards: VirtualSurgeryPreviewCard[];
+  photo_quality?: PhotoQuality | null;
 };
 
 /** 변화 강도. 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다. */
