@@ -158,6 +158,76 @@ PROFILES: dict[tuple[str, str], PersonalColorProfile] = {
 _BLEND_FULL_MARKETS = {"kr", "jp", "kor", "jpn", "kor_kr", "asia"}
 
 
+# ── 촬영 조명 게이트 ───────────────────────────────────────────────────────────
+#
+# 왜 필요한가: 어두운 곳에서 찍은 사진은 **색 신호가 무의미하다.**
+# AI-Hub 분광측색계 대조 실측 — WB 성공 시 픽셀 b* 와 실측의 상관 r=0.64,
+# 실패 시 r=0.09. 그런데 예전에는 실패해도 색 가중치만 절반으로 낮춰 **답을 냈다.**
+# 사용자 제보(어두운 실내에서 촬영 → 결과가 자기 퍼스널컬러와 다름)가 정확히 이 경우다.
+#
+# 문턱 근거(2026-08-04 실측):
+#   AI-Hub 4조명 × 60장 = 240장
+#     5000lux 3200K   WB 100%  밝기 0.608~0.867
+#     5000lux 5600K   WB 100%  밝기 0.590~0.824
+#      500lux 3200K   WB   0%  밝기 0.196~0.303
+#      500lux 5600K   WB   0%  밝기 0.248~0.327
+#   → WB 성공/실패가 **조도로 완전히 갈린다**(색온도와 무관). 이 지표 하나가 사실상 판정이다.
+#
+#   실기기(폰) 실내 사진 12장  → 통과 75%, 밝기 0.495~0.592
+#     같은 사진을 60% 밝기로 낮추면 통과 0% (클럽 상황이 이 구간)
+#
+# ⚠ **밝기 상한은 두지 않는다.** 기존 안내 문턱(0.76)을 게이트로 쓰면 AI-Hub 좋은 조명
+#   (최대 0.867)이 막힌다. 과노출은 밝기 평균이 아니라 '하얗게 날아간 비율'로 봐야 한다.
+_GATE_BRIGHTNESS_MIN = 0.38
+# 과노출: 얼굴 픽셀이 거의 흰색이면 색 정보가 사라진다. AI-Hub 에는 이 구간이 없어
+# (5000lux 가 최대) 가상 성형 품질 게이트에서 실측한 값을 쓴다.
+_GATE_CLIPPED_MAX = 0.15
+
+
+class UnusablePhotoError(ValueError):
+    """조명 때문에 판정할 수 없는 사진. 메시지는 사용자에게 그대로 보여줄 안내다."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def usable_for_color(reading: dict) -> bool:
+    """이 한 장으로 퍼스널컬러를 판정해도 되는가.
+
+    ⚠ **AI-Hub 모델을 쓴 경우는 통과시킨다.** 그 모델은 조명 보정을 내장하도록 학습돼
+    (그 문제를 풀려고 만든 모델이다) 색 휴리스틱과 달리 WB 실패에 덜 취약하다.
+    여기서 막으면 모델을 쓰는 의미가 없어진다.
+    """
+    if reading.get("model_season_probs"):
+        return True
+    if not reading.get("white_balanced"):
+        return False
+    brightness = float(reading.get("brightness") or 0.0)
+    if brightness < _GATE_BRIGHTNESS_MIN:
+        return False
+    return float(reading.get("clipped") or 0.0) <= _GATE_CLIPPED_MAX
+
+
+def unusable_reason(readings: list[dict]) -> str:
+    """왜 못 쓰는지 + 어떻게 하면 되는지. 이유 없이 막으면 사용자는 같은 사진을 다시 올린다."""
+    if not readings:
+        return "사진을 읽지 못했습니다. 다른 사진으로 다시 시도해 주세요."
+    if not any(r.get("face_detected") for r in readings):
+        return "사진에서 얼굴을 찾지 못했습니다. 정면 얼굴이 또렷하게 나온 사진으로 다시 시도해 주세요."
+
+    dark = sum(1 for r in readings if float(r.get("brightness") or 0.0) < _GATE_BRIGHTNESS_MIN)
+    if dark >= len(readings) / 2:
+        return (
+            "사진이 어두워 피부색을 정확히 읽을 수 없습니다. "
+            "창가나 밝은 조명 아래에서 다시 찍어 주세요."
+        )
+    return (
+        "조명이 피부색을 왜곡하고 있어 퍼스널컬러를 판정할 수 없습니다. "
+        "색이 있는 조명(주점·무대 조명 등)을 피하고, 창가나 흰 조명 아래에서 다시 찍어 주세요."
+    )
+
+
 class PersonalColorAnalyzer:
     @staticmethod
     def resolve_blend_scale(region: str | None) -> float:
@@ -177,13 +247,26 @@ class PersonalColorAnalyzer:
     def analyze_many(self, images: list[bytes], color_scale: float = 1.0) -> PersonalColorResponse:
         """여러 장을 각각 읽어 피부 지표·계절 확률(softmax)을 평균낸다.
         한 장의 메이크업/조명/각도 노이즈로 여름쿨↔겨울쿨이 흔들리는 문제를,
-        다중 샘플 평균(앙상블)으로 눌러 안정화한다."""
+        다중 샘플 평균(앙상블)으로 눌러 안정화한다.
+
+        ⚠ 조명이 판정 가능한 장만 평균에 넣는다(`usable_for_color`). 못 쓰는 장을 섞으면
+        평균이 그쪽으로 끌려가 결과가 틀어진다 — 여러 장을 받는 이유가 사라진다.
+        """
         readings = [self._read_one(b, color_scale) for b in images if b]
         if not readings:
             raise ValueError("no valid images")
-        if len(readings) == 1:
-            return self._build_response(readings[0], samples=1)
-        return self._build_response(self._combine_readings(readings), samples=len(readings))
+
+        usable = [r for r in readings if usable_for_color(r)]
+        if not usable:
+            # 한 장도 못 쓰면 **판정하지 않는다.** 실측(AI-Hub 분광측색 대조)에서 WB 실패 시
+            # 픽셀 색상과 실측의 상관이 0.09 로 사실상 무의미했다 — 답을 내면 틀린 답이다.
+            raise UnusablePhotoError(unusable_reason(readings))
+
+        if len(usable) == 1:
+            return self._build_response(usable[0], samples=1, screened=len(readings) - 1)
+        return self._build_response(
+            self._combine_readings(usable), samples=len(usable), screened=len(readings) - len(usable)
+        )
 
     def _read_one(self, image_bytes: bytes, color_scale: float = 1.0) -> dict:
         """한 장에서 피부 지표 + 계절 확률(있으면)을 뽑아 dict로 반환(평균 합성용)."""
@@ -237,6 +320,13 @@ class PersonalColorAnalyzer:
             "landmark_skin_samples": float(landmark_count),
             "white_balanced": white_balanced,
             "face_detected": face_detected,
+            # 과노출 비율 — 얼굴 픽셀이 하얗게 날아가면 색 정보가 사라진다.
+            # 밝기 평균으로는 못 잡는다(일부만 날아가도 평균은 정상으로 보인다).
+            # ⚠ WB 적용 전(model_rgb)이 아니라 **원본 얼굴 crop** 을 봐야 한다 —
+            #   WB 는 채널을 스케일해서 날아간 픽셀을 되살린 것처럼 보이게 만들 수 있다.
+            "clipped": float((model_rgb.astype(np.float32).mean(axis=2) > 248).mean())
+            if model_rgb.size
+            else 0.0,
             "sample_weight": self._reading_weight(
                 face_detected, white_balanced, season_probs, color_vector["quality"], landmark_count
             ),
@@ -286,7 +376,11 @@ class PersonalColorAnalyzer:
         combined["sample_weight"] = weight_sum / len(readings)
         return combined
 
-    def _build_response(self, reading: dict, samples: int = 1) -> PersonalColorResponse:
+    def _build_response(
+        self, reading: dict, samples: int = 1, screened: int = 0
+    ) -> PersonalColorResponse:
+        """screened = 조명 게이트에서 제외한 장 수. 사용자에게 '몇 장을 뺐는지' 알려야
+        '5장 올렸는데 왜 결과가 다르지' 가 안 생긴다."""
         brightness = reading["brightness"]
         chroma = reading["chroma"]
         warmth = reading["warmth"]
@@ -340,6 +434,14 @@ class PersonalColorAnalyzer:
                 "사진을 2~3장(다른 각도/조명) 함께 넣으면 여름쿨↔겨울쿨 같은 흔들림이 줄어 더 안정적으로 판정됩니다.",
                 *capture_advice,
             ][:3]
+        if screened > 0:
+            # ⚠ **`[:3]` 자르기 뒤에** 붙여야 한다. 앞에서 넣었더니 아래 블록이 다른 문구를
+            #   맨 앞에 끼워 넣고 3개로 잘라, 정작 이 안내가 밀려 사라질 수 있었다.
+            #   사용자가 5장을 올렸는데 결과가 예상과 다르면 **이유를 먼저** 알아야 한다.
+            capture_advice = [
+                f"조명이 색을 왜곡한 사진 {screened}장은 판정에서 제외했습니다.",
+                *capture_advice,
+            ]
 
         # 경계선(borderline): 최상위 계절 확률이 임계값 미만이면 True.
         # 보정 실측(AI-Hub 60명, 전체 정확도 63.3%): 임계값 0.38 에서 확신군 75.0% vs 경계군 53.1%,
@@ -374,6 +476,8 @@ class PersonalColorAnalyzer:
                     self._capture_quality(confidence, white_balanced, face_detected, model_used, brightness, chroma), 3
                 ),
                 "samples": float(samples),
+                # 조명 게이트에서 제외한 장 수. 프론트가 '몇 장이 빠졌는지' 표시할 수 있게.
+                "screened_out": float(screened),
                 "sample_weight": round(float(reading.get("sample_weight", 1.0)), 3),
                 "season_consistency": round(season_consistency, 3),
                 "season_margin": round(season_margin, 3),

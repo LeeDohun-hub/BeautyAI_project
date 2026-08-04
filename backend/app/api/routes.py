@@ -59,7 +59,11 @@ from app.services.naver_kr_enricher import enrich_products_with_naver_kr
 from app.services.oliveyoung_availability import prune_global_oliveyoung
 from app.services.oliveyoung_catalog import catalog_available, catalog_items, male_catalog_items
 from app.services.oliveyoung_kr_search import kr_catalog_items, kr_goods_url, prune_kr_oliveyoung
-from app.services.personal_color_analyzer import PersonalColorAnalyzer, declared_personal_color_result
+from app.services.personal_color_analyzer import (
+    PersonalColorAnalyzer,
+    UnusablePhotoError,
+    declared_personal_color_result,
+)
 from app.services.platform_resolver import OLIVEYOUNG_GLOBAL_DETAIL, dedup_by_line, resolve_product_platforms
 from app.services.product_image_provider import fill_missing_images
 from app.services.rakuten_body_links import rakuten_link_for
@@ -959,6 +963,10 @@ async def analyze_personal_color(
     color_scale = PersonalColorAnalyzer.resolve_blend_scale(region)
     try:
         return PersonalColorAnalyzer().analyze_many(image_bytes, color_scale=color_scale)
+    except UnusablePhotoError as exc:
+        # 조명 때문에 판정할 수 없는 경우. **일반 오류와 구분해서** 사용자가 읽을 안내를 그대로 준다 —
+        # "Could not analyze this image" 로 뭉뚱그리면 사용자는 같은 사진을 다시 올린다.
+        raise HTTPException(status_code=422, detail=exc.message) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not analyze this image.") from exc
 
