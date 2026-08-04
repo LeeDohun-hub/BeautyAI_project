@@ -1761,3 +1761,44 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ── 터치 기기: 손가락으로 누를 수 있는 크기 보장 ─────────────────────────────
+   실측(2026-08-04, iPhone SE/14·Galaxy S 뷰포트): 버튼·칩·언어토글이 24~37px 로
+   권장 44px 에 못 미쳤다. 개별로 고치면 새 버튼이 생길 때마다 다시 어긋나므로
+   포인터 종류로 일괄 하한을 건다.
+
+   ⚠ 화면 폭(max-width)이 아니라 pointer: coarse 로 가른다 — 창을 좁힌 데스크톱은
+     터치가 아니고, 가로로 든 태블릿은 넓어도 터치다. */
+@media (pointer: coarse) {
+  button,
+  [role='button'],
+  .MuiButton-root,
+  .MuiIconButton-root,
+  .MuiMenuItem-root,
+  .MuiToggleButton-root,
+  .MuiChip-root {
+    min-height: 44px;
+  }
+
+  /* 아이콘 버튼은 가로도 같이 줘야 정사각형이 된다. */
+  .MuiIconButton-root,
+  .MuiToggleButton-root {
+    min-width: 44px;
+  }
+
+  /* 칩은 라벨이라 높이만 키우면 글자가 위로 뜬다 — 세로 가운데로 맞춘다. */
+  .MuiChip-root {
+    align-items: center;
+  }
+
+  /* 언어 토글은 우상단 고정이라 커지면 헤더를 가린다. 44px 는 지키되 폭은 줄인다. */
+  .lang-toggle .MuiButton-root {
+    min-width: 52px;
+    padding-inline: 8px;
+  }
+
+  /* 인접 버튼 사이 여백 — 44px 여도 붙어 있으면 오조작이 난다. */
+  .MuiStack-root > .MuiButton-root + .MuiButton-root {
+    margin-inline-start: 4px;
+  }
+}

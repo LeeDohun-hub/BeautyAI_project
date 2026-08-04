@@ -665,6 +665,15 @@ function MyDataDeleteDialog({ open, onClose }: { open: boolean; onClose: () => v
   );
 }
 
+/**
+ * 터치 기기(폰·태블릿)인가. 화면 폭이 아니라 **포인터 종류**로 본다 —
+ * 창을 좁힌 데스크톱은 터치가 아니고, 가로로 든 태블릿은 넓어도 터치다.
+ * 카메라 선택 방식(장치 목록 vs 전/후면)이 여기서 갈린다.
+ */
+function isTouchDevice(): boolean {
+  return typeof window !== 'undefined' && Boolean(window.matchMedia?.('(pointer: coarse)')?.matches);
+}
+
 /** 화면 언어 토글(KO/JA)과 연동 계정 표시. 어느 화면에서나 우상단에 고정으로 보인다. */
 function AppLangToggle({ authUser }: { authUser?: AuthUser | null }) {
   const { lang, setLang } = useAppLang();
@@ -1373,6 +1382,9 @@ export default function App() {
   });
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  // 마지막으로 연 카메라 면. 재시작(단계 이동·다시찍기) 때 같은 면이 열리게 한다 —
+  // 얼굴 화면에서 갑자기 후면이 열리면 사용자는 고장으로 받아들인다.
+  const lastFacingRef = useRef<'user' | 'environment'>('user');
   const [cameraReady, setCameraReady] = useState(false);
   const [analysis, setAnalysis] = useState<AnalyzeSkinResponse | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
@@ -1551,6 +1563,12 @@ export default function App() {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter((device) => device.kind === 'videoinput');
     setCameraDevices(videoDevices);
+    // ⚠ 터치 기기에서는 **자동 선택하지 않는다.**
+    //   여기서 첫 장치를 박아두면, 다음 startCamera 가 deviceId 를 쓰게 되고
+    //   deviceId 는 facingMode 를 덮어쓴다. 폰의 첫 videoinput 은 보통 **후면**이라
+    //   얼굴 촬영 화면에서 뒷면 카메라가 열린다(첫 촬영만 정상, 재시작하면 뒤집힘).
+    //   장치 목록 선택은 웹캠이 여러 대인 키오스크/데스크톱을 위한 것이다.
+    if (isTouchDevice()) return;
     if (!selectedDeviceId && videoDevices[0]?.deviceId) {
       setSelectedDeviceId(videoDevices[0].deviceId);
     }
@@ -1579,11 +1597,17 @@ export default function App() {
       return;
     }
 
+    // 터치 기기에서는 장치 ID 를 무시하고 전/후면으로만 고른다.
+    // deviceId 가 있으면 facingMode 가 무시되므로, 둘을 같이 넘기면 전면 요청이 먹지 않는다.
+    const useFacingOnly = isTouchDevice();
+    const effectiveDeviceId = useFacingOnly ? '' : deviceId;
+    lastFacingRef.current = facing;
+
     stopCamera();
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        facingMode: deviceId ? undefined : facing,
+        deviceId: effectiveDeviceId ? { exact: effectiveDeviceId } : undefined,
+        facingMode: effectiveDeviceId ? undefined : facing,
         width: { ideal: 1280 },
         height: { ideal: 720 },
       },
@@ -3658,7 +3682,19 @@ export default function App() {
         <Grid item xs={12} lg={5}>
           <Paper className="page-panel" elevation={0}>
             <Stack spacing={1.5}>
-              {cameraDevices.length > 1 && (
+              {/* 장치 목록은 웹캠이 여러 대인 키오스크/데스크톱용이다.
+                  폰에서는 '카메라 1 / 카메라 2'가 무슨 뜻인지 알 수 없으므로 전/후면 전환을 준다. */}
+              {isTouchDevice() ? (
+                <Button
+                  fullWidth
+                  size="small"
+                  variant="outlined"
+                  startIcon={<RefreshCcw size={16} />}
+                  onClick={() => void startCamera('', lastFacingRef.current === 'user' ? 'environment' : 'user')}
+                >
+                  {t('전면/후면 전환')}
+                </Button>
+              ) : cameraDevices.length > 1 && (
                 <FormControl fullWidth size="small">
                   <InputLabel>{t('카메라')}</InputLabel>
                   <Select
