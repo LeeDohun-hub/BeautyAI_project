@@ -31,6 +31,25 @@ _MAX_FACE_NARROWING = 0.12
 _FRONTAL_FULL = 0.12   # 이보다 정면이면 강도 그대로
 _FRONTAL_NONE = 0.30   # 이보다 틀어지면 워프하지 않는다(추천·분석은 그대로 제공)
 
+# ── 법적 고지 ──────────────────────────────────────────────────────────────────
+# **모듈 상수로 둔다.** 반환 딕셔너리 안에 인라인으로 두었더니, 문장을 늘리면서
+# 여러 줄 문자열이 되자 소스를 정규식으로 훑던 번역 검사가 조용히 이 문자열을 놓쳤다
+# (검사 29건 → 28건). 상수면 테스트가 실제 값을 그대로 읽을 수 있다.
+#
+# 문장 셋의 역할이 각각 다르므로 줄이지 말 것(docs/medical_ad_working_assumptions.md 전제 3):
+#   1) 비의료·참고용      — 무엇인지
+#   2) 결과 미보장·개인차  — 효과를 단정하지 않음
+#   3) 의료기관 아님       — 주체가 누구인지
+#
+# ⚠ 고치면 frontend/src/i18n.ts 의 키도 같이 고쳐야 한다. 안 고치면 일본어 모드에서
+#   한국어 고지가 그대로 나간다(한국·일본 모두 규제 대상).
+DISCLAIMER_SHORT = "비의료 참고용 가상 미용 시뮬레이션입니다."
+DISCLAIMER_FULL = (
+    "비의료 참고용 가상 미용 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다. "
+    "실제 결과는 개인에 따라 다르며, 이 이미지는 결과를 보장하지 않습니다. "
+    "이 서비스는 의료기관이 아니며 진단·치료·시술을 제공하지 않습니다."
+)
+
 FACE_OVAL = [
     10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
     397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
@@ -543,7 +562,7 @@ def simulate(
             "face_shape": None,
             "recommendations": [],
             "metrics": {},
-            "disclaimer": "비의료 참고용 가상 미용 시뮬레이션입니다.",
+            "disclaimer": DISCLAIMER_SHORT,
         }
 
     lm = result.multi_face_landmarks[0].landmark
@@ -601,6 +620,6 @@ def simulate(
             "frontal_factor": round(frontal, 2),
         },
         "photo_quality": assess_photo_quality(rgb, face_pts),
-        "disclaimer": "비의료 참고용 가상 미용 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.",
+        "disclaimer": DISCLAIMER_FULL,
         "referral": referral,
     }

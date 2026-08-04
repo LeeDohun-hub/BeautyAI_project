@@ -30,16 +30,38 @@ def _korean_literals(path: Path, pattern: str) -> list[str]:
     return [m.group(1) for m in re.finditer(pattern, source) if re.search(r"[가-힣]", m.group(1))]
 
 
-@pytest.mark.parametrize(
-    "literal",
-    _korean_literals(SIMULATOR, r'"disclaimer":\s*"([^"]+)"')
-    + _korean_literals(SIMULATOR, r'^\s*message = "([^"]+)"')
-    + _korean_literals(SIMULATOR, r'"message":\s*"([^"]+)"'),
-)
+def _simulator_literals() -> list[str]:
+    """검사 대상 문자열.
+
+    ⚠ 고지는 **모듈 상수를 직접 임포트**한다. 소스를 정규식으로 훑던 때, 문장을 늘리면서
+    여러 줄 문자열이 되자 정규식이 못 잡아 검사 대상에서 조용히 빠졌다(29건 → 28건).
+    '통과'로 보였지만 실제로는 검사를 안 한 것이었다. 값을 직접 읽으면 그 일이 없다.
+    """
+    from app.services.virtual_surgery_simulator import DISCLAIMER_FULL, DISCLAIMER_SHORT
+
+    return [DISCLAIMER_SHORT, DISCLAIMER_FULL] + _korean_literals(
+        SIMULATOR, r'^\s*message = "([^"]+)"'
+    ) + _korean_literals(SIMULATOR, r'"message":\s*"([^"]+)"')
+
+
+@pytest.mark.parametrize("literal", _simulator_literals())
 def test_simulator_strings_have_japanese(literal: str) -> None:
     assert literal in _i18n_text(), (
         f"i18n.ts 에 번역이 없습니다 — 일본어 모드에서 한국어가 그대로 나갑니다:\n  {literal}"
     )
+
+
+def test_check_coverage_does_not_silently_shrink() -> None:
+    """검사 대상이 줄어드는 것 자체를 잡는다.
+
+    이 파일의 진짜 실패 모드는 '테스트가 깨지는 것'이 아니라 **'테스트가 조용히 대상을
+    놓치는 것'** 이다. 실제로 한 번 일어났다. 하한을 두어 그때 빨간불이 뜨게 한다.
+    문구를 정말 줄였다면 이 숫자를 같이 내리면 된다.
+    """
+    simulator = len(_simulator_literals())
+    face_shape = len(_korean_literals(FACE_SHAPE, r'"(?:계란형|둥근형|긴형|각진형|하트형|마름모형)":\s*"([^"]+)"'))
+    assert simulator >= 9, f"시뮬레이터 검사 대상이 {simulator}건으로 줄었습니다 — 정규식이 놓치고 있는지 확인하세요"
+    assert face_shape >= 18, f"얼굴형 검사 대상이 {face_shape}건으로 줄었습니다"
 
 
 @pytest.mark.parametrize("literal", _korean_literals(FACE_SHAPE, r'"(?:계란형|둥근형|긴형|각진형|하트형|마름모형)":\s*"([^"]+)"'))
