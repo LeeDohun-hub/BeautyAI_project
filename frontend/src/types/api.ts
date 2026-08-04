@@ -249,6 +249,8 @@ export type VirtualSurgeryResponse = {
   disclaimer: string;
   referral?: MedicalReferral | null;
   photo_quality?: PhotoQuality | null;
+  /** 상담에서 물어볼 질문. 시술 추천이 아니라 질문 목록이다(설계안 §16). */
+  consultation_questions?: string[];
 };
 
 export type ProductColumn = {

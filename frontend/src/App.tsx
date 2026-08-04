@@ -4572,6 +4572,22 @@ export default function App() {
               {virtualSurgeryResult?.referral?.urgent && (
                 <Alert severity="warning" sx={{ mt: 2 }}>{t(virtualSurgeryResult.referral.message)}</Alert>
               )}
+              {/* 상담에서 물어볼 것(설계안 §16). 시술을 권하는 게 아니라 **질문을 준다** —
+                  그래서 의료광고 회신 전에도 넣을 수 있다.
+                  고지보다 위에 둔다. 결과지를 들고 갈 사람에게는 이게 본문이다. */}
+              {(virtualSurgeryResult?.consultation_questions ?? []).length > 0 && (
+                <Paper elevation={0} className="virtual-report-summary" sx={{ mt: 2 }}>
+                  <Typography fontWeight={900}>{t('상담에서 물어보세요')}</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                    {t('아래는 시술 권유가 아니라, 의료진에게 확인하면 좋은 질문입니다.')}
+                  </Typography>
+                  <Stack component="ol" spacing={0.75} sx={{ pl: 2.5, m: 0 }}>
+                    {(virtualSurgeryResult?.consultation_questions ?? []).map((q) => (
+                      <Typography component="li" key={q} variant="body2">{t(q)}</Typography>
+                    ))}
+                  </Stack>
+                </Paper>
+              )}
               {/* 법적 고지다. 한국·일본 모두 규제 대상이므로 사용자 언어로 나가야 한다.
                   이전에는 t() 가 **폴백에만** 붙어 있어, API 가 응답하는 실제 상황에서는
                   일본 사용자에게 항상 한국어 고지가 나갔다(2026-08-04 수정). */}

@@ -215,6 +215,9 @@ class VirtualSurgeryResponse(BaseModel):
     disclaimer: str
     referral: MedicalReferral | None = None
     photo_quality: PhotoQuality | None = None
+    # 상담에서 물어볼 질문(설계안 §16). 시술 추천이 아니라 **질문 목록**이라,
+    # 의료광고 회신 전에도 넣을 수 있다(무엇을 하라고 말하지 않는다).
+    consultation_questions: list[str] = Field(default_factory=list)
 
 
 class RecommendationRequest(BaseModel):

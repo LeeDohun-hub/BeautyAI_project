@@ -43,7 +43,18 @@ def _simulator_literals() -> list[str]:
         NO_FACE_MESSAGE,
     )
 
-    return [DISCLAIMER_SHORT, DISCLAIMER_FULL, NO_FACE_MESSAGE] + _korean_literals(
+    # 상담 질문도 화면에 그대로 나간다 — 상수를 직접 읽는다.
+    from app.services.virtual_surgery_simulator import (
+        _QUESTION_IF_REFERRAL,
+        _QUESTIONS_ALWAYS,
+        _QUESTIONS_BY_CATEGORY,
+    )
+
+    questions = [*_QUESTIONS_ALWAYS, _QUESTION_IF_REFERRAL]
+    for group in _QUESTIONS_BY_CATEGORY.values():
+        questions.extend(group)
+
+    return [DISCLAIMER_SHORT, DISCLAIMER_FULL, NO_FACE_MESSAGE, *questions] + _korean_literals(
         SIMULATOR, r'^\s*message = "([^"]+)"'
     ) + _korean_literals(SIMULATOR, r'"message":\s*"([^"]+)"') + _korean_literals(
         # 얼굴 미검출 이유 — diagnose_no_face 의 return 문들.

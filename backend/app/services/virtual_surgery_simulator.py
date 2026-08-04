@@ -476,6 +476,80 @@ def diagnose_no_face(rgb: np.ndarray) -> str:
 
 NO_FACE_MESSAGE = "얼굴을 찾지 못했습니다. 정면 얼굴과 밝은 조명의 사진으로 다시 시도해 주세요."
 
+# ── 상담 질문 ──────────────────────────────────────────────────────────────────
+# 설계안 §16. **시술을 권하는 것이 아니라 사용자가 물어볼 것을 주는 기능**이다.
+# 이 방향이 법적으로도 안전하다 — 우리는 무엇을 하라고 말하지 않고, 사용자가 의료진에게
+# 판단에 필요한 것을 묻게 돕는다(docs/medical_ad_working_assumptions.md 전제 1).
+#
+# 규칙:
+#   · 시술명·비용을 쓰지 않는다(법무 회신 전까지 금지 항목).
+#   · '해야 한다'가 아니라 '물어보라'로 쓴다. 필요 여부는 의료진이 판단한다.
+#   · 되돌릴 수 있는지·부작용·회복기간은 **항상** 넣는다. 사용자가 먼저 떠올리기 어렵고,
+#     안 물으면 나중에 문제가 되는 것들이다.
+_QUESTIONS_ALWAYS = (
+    "제 얼굴 비율에서 이 방향이 자연스러운지, 다른 대안은 없는지 알고 싶습니다.",
+    "예상되는 부작용과 회복 기간은 어느 정도인가요?",
+    "결과가 마음에 들지 않으면 되돌릴 수 있나요? 되돌린다면 어떤 방법인가요?",
+    "상담해 주시는 분과 실제로 시술하시는 분이 같은가요?",
+)
+
+_QUESTIONS_BY_CATEGORY: dict[str, tuple[str, ...]] = {
+    "face_frame": (
+        "제 골격 상태에서 비수술적인 방법으로 가능한 범위는 어디까지인가요?",
+        "얼굴선을 바꾸면 표정이나 씹는 기능에 영향이 있나요?",
+    ),
+    "nose_contour": (
+        "메이크업이나 음영만으로도 차이가 나던데, 지금 상태에서 다른 방법이 필요한가요?",
+        "시간이 지나면 모양이 변할 수 있나요?",
+    ),
+    "balance": (
+        "좌우 차이는 누구나 있다고 들었는데, 제 정도는 어느 수준인가요?",
+    ),
+    "blemish": (
+        "제거한 자리에 색소침착이나 흉터가 남을 가능성은 어느 정도인가요?",
+        "한 번에 끝나나요, 여러 번 받아야 하나요?",
+    ),
+}
+
+_QUESTION_IF_REFERRAL = (
+    "사진 분석에서 진료가 필요할 수 있다는 안내를 받았습니다. 이 부분을 먼저 봐 주실 수 있나요?"
+)
+
+
+def consultation_questions(
+    concerns: list[str] | None,
+    recommendations: list[dict] | None = None,
+    referral_urgent: bool = False,
+) -> list[str]:
+    """상담에서 물어볼 질문 목록. 고른 부위와 추천 카테고리에 맞춰 고른다.
+
+    ⚠ 순서가 의미를 갖는다. 진료 안내가 있으면 **그것부터** 묻게 한다 —
+    미용 상담이 진료보다 앞서면 안 된다.
+    """
+    questions: list[str] = []
+    if referral_urgent:
+        questions.append(_QUESTION_IF_REFERRAL)
+
+    categories: list[str] = []
+    for concern in concerns or []:
+        for category in _CONCERN_TO_CATEGORIES.get(concern, ()):
+            if category not in categories:
+                categories.append(category)
+    # 고른 부위가 없으면 분석이 짚은 쪽을 쓴다(사용자가 1단계를 건너뛴 경우).
+    if not categories:
+        for rec in recommendations or []:
+            category = rec.get("category")
+            if category and category not in categories:
+                categories.append(category)
+
+    for category in categories:
+        for question in _QUESTIONS_BY_CATEGORY.get(category, ()):
+            if question not in questions:
+                questions.append(question)
+
+    questions.extend(q for q in _QUESTIONS_ALWAYS if q not in questions)
+    return questions
+
 
 def no_face_quality(rgb: np.ndarray) -> dict:
     """얼굴 미검출 시의 photo_quality. 짚을 수 있는 이유를 issue 하나로 담는다.
@@ -679,4 +753,8 @@ def simulate(
         "photo_quality": assess_photo_quality(rgb, face_pts),
         "disclaimer": DISCLAIMER_FULL,
         "referral": referral,
+        # 상담에서 물어볼 것(설계안 §16). 시술을 권하지 않고 **질문을 준다**.
+        "consultation_questions": consultation_questions(
+            concerns, recommendations, bool(referral.get("urgent")),
+        ),
     }
