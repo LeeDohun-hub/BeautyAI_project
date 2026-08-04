@@ -4795,7 +4795,7 @@ export default function App() {
                 ];
                 return (
                   <Paper elevation={0} className="virtual-report-summary" sx={{ mt: 2 }}>
-                    <Typography fontWeight={900}>{t('상담 후보 정리')}</Typography>
+                    <Typography fontWeight={900}>{t('의사 상담 시술 후보')}</Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                       {t(plan.candidate_note)}
                     </Typography>
