@@ -226,9 +226,25 @@ def find_blemish_candidates(
             "r": round(max(bw, bh) / 2.0 / w, 4),
         })
 
-    # 화면에 점이 너무 많으면 고를 수가 없다. 큰 것부터 남긴다(눈에 띄는 순).
+    # 큰 것부터 남긴다(눈에 띄는 순).
     found.sort(key=lambda c: c["r"], reverse=True)
-    return found[:30]
+
+    # ⚠ **최소 간격을 강제한다.** 화면의 점 마커는 크기가 고정(22~30px)이라, 후보 둘이
+    #   가까우면 마커가 겹쳐 **뒤에 있는 점을 누를 수 없다**(브라우저 검증에서
+    #   'intercepts pointer events' 로 드러났다 — 테스트만의 문제가 아니라 사용자도 못 누른다).
+    #   0.04 = 이미지 폭의 4%. 표시 폭 ~450px 기준 약 18px 로, 마커가 겹치지 않는 최소값이다.
+    #   가까운 둘 중에서는 **큰 쪽**이 남는다(위에서 정렬해 뒀다).
+    min_gap = 0.04
+    spaced: list[dict] = []
+    for point in found:
+        if all(
+            (point["x"] - kept["x"]) ** 2 + (point["y"] - kept["y"]) ** 2 >= min_gap ** 2
+            for kept in spaced
+        ):
+            spaced.append(point)
+        if len(spaced) >= 20:
+            break
+    return spaced
 
 
 def remove_blemishes(rgb: np.ndarray, points: list[dict], strength: float = 0.9) -> np.ndarray:

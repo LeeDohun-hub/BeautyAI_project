@@ -42,7 +42,26 @@ def test_candidates_are_capped() -> None:
     for i in range(80):
         cv2.circle(rgb, (20 + (i % 20) * 28, 20 + (i // 20) * 28), 4, (110, 95, 90), -1)
     mask = np.ones(rgb.shape[:2], dtype=np.float32)
-    assert len(vss.find_blemish_candidates(rgb, mask)) <= 30
+    assert len(vss.find_blemish_candidates(rgb, mask)) <= 20
+
+
+def test_candidates_keep_a_minimum_gap() -> None:
+    """가까운 후보가 붙어 나오면 화면의 마커가 겹쳐 **뒤엣것을 누를 수 없다.**
+
+    브라우저 검증에서 'intercepts pointer events' 로 드러났다 — 테스트만의 문제가 아니라
+    사용자도 못 누른다. 마커 크기가 고정이므로 좌표 단계에서 간격을 벌려야 한다.
+    """
+    import cv2
+
+    rgb = _skin(600)
+    # 아주 가깝게 붙인 점 다섯 — 하나만 남아야 한다.
+    for dx in range(5):
+        cv2.circle(rgb, (300 + dx * 4, 300), 4, (110, 95, 90), -1)
+    found = vss.find_blemish_candidates(rgb, np.ones(rgb.shape[:2], dtype=np.float32))
+    for i, a in enumerate(found):
+        for b in found[i + 1:]:
+            gap = ((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2) ** 0.5
+            assert gap >= 0.04 - 1e-6, f"후보가 너무 붙어 있다({gap:.4f}): {a} / {b}"
 
 
 def test_finding_candidates_does_not_modify_the_photo() -> None:
