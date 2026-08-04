@@ -1840,3 +1840,47 @@ body {
 code, pre, .mono {
   word-break: break-all;
 }
+
+/* ── 좁은 화면(폰) 전용 보정 ────────────────────────────────────────────────
+   실측(360px, 퍼스널컬러 6단계 화면)에서 두 가지가 실제로 못 쓰게 만들었다. */
+@media (max-width: 600px) {
+  /* ① 스텝퍼가 글자 단위로 쪼개졌다.
+     6단계 × alternativeLabel 을 360px 에 밀어넣으니 'AI 퍼/스/널/컬/러/분/석' 처럼
+     한 글자씩 세로로 흘러 읽을 수 없었다.
+     → 라벨은 **현재 단계만** 보여주고 나머지는 번호 원만 남긴다.
+       (진행도는 원으로 보이고, 지금 무엇을 하는지는 라벨로 보인다) */
+  .MuiStepper-alternativeLabel .MuiStepLabel-label {
+    display: none;
+  }
+  .MuiStepper-alternativeLabel .MuiStepLabel-label.Mui-active {
+    display: block;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  /* 라벨이 사라지면 원 사이 간격이 과하게 남는다. */
+  .MuiStepper-alternativeLabel .MuiStepConnector-root {
+    top: 12px;
+  }
+
+  /* ② 우상단 고정 토글이 페이지 제목을 덮었다.
+     데스크톱에서는 여백이 남아 안 겹쳤지만, 360px 에서는 폭을 거의 다 차지한다.
+     → 반투명(0.9)이 아니라 **불투명 바**로 만들고, 그만큼 본문을 아래로 민다. */
+  .lang-toggle {
+    left: 0;
+    right: 0;
+    top: 0;
+    border-radius: 0;
+    border-width: 0 0 1px 0;
+    background: #ffffff;
+    justify-content: flex-end;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom, 0px));
+    padding-top: calc(6px + env(safe-area-inset-top, 0px));
+  }
+  .app-shell {
+    padding-top: calc(58px + env(safe-area-inset-top, 0px));
+  }
+  /* 계정 칩은 이름이 길면 토글 버튼을 밀어낸다 — 폭 상한을 준다. */
+  .lang-toggle .MuiChip-root {
+    max-width: 42vw;
+  }
+}
