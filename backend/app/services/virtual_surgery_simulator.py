@@ -405,6 +405,84 @@ CARD_PRESETS: tuple[dict, ...] = (
      "tuning": {"face_line": 18, "jaw_balance": 55, "nose_contour": 85, "blemish_care": 45}},
 )
 
+# ── 상담 후보·비용·회복 (설계안 §6·§7·§8) ──────────────────────────────────────
+#
+# 설계안이 카드별 '상담 후보'와 '변화 강도'를 이미 정의해 두었고, §8 이 비용을
+# **금액이 아니라 낮음/중간/높음 티어**로 표현하라고 했다. 그래서 외부 가격 데이터가
+# 필요 없다 — 설계안의 매핑을 그대로 옮긴다.
+#
+# ⚠ 표현 규칙(설계안 §5 가 금지한 문장들과 같은 취지):
+#   · '후보'다. "필요합니다"·"해야 합니다"로 쓰지 않는다.
+#   · 금액을 숫자로 쓰지 않는다. 병원·국가·재료·마취·개인 상태에 따라 달라진다(§8).
+#   · 회복 기간도 범위로만 말한다.
+#
+# 비수술/수술 분리는 설계안 §7 의 '비수술 상담 후보 / 수술 상담 후보' 항목을 따른다.
+_CARD_CONSULT: dict[str, dict] = {
+    "oval": {
+        "nonsurgical": ["피부 관리", "리프팅", "소량 필러", "보톡스"],
+        "surgical": [],
+        "cost_tier": "낮음",
+        "recovery": "대부분 일상 복귀가 빠른 편",
+        "difficulty": "낮음",
+        "caution": "변화가 작아 사진으로는 차이가 잘 안 보일 수 있습니다.",
+    },
+    "vline": {
+        "nonsurgical": ["보톡스", "리프팅"],
+        "surgical": ["윤곽 상담", "턱끝 상담"],
+        "cost_tier": "중간~높음",
+        "recovery": "비수술은 짧고, 수술 상담으로 가면 길어집니다",
+        "difficulty": "중간~높음",
+        "caution": "골격이 관여하는 부위라 사진만으로는 가능 범위를 알 수 없습니다.",
+    },
+    "soft": {
+        "nonsurgical": ["볼륨 보정", "피부 시술", "리프팅 계열"],
+        "surgical": [],
+        "cost_tier": "낮음~중간",
+        "recovery": "시술 종류에 따라 다르나 대체로 짧은 편",
+        "difficulty": "낮음~중간",
+        "caution": "볼륨은 시간이 지나며 변합니다. 유지 기간을 확인하세요.",
+    },
+    "defined": {
+        "nonsurgical": ["코 필러", "중안부 밸런스 상담"],
+        "surgical": ["코 성형 상담"],
+        "cost_tier": "중간",
+        "recovery": "필러는 짧고, 수술 상담으로 가면 길어집니다",
+        "difficulty": "중간",
+        "caution": "코는 작은 차이가 인상을 크게 바꿉니다. 과한 변화를 경계하세요.",
+    },
+}
+
+# 결과지에 붙는 고정 문구(설계안 §7 '리스크 및 주의사항').
+CONSULT_COST_NOTE = (
+    "비용은 확정 견적이 아니라 상대적인 범위입니다. "
+    "실제 금액은 병원·국가·재료·마취 방식·개인 상태에 따라 달라집니다."
+)
+CONSULT_CANDIDATE_NOTE = (
+    "아래는 상담에서 이야기해 볼 수 있는 **후보**이며, 필요한 시술을 정한 것이 아닙니다. "
+    "실제 가능 여부와 방법은 의료진이 판단합니다."
+)
+
+
+def consultation_plan(card_id: str | None) -> dict:
+    """선택한 카드의 상담 후보·비용 티어·회복 범위(설계안 §7).
+
+    카드를 안 골랐거나 모르는 id 면 **빈 값**을 준다 — 없는 정보를 지어내지 않는다.
+    """
+    plan = _CARD_CONSULT.get(card_id or "")
+    if not plan:
+        return {}
+    return {
+        "nonsurgical": list(plan["nonsurgical"]),
+        "surgical": list(plan["surgical"]),
+        "cost_tier": plan["cost_tier"],
+        "cost_note": CONSULT_COST_NOTE,
+        "recovery": plan["recovery"],
+        "difficulty": plan["difficulty"],
+        "caution": plan["caution"],
+        "candidate_note": CONSULT_CANDIDATE_NOTE,
+    }
+
+
 # 변화 강도. 슬라이더의 숫자(%)를 대신한다 — "코 라인 62%" 같은 값이 결과지에 실려 병원에
 # 가면 수술 수치처럼 읽히는데, 실제로는 의학적 의미가 없는 워프 강도라 오해만 만든다.
 INTENSITY_SCALE = {"natural": 0.6, "balanced": 1.0, "defined": 1.35}
@@ -443,6 +521,9 @@ def preview_cards(image_bytes: bytes, intensity: str = "balanced") -> dict:
             "title": preset["title"],
             "summary": preset["summary"],
             "preview_image": _to_data_url(_render(rgb, lm, face_mask, face_pts, tuning, frontal)),
+            # 상담 후보·비용 티어·회복 범위(설계안 §7). 카드마다 다르므로 카드에 붙인다 —
+            # 사용자가 무엇을 고르든 결과지가 그 카드에 맞는 내용을 쓸 수 있다.
+            "consultation": consultation_plan(preset["id"]),
         })
 
     message = "카드별 미리보기를 만들었습니다."

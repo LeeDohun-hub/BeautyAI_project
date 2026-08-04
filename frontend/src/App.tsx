@@ -4700,8 +4700,47 @@ export default function App() {
               {virtualSurgeryResult?.referral?.urgent && (
                 <Alert severity="warning" sx={{ mt: 2 }}>{t(virtualSurgeryResult.referral.message)}</Alert>
               )}
+              {/* 상담 후보·비용·회복(설계안 §7·§8).
+                  ⚠ 비용은 **금액이 아니라 티어**다. 설계안 §8 이 그렇게 정했고, 실제 금액은
+                    병원·국가·재료·마취·개인 상태에 따라 달라져 숫자로 쓸 수 없다.
+                  ⚠ 시술은 **후보**다 — '필요하다'가 아니라 '상담에서 이야기해 볼 수 있는 것'.
+                  질문 목록보다 위에 둔다: 후보를 보고 나서 무엇을 물을지 보는 순서가 맞다. */}
+              {(() => {
+                const plan = surgeryCards.find((c) => c.id === virtualSurgeryTarget)?.consultation;
+                if (!plan) return null;
+                const rows: [string, string][] = [
+                  ['비수술 상담 후보', plan.nonsurgical.map((s) => t(s)).join(' · ') || t('해당 없음')],
+                  ['수술 상담 후보', plan.surgical.map((s) => t(s)).join(' · ') || t('해당 없음')],
+                  ['예상 비용 범위', t(plan.cost_tier)],
+                  ['예상 회복 기간', t(plan.recovery)],
+                  ['시술 난이도', t(plan.difficulty)],
+                ];
+                return (
+                  <Paper elevation={0} className="virtual-report-summary" sx={{ mt: 2 }}>
+                    <Typography fontWeight={900}>{t('상담 후보 정리')}</Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                      {t(plan.candidate_note)}
+                    </Typography>
+                    <Stack spacing={0.5}>
+                      {rows.map(([label, value]) => (
+                        <Stack key={label} direction="row" spacing={1} alignItems="baseline">
+                          <Typography variant="body2" fontWeight={800} sx={{ minWidth: 118 }}>
+                            {t(label)}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">{value}</Typography>
+                        </Stack>
+                      ))}
+                    </Stack>
+                    <Alert severity="info" sx={{ mt: 1.5 }}>{t(plan.cost_note)}</Alert>
+                    {plan.caution && (
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                        ⚠ {t(plan.caution)}
+                      </Typography>
+                    )}
+                  </Paper>
+                );
+              })()}
               {/* 상담에서 물어볼 것(설계안 §16). 시술을 권하는 게 아니라 **질문을 준다** —
-                  그래서 의료광고 회신 전에도 넣을 수 있다.
                   고지보다 위에 둔다. 결과지를 들고 갈 사람에게는 이게 본문이다. */}
               {(virtualSurgeryResult?.consultation_questions ?? []).length > 0 && (
                 <Paper elevation={0} className="virtual-report-summary" sx={{ mt: 2 }}>

@@ -346,11 +346,27 @@ export type AnalyzeNailDesignResponse = {
 };
 
 /** 카드별 '내 얼굴 적용' 미리보기. 프리셋은 백엔드가 단일 출처다. */
+/**
+ * 카드별 상담 후보·비용 티어·회복 범위(설계안 §7·§8).
+ * ⚠ cost_tier 는 **금액이 아니라 티어**다('낮음'/'중간~높음').
+ */
+export type ConsultationPlan = {
+  nonsurgical: string[];
+  surgical: string[];
+  cost_tier: string;
+  cost_note: string;
+  recovery: string;
+  difficulty: string;
+  caution: string;
+  candidate_note: string;
+};
+
 export type VirtualSurgeryPreviewCard = {
   id: string;
   title: string;
   summary: string;
   preview_image: string;
+  consultation?: ConsultationPlan | null;
 };
 
 export type VirtualSurgeryPreviewCardsResponse = {
