@@ -4244,21 +4244,42 @@ export default function App() {
       </Box>
     );
 
+    // 일본 医療広告ガイドライン 은 시술 전후 사진에 시술 내용·비용·주요 위험을 병기하도록
+    // 요구한다. 병원 연결이 붙으면 이 미리보기가 그 규제에 걸릴 수 있어, 일본어 화면에서
+    // **나란히 놓기를 끌 수 있는 스위치**를 서버가 쥔다(medical_ad_working_assumptions.md 전제 4).
+    //
+    // ⚠ 판단 기준은 **서버 설정**이다. 사용자 설정이 아니라 규제 대응이므로 클라이언트가
+    //   못 바꾼다. 지금은 기본값 true 라 현행(나란히)이 유지된다.
+    // ⚠ lang === 'ja' 로 가르는 것은 근사치다. 정확히는 '일본 시장 사용자'여야 하는데
+    //   지금 가진 신호 중 이게 가장 가깝다(jp.yopalette.com 도 이 앱을 쓴다).
+    const hideBeforeAfter = appLang === 'ja' && authConfig?.jp_before_after === false;
     const beforeAfter = virtualSurgeryResult?.detected ? (
-      <Grid container spacing={1.5}>
-        <Grid item xs={12} sm={6}>
-          <Box className="virtual-result-image">
-            <span>Before</span>
-            <img src={virtualSurgeryResult.original_image} alt={t('원본 얼굴 사진')} />
-          </Box>
-        </Grid>
-        <Grid item xs={12} sm={6}>
+      hideBeforeAfter ? (
+        <Stack spacing={1}>
           <Box className="virtual-result-image">
             <span>Recommended</span>
             <img src={virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
           </Box>
+          <Typography variant="caption" color="text.secondary">
+            {t('원본 사진과 나란히 비교하는 표시는 일본에서 제공하지 않습니다.')}
+          </Typography>
+        </Stack>
+      ) : (
+        <Grid container spacing={1.5}>
+          <Grid item xs={12} sm={6}>
+            <Box className="virtual-result-image">
+              <span>Before</span>
+              <img src={virtualSurgeryResult.original_image} alt={t('원본 얼굴 사진')} />
+            </Box>
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <Box className="virtual-result-image">
+              <span>Recommended</span>
+              <img src={virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
+            </Box>
+          </Grid>
         </Grid>
-      </Grid>
+      )
     ) : uploadBox;
 
     const renderFlowStep = () => {

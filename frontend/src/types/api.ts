@@ -30,6 +30,12 @@ export type AuthSessionResponse = {
 export type AuthConfigResponse = {
   require_login: boolean;
   web_login_url: string;
+  /**
+   * 일본어 화면에서 비포/애프터를 나란히 보여도 되는가(일본 医療広告ガイドライン 대응).
+   * **서버가 정한다** — 규제 대응이므로 클라이언트 설정이 아니다.
+   * 구 백엔드는 이 값을 안 보내므로 optional. undefined 면 현행(나란히) 유지.
+   */
+  jp_before_after?: boolean;
 };
 
 /** 결과지 QR → 웹 장바구니로 넘길 상품 한 건. url 이 매칭 1순위 키다. */

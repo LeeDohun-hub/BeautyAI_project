@@ -378,6 +378,10 @@ class AuthConfigResponse(BaseModel):
 
     require_login: bool
     web_login_url: str
+    # 일본어 화면에서 비포/애프터를 나란히 보여도 되는가.
+    # False 면 프론트가 변형본만 보여준다(일본 医療広告ガイドライン 대응 스위치).
+    # ⚠ **서버가 정한다.** 사용자 설정이 아니라 규제 대응이므로 클라이언트가 못 바꾼다.
+    jp_before_after: bool = True
 
 
 class CartHandoffItem(BaseModel):

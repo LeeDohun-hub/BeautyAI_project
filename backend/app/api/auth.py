@@ -48,6 +48,7 @@ def auth_config() -> AuthConfigResponse:
     return AuthConfigResponse(
         require_login=settings.require_login,
         web_login_url=settings.web_login_url,
+        jp_before_after=settings.jp_before_after,
     )
 
 
