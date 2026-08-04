@@ -4328,7 +4328,8 @@ export default function App() {
                     </Button>
                   </Stack>
                   {virtualSurgeryLoading && <LinearProgress />}
-                  {virtualSurgeryResult && <Alert severity={virtualSurgeryResult.detected ? 'success' : 'warning'}>{virtualSurgeryResult.message}</Alert>}
+                  {/* ⚠ 백엔드가 보내는 문자열은 한국어다 — t() 를 빼면 일본어 모드에서 한국어가 나온다. */}
+                  {virtualSurgeryResult && <Alert severity={virtualSurgeryResult.detected ? 'success' : 'warning'}>{t(virtualSurgeryResult.message)}</Alert>}
                 </Stack>
               </Grid>
             </Grid>
@@ -4346,7 +4347,7 @@ export default function App() {
             <Grid item xs={12} md={6}>
               <Paper elevation={0} className="virtual-control-panel">
                 <Typography variant="h5" fontWeight={900}>{t('얼굴형 분석결과')}</Typography>
-                <Typography color="text.secondary" sx={{ mt: 1 }}>{virtualSurgeryResult?.face_shape?.summary}</Typography>
+                <Typography color="text.secondary" sx={{ mt: 1 }}>{t(virtualSurgeryResult?.face_shape?.summary ?? '')}</Typography>
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 2 }}>
                   <Chip label={virtualSurgeryResult?.face_shape?.shape || '분석 전'} color="primary" variant="outlined" />
                   <Chip label={`자연스러움 ${virtualSurgeryResult?.metrics.naturalness_score ?? '-'}점`} variant="outlined" />
@@ -4503,11 +4504,17 @@ export default function App() {
                   </Grid>
                 ))}
               </Grid>
-              {/* 진료 안내는 미용 고지보다 **위**에 둔다. 아래에 묻히면 못 본다. */}
+              {/* 진료 안내는 미용 고지보다 **위**에 둔다. 아래에 묻히면 못 본다.
+                  t() 필수 — 의료 안내가 일본어 모드에서 한국어로 나오면 안내로 기능하지 못한다. */}
               {virtualSurgeryResult?.referral?.urgent && (
-                <Alert severity="warning" sx={{ mt: 2 }}>{virtualSurgeryResult.referral.message}</Alert>
+                <Alert severity="warning" sx={{ mt: 2 }}>{t(virtualSurgeryResult.referral.message)}</Alert>
               )}
-              <Alert severity="info" sx={{ mt: 2 }}>{virtualSurgeryResult?.disclaimer || t('비의료 참고용 가상 성형 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.')}</Alert>
+              {/* 법적 고지다. 한국·일본 모두 규제 대상이므로 사용자 언어로 나가야 한다.
+                  이전에는 t() 가 **폴백에만** 붙어 있어, API 가 응답하는 실제 상황에서는
+                  일본 사용자에게 항상 한국어 고지가 나갔다(2026-08-04 수정). */}
+              <Alert severity="info" sx={{ mt: 2 }}>
+                {t(virtualSurgeryResult?.disclaimer || '비의료 참고용 가상 성형 시뮬레이션입니다. 실제 시술 여부는 전문 의료진 상담이 필요합니다.')}
+              </Alert>
               {/* 한국 의료법 제56조(의료광고)·일본 医療広告ガイドライン 은 비포/애프터 이미지를
                   별도로 규제한다. AI 미리보기가 정확히 그 형태라, 성격을 명시해 둔다.
                   ⚠ 이 문구로 규제를 만족한다고 단정할 수 없다 — 법무 확인이 필요하다(설계 검토 §6). */}
