@@ -417,34 +417,52 @@ CARD_PRESETS: tuple[dict, ...] = (
 #   · 회복 기간도 범위로만 말한다.
 #
 # 비수술/수술 분리는 설계안 §7 의 '비수술 상담 후보 / 수술 상담 후보' 항목을 따른다.
+# 설계안 §9 의 4분류. **순서가 곧 메시지다** — 가벼운 것부터 보여 준다.
+#   "이 분류는 사용자가 바로 수술로 향하지 않도록 하고" (설계안 §9)
+# 그래서 makeup 을 맨 앞에 두고 surgery 를 맨 뒤에 둔다. 화면도 이 순서로 그린다.
+CONSULT_TIERS: tuple[tuple[str, str], ...] = (
+    ("makeup", "메이크업·스타일링으로 가능한 변화"),
+    ("derma", "피부과·쁘띠 시술 상담 후보"),
+    ("plastic", "성형외과 상담 후보"),
+    ("surgery", "수술적 접근이 필요할 수 있는 항목"),
+)
+
 _CARD_CONSULT: dict[str, dict] = {
     "oval": {
-        "nonsurgical": ["피부 관리", "리프팅", "소량 필러", "보톡스"],
-        "surgical": [],
+        "makeup": ["쉐딩·하이라이트로 턱선 정리", "헤어라인 스타일링"],
+        "derma": ["피부 관리", "보톡스", "소량 필러"],
+        "plastic": ["리프팅 상담"],
+        "surgery": [],
         "cost_tier": "낮음",
         "recovery": "대부분 일상 복귀가 빠른 편",
         "difficulty": "낮음",
         "caution": "변화가 작아 사진으로는 차이가 잘 안 보일 수 있습니다.",
     },
     "vline": {
-        "nonsurgical": ["보톡스", "리프팅"],
-        "surgical": ["윤곽 상담", "턱끝 상담"],
+        "makeup": ["하관 쉐딩", "턱선을 가리지 않는 헤어스타일"],
+        "derma": ["보톡스"],
+        "plastic": ["리프팅 상담", "턱끝 상담"],
+        "surgery": ["윤곽 상담"],
         "cost_tier": "중간~높음",
         "recovery": "비수술은 짧고, 수술 상담으로 가면 길어집니다",
         "difficulty": "중간~높음",
         "caution": "골격이 관여하는 부위라 사진만으로는 가능 범위를 알 수 없습니다.",
     },
     "soft": {
-        "nonsurgical": ["볼륨 보정", "피부 시술", "리프팅 계열"],
-        "surgical": [],
+        "makeup": ["볼 하이라이트", "부드러운 컬러 메이크업"],
+        "derma": ["피부 시술", "볼륨 보정"],
+        "plastic": ["리프팅 계열 상담"],
+        "surgery": [],
         "cost_tier": "낮음~중간",
         "recovery": "시술 종류에 따라 다르나 대체로 짧은 편",
         "difficulty": "낮음~중간",
         "caution": "볼륨은 시간이 지나며 변합니다. 유지 기간을 확인하세요.",
     },
     "defined": {
-        "nonsurgical": ["코 필러", "중안부 밸런스 상담"],
-        "surgical": ["코 성형 상담"],
+        "makeup": ["콧대 하이라이트", "중안부 음영"],
+        "derma": ["코 필러"],
+        "plastic": ["중안부 밸런스 상담", "코 성형 상담"],
+        "surgery": [],
         "cost_tier": "중간",
         "recovery": "필러는 짧고, 수술 상담으로 가면 길어집니다",
         "difficulty": "중간",
@@ -461,10 +479,14 @@ CONSULT_CANDIDATE_NOTE = (
     "아래는 상담에서 이야기해 볼 수 있는 **후보**이며, 필요한 시술을 정한 것이 아닙니다. "
     "실제 가능 여부와 방법은 의료진이 판단합니다."
 )
+# 4분류를 왜 나누는지 화면에서도 말해 준다(설계안 §9의 의도).
+CONSULT_TIER_NOTE = (
+    "가벼운 방법부터 순서대로 정리했습니다. 위쪽만으로 충분한 경우도 많습니다."
+)
 
 
 def consultation_plan(card_id: str | None) -> dict:
-    """선택한 카드의 상담 후보·비용 티어·회복 범위(설계안 §7).
+    """선택한 카드의 상담 후보(4분류)·비용 티어·회복 범위(설계안 §7·§9).
 
     카드를 안 골랐거나 모르는 id 면 **빈 값**을 준다 — 없는 정보를 지어내지 않는다.
     """
@@ -472,8 +494,14 @@ def consultation_plan(card_id: str | None) -> dict:
     if not plan:
         return {}
     return {
-        "nonsurgical": list(plan["nonsurgical"]),
-        "surgical": list(plan["surgical"]),
+        # 설계안 §9 4분류. **비어 있는 단계는 빼고** 보낸다 —
+        # '해당 없음'이 줄줄이 있으면 정작 있는 항목이 묻힌다.
+        "tiers": [
+            {"key": key, "label": label, "items": list(plan[key])}
+            for key, label in CONSULT_TIERS
+            if plan.get(key)
+        ],
+        "tier_note": CONSULT_TIER_NOTE,
         "cost_tier": plan["cost_tier"],
         "cost_note": CONSULT_COST_NOTE,
         "recovery": plan["recovery"],

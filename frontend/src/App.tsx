@@ -4709,8 +4709,6 @@ export default function App() {
                 const plan = surgeryCards.find((c) => c.id === virtualSurgeryTarget)?.consultation;
                 if (!plan) return null;
                 const rows: [string, string][] = [
-                  ['비수술 상담 후보', plan.nonsurgical.map((s) => t(s)).join(' · ') || t('해당 없음')],
-                  ['수술 상담 후보', plan.surgical.map((s) => t(s)).join(' · ') || t('해당 없음')],
                   ['예상 비용 범위', t(plan.cost_tier)],
                   ['예상 회복 기간', t(plan.recovery)],
                   ['시술 난이도', t(plan.difficulty)],
@@ -4721,6 +4719,23 @@ export default function App() {
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                       {t(plan.candidate_note)}
                     </Typography>
+                    {/* 설계안 §9 4분류. **순서가 곧 메시지다** — 가벼운 것부터 보여 줘서
+                        "사용자가 바로 수술로 향하지 않도록" 한다. 번호를 붙여 단계임을 드러낸다. */}
+                    <Stack spacing={1} sx={{ mb: 1.5 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        {t(plan.tier_note)}
+                      </Typography>
+                      {(plan.tiers ?? []).map((tier, index) => (
+                        <Box key={tier.key} className={`consult-tier consult-tier-${tier.key}`}>
+                          <Typography variant="body2" fontWeight={800}>
+                            {index + 1}. {t(tier.label)}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {tier.items.map((s) => t(s)).join(' · ')}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Stack>
                     <Stack spacing={0.5}>
                       {rows.map(([label, value]) => (
                         <Stack key={label} direction="row" spacing={1} alignItems="baseline">

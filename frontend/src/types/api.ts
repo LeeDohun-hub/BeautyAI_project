@@ -350,9 +350,12 @@ export type AnalyzeNailDesignResponse = {
  * 카드별 상담 후보·비용 티어·회복 범위(설계안 §7·§8).
  * ⚠ cost_tier 는 **금액이 아니라 티어**다('낮음'/'중간~높음').
  */
+export type ConsultationTier = { key: string; label: string; items: string[] };
+
 export type ConsultationPlan = {
-  nonsurgical: string[];
-  surgical: string[];
+  /** 설계안 §9 4분류. 순서가 곧 메시지다 — 메이크업 → 피부과·쁘띠 → 성형외과 → 수술. */
+  tiers: ConsultationTier[];
+  tier_note: string;
   cost_tier: string;
   cost_note: string;
   recovery: string;

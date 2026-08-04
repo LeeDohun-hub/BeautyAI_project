@@ -1936,3 +1936,18 @@ code, pre, .mono {
     min-height: 30px;
   }
 }
+
+/* ── 상담 후보 4분류(설계안 §9) ────────────────────────────────────────────
+   순서가 곧 메시지다 — 가벼운 것(메이크업)부터 무거운 것(수술)까지.
+   왼쪽 색 띠로 단계가 올라가는 걸 눈으로 알게 한다. 색이 진해질수록 무거운 선택이다. */
+.consult-tier {
+  padding: 6px 0 6px 10px;
+  border-left: 3px solid #d8ecf8;
+}
+
+.consult-tier-makeup  { border-left-color: #9ad5f0; }
+.consult-tier-derma   { border-left-color: #58b4e0; }
+.consult-tier-plastic { border-left-color: #f0a6c0; }
+/* 수술은 가장 무거운 선택이라 눈에 띄게 — 다만 경고색(빨강)은 쓰지 않는다.
+   위험 표시가 아니라 '무게'를 말하는 것이고, 겁주는 화면이 되면 안 된다. */
+.consult-tier-surgery { border-left-color: #e2789e; }

@@ -157,16 +157,28 @@ class VirtualSurgeryRecommendation(BaseModel):
     selected: bool = False
 
 
+class ConsultationTier(BaseModel):
+    """상담 후보 4분류 중 한 단계(설계안 §9).
+
+    순서가 곧 메시지다 — 메이크업 → 피부과·쁘띠 → 성형외과 → 수술.
+    "사용자가 바로 수술로 향하지 않도록" 가벼운 것부터 보여 준다.
+    """
+
+    key: str
+    label: str
+    items: list[str] = Field(default_factory=list)
+
+
 class ConsultationPlan(BaseModel):
-    """카드별 상담 후보·비용 티어·회복 범위(설계안 §7·§8).
+    """카드별 상담 후보·비용 티어·회복 범위(설계안 §7·§8·§9).
 
     ⚠ 비용은 **금액이 아니라 티어**다('낮음'/'중간~높음'). 설계안 §8 이 그렇게 정했고,
     실제 금액은 병원·국가·재료·마취·개인 상태에 따라 달라져 숫자로 쓸 수 없다.
     ⚠ 시술은 **후보**다. '필요하다'가 아니라 '상담에서 이야기해 볼 수 있는 것'이다.
     """
 
-    nonsurgical: list[str] = Field(default_factory=list)
-    surgical: list[str] = Field(default_factory=list)
+    tiers: list[ConsultationTier] = Field(default_factory=list)
+    tier_note: str = ""
     cost_tier: str = ""
     cost_note: str = ""
     recovery: str = ""
