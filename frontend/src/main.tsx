@@ -62,3 +62,17 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>,
 );
 
+/*
+ * 서비스워커 등록 — 홈 화면 설치(PWA)와 오프라인 폴백용.
+ *
+ * ⚠ **개발 서버에서는 등록하지 않는다.** vite dev 는 모듈을 매번 새로 주는데 SW 가 끼면
+ *   고친 코드가 반영 안 되는 것처럼 보여 원인 찾기가 어려워진다.
+ * ⚠ 등록 실패는 삼킨다. SW 는 부가 기능이라, 안 되더라도 앱은 그대로 동작해야 한다
+ *   (사설 인증서·프라이빗 모드 등에서 실패할 수 있다).
+ */
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+  });
+}
+

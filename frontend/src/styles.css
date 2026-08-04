@@ -1802,3 +1802,25 @@ body {
     margin-inline-start: 4px;
   }
 }
+
+/* ── 노치·홈인디케이터 회피 ────────────────────────────────────────────────
+   index.html 에 viewport-fit=cover 를 넣어 화면 끝까지 쓰게 했으므로, 그만큼
+   안전영역을 CSS 로 피해야 한다. 안 하면 우상단 언어 토글이 노치에 물리고
+   하단 버튼이 홈인디케이터에 가린다.
+
+   env() 를 모르는 브라우저에서는 두 번째 인자(0px)가 쓰여 기존 동작 그대로다. */
+.lang-toggle {
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: calc(18px + env(safe-area-inset-right, 0px));
+}
+
+body {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* 설치형(standalone)으로 열렸을 때는 주소창이 없어 상단 여백이 더 필요하다. */
+@media (display-mode: standalone) {
+  .app-shell {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}

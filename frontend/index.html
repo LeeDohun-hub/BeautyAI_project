@@ -1,13 +1,26 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: 노치 있는 폰에서 화면 끝까지 쓰되, CSS 는 env(safe-area-inset-*) 로 피한다. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>YoPalette</title>
+    <meta name="description" content="퍼스널컬러·피부 케어·네일·가상 성형을 사진 한 장으로 분석합니다." />
+
+    <!-- PWA: 홈 화면에 설치되면 주소창 없이 앱처럼 열린다. **앱스토어 심사가 없다** —
+         의료광고 법무가 미해결인 지금 상태에서 이게 결정적이다. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#1d8fc7" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+
+    <!-- iOS 는 manifest 의 icons 를 안 읽는다. apple-touch-icon 이 따로 있어야 홈 화면 아이콘이 나온다. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="YoPalette" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
