@@ -951,7 +951,9 @@ function itemMatchColumnFor(product: RakutenProduct, isMale = false): ItemMatchC
   const isBlush = (t: string) => /(blush|blusher|cheek|チーク|블러셔|치크|볼터치)/i.test(t);
   const isEye = (t: string) => /(eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ|아이|섀도|쉐도)/i.test(t);
   const isBase = (t: string) => /(base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스)/i.test(t);
-  const isLip = (t: string) => /(lip|lipstick|tint|rouge|gloss|balm|リップ|ルージュ|ティント|립|틴트)/i.test(t);
+  // ⚠ '립'/'リップ' 도 부분문자열 오탐 계열이다(nail⊂snail, 아이⊂아이보리 와 같은 부류).
+  //   '튤립'/'チューリップ'(tulip)이 걸려 캔들홀더가 립 컬럼에 떴다. 백엔드 _ITEM_CATEGORY_PATTERNS 와 동일 규칙.
+  const isLip = (t: string) => /((?<![a-z])lip|lipstick|tint|rouge|gloss|balm|(?<!チュー)リップ|ルージュ|ティント|(?<!튤)립|틴트)/i.test(t);
   // ⚠ 'nail'/'네일'은 단어 경계로 본다 — 부분문자열이면 'snail'/'스네일'(달팽이 점액)이
   // 걸려 코스알엑스 스네일 뮤신 같은 스킨케어가 네일 컬럼에 꽂힌다(백엔드 _ITEM_CATEGORY_PATTERNS
   // 와 동일 규칙 유지). 'polishing'(각질제거)도 제외.
@@ -972,19 +974,33 @@ function itemMatchColumnFor(product: RakutenProduct, isMale = false): ItemMatchC
     return null;
   }
 
-  // 여성 세트(기존). 1순위: 카테고리 키워드 필드로 판정.
-  if (isNail(primary)) return 'nail';
-  if (isBlush(primary)) return 'blush';
-  if (isEye(primary)) return 'eye';
-  if (isBase(primary)) return 'base';
-  if (isLip(primary)) return 'lip';
+  // 상품명이 '그 카테고리가 아님'을 말하면 키워드로도 되살리지 않는다.
+  // 백엔드 _CATEGORY_NAME_ANTI_PATTERNS 와 **같은 규칙**이다 — 어긋나면 배분(백엔드)과
+  // 표시(프론트)가 갈려, 배분된 카드가 다른 컬럼에 뜨거나 사라진다.
+  // 실측: '스네일 뮤신 에센스'가 '네일' 검색 결과로 와서 네일 컬럼에 꽂혔고,
+  //       캔들홀더('チューリップ型')가 '립' 검색 키워드 때문에 립 컬럼에 떴다.
+  const name = (product.name || '').toLowerCase();
+  const contradicted = (key: ItemMatchColumnKey) => {
+    if (key === 'nail') return /스네일|snail|スネイル/i.test(name);
+    if (key === 'lip') return /튤립|tulip|チューリップ/i.test(name);
+    if (key === 'eye') return /아이보리|ivory|아이스크림/i.test(name);
+    return false;
+  };
 
-  // 2순위: 상품명 포함 전체 텍스트로 판정.
-  if (isNail(text)) return 'nail';
-  if (isBlush(text)) return 'blush';
-  if (isEye(text)) return 'eye';
-  if (isBase(text)) return 'base';
-  if (isLip(text)) return 'lip';
+  const pick = (t: string): ItemMatchColumnKey | null => {
+    if (isNail(t)) return 'nail';
+    if (isBlush(t)) return 'blush';
+    if (isEye(t)) return 'eye';
+    if (isBase(t)) return 'base';
+    if (isLip(t)) return 'lip';
+    return null;
+  };
+
+  // 1순위: 카테고리 키워드 필드. 2순위: 상품명 포함 전체 텍스트.
+  for (const t of [primary, text]) {
+    const key = pick(t);
+    if (key && !contradicted(key)) return key;
+  }
 
   // 어느 카테고리에도 확실히 맞지 않으면 베이스로 몰지 않고 제외한다.
   return null;

@@ -124,7 +124,13 @@ _ITEM_CATEGORY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ"
         r"|아이(?!보리|스크림|스크|스티|솔레|허브)|섀도|쉐도", re.I)),
     ("base", re.compile(r"base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스", re.I)),
-    ("lip", re.compile(r"lip|lipstick|tint|rouge|gloss|balm|リップ|ルージュ|ティント|립|틴트", re.I)),
+    # ⚠ '립'/'リップ' 도 부분문자열 오탐 계열이다(nail⊂snail, 아이⊂아이보리 와 같은 부류).
+    #   '튤립'/'チューリップ'(tulip)이 걸려, 라쿠텐이 '로즈 핑크 립' 검색에 물어온
+    #   **캔들홀더**(キャンドルホルダー … チューリップ型 … 燭台)가 립 컬럼에 카드로 떴다(실측 2026-08-04).
+    #   'lip' 영문은 tulip 이 (?<![a-z]) 로 이미 막힌다.
+    ("lip", re.compile(
+        r"(?<![a-z])lip|lipstick|tint|rouge|gloss|balm|(?<!チュー)リップ|ルージュ|ティント"
+        r"|(?<!튤)립|틴트", re.I)),
 ]
 
 # 남성(Level 2): 베이스/브로우/컨실러/립밤 4개. 색조(블러셔/아이/네일) 대신 그루밍 중심.
@@ -158,9 +164,24 @@ _NON_COSMETIC_RE = re.compile(
     r"|ヘアクリップ|ヘアゴム|ヘアバンド|ヘアピン|헤어클립|헤어밴드|헤어핀|머리끈"
     r"|メイクブラシ|化粧筆|ブラシ\s*\d*\s*本セット|筆\s*\d*\s*本セット|메이크업\s*브러시\s*세트|화장붓"
     r"|ピンセット|毛抜き|付け爪切|ネイルチップケース|収納ケース|コスメポーチ|化粧ポーチ"
-    r"|핀셋|족집게|화장품\s*케이스|화장\s*파우치",
+    r"|핀셋|족집게|화장품\s*케이스|화장\s*파우치"
+    # 인테리어 잡화. 라쿠텐 색상 검색이 '로즈 핑크 립'에 캔들홀더를 물어왔다(실측 2026-08-04):
+    # 'キャンドルホルダー 北欧 陶器 … 燭台 インテリア 雑貨 チューリップ型 …'
+    r"|キャンドルホルダー|燭台|キャンドルスタンド|花瓶|置物|インテリア雑貨|캔들홀더|촛대|화병",
     re.I,
 )
+
+# 이름이 '이 카테고리가 아님'을 분명히 말하는 경우. 키워드 폴백이 이를 되살리지 못하게 한다.
+#
+# 왜 필요한가: 분류는 이름 → 키워드 순으로 본다. 이름이 안 걸리면 '무엇을 검색했나'(키워드)로
+# 넘어가는데, 이름 쪽 정규식이 **일부러 제외한** 상품이 여기서 되살아난다.
+# 실측: 코스알엑스 '스네일 뮤신 에센스'(스킨케어)가 '네일' 키워드 검색 결과로 와서,
+# 이름 판정은 (?<!스)네일 로 걸러졌는데 키워드 '네일'이 그대로 nail 컬럼에 꽂았다.
+_CATEGORY_NAME_ANTI_PATTERNS: dict[str, re.Pattern[str]] = {
+    "nail": re.compile(r"스네일|snail|スネイル", re.I),
+    "lip": re.compile(r"튤립|tulip|チューリップ", re.I),
+    "eye": re.compile(r"아이보리|ivory|아이스크림", re.I),
+}
 
 
 def _item_match_category(product, gender: str = "female") -> str | None:
@@ -176,9 +197,18 @@ def _item_match_category(product, gender: str = "female") -> str | None:
     # 물어온 'romnd ベターザンアイズ アイシャドウ'(아이섀도우)가 립 컬럼에 카드로 떴다.
     if by_name:
         return by_name
-    if by_keyword:
+
+    # 이름이 '그 카테고리가 아님'을 말하면 키워드로도, 합친 텍스트로도 되살리지 않는다.
+    # ⚠ 한 군데만 막으면 다음 폴백에서 다시 살아난다 — 실제로 by_keyword 만 막았더니
+    #   마지막 텍스트 폴백(키워드+이름)이 키워드 쪽 '네일'을 다시 잡았다.
+    def contradicted(category: str | None) -> bool:
+        anti = _CATEGORY_NAME_ANTI_PATTERNS.get(category or "")
+        return bool(anti and anti.search(name))
+
+    if by_keyword and not contradicted(by_keyword):
         return by_keyword
-    return next((c for c, pattern in patterns if pattern.search(text.lower())), None)
+    by_text = next((c for c, pattern in patterns if pattern.search(text.lower())), None)
+    return None if contradicted(by_text) else by_text
 
 
 _ITEM_CATEGORIES_FEMALE = ("lip", "blush", "eye", "base", "nail")
@@ -1493,6 +1523,14 @@ def personal_color_item_match(
     # 이미지 보강이 상품명을 바꾸는 일은 없으니 마지막에 한 번만 계산하면 된다.
     for product in products:
         product.column = _item_match_category(product, gender)
+
+    # 분류 못 한 상품은 **보내지 않는다.**
+    # 프론트에는 column 이 없을 때 쓰는 폴백 규칙이 있는데(구 응답 호환), 그게 키워드만 보고
+    # 분류한다. 그래서 백엔드가 '화장품이 아니다'로 판정한 것이 되살아난다 —
+    # 실측(2026-08-04): 라쿠텐이 '로즈 핑크 립' 검색에 캔들홀더(キャンドルホルダー…燭台)를
+    # 물어왔고, 키워드에 '립'이 있어 **립 컬럼에 캔들홀더 카드가 떴다.**
+    # 판정 주체는 백엔드 하나여야 하므로 여기서 끊는다.
+    products = [p for p in products if p.column]
 
     if products:
         configured = True
