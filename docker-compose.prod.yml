@@ -78,6 +78,14 @@ services:
       args:
         # 빈 값 = 같은 오리진(/api) → nginx 프록시 경유. 백엔드를 별도 도메인에 둘 때만 채운다.
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        # 쇼핑몰(BeautyWEB)로 나가는 주소. **빌드 시점에 구워진다**(Vite 가 import.meta.env 를
+        # 치환하므로 런타임 환경변수로는 못 바꾼다). 안 넣으면 코드의 로컬 기본값
+        # localhost:5174/5175 가 그대로 구워져, 운영에서 홈 버튼이 로컬을 가리킨다(실제로 그랬다).
+        VITE_WEB_BASE_URL_KO: ${PUBLIC_WEB_KO_URL:-https://www.yopalette.com}
+        VITE_WEB_BASE_URL_JA: ${PUBLIC_WEB_JA_URL:-https://jp.yopalette.com}
+        # 로그인 안내 링크의 폴백(백엔드 web_login_url 이 비었을 때). 이것도 안 주면
+        # 로그인이 필요한 화면에서 사용자를 localhost 로 보낸다.
+        VITE_WEB_BASE_URL: ${PUBLIC_WEB_KO_URL:-https://www.yopalette.com}
     restart: unless-stopped
     # 호스트 포트를 열지 않는다 — 외부 접점은 caddy 하나뿐이다.
     expose:
