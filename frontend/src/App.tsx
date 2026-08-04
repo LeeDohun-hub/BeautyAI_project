@@ -1278,12 +1278,15 @@ export default function App() {
     concerns: string[];
     desiredMoods: string[];
     privacyConsent: boolean;
+    /** 미성년자일 때 보호자 동의 확인. 자기신고 수준이다(본인인증은 정책이 정해져야 한다). */
+    guardianConsent: boolean;
   }>({
     gender: 'female',
     ageGroup: '20s',
     concerns: ['윤곽·얼굴형'],
     desiredMoods: ['자연스러운 변화'],
     privacyConsent: false,
+    guardianConsent: false,
   });
   /** 선택 토글. 이미 있으면 빼고, 없으면 뒤에 붙인다(=나중에 고를수록 후순위). */
   const toggleSurgeryChoice = (key: 'concerns' | 'desiredMoods', option: string, max: number) =>
@@ -4192,8 +4195,12 @@ export default function App() {
           { title: '점·잡티 제거 후보', score: 70, summary: '사진 분석 후 작은 점과 잡티 후보를 분리해 사용자가 확인할 수 있게 합니다.', category: 'blemish' },
         ];
 
+    // 미성년자면 보호자 동의까지 있어야 진행한다(medical_ad_working_assumptions.md 전제 6).
+    // 자기신고 수준이다 — 본인인증·법정대리인 확인 방식은 법무 회신이 정해야 한다.
+    const isMinor = virtualSurgeryProfile.ageGroup === '10s';
     const canContinue =
-      virtualSurgeryStep === 0 ? virtualSurgeryProfile.privacyConsent
+      virtualSurgeryStep === 0
+        ? virtualSurgeryProfile.privacyConsent && (!isMinor || virtualSurgeryProfile.guardianConsent)
       : virtualSurgeryStep === 1 ? Boolean(virtualSurgeryResult?.detected)
       : virtualSurgeryStep === 2 ? Boolean(virtualSurgeryResult?.detected)
       : virtualSurgeryStep === 3 ? Boolean(virtualSurgeryTarget)
@@ -4337,6 +4344,26 @@ export default function App() {
                     }
                     label={t('비의료 참고용 가상 성형 분석 및 이미지 처리에 동의합니다.')}
                   />
+                  {/* 미성년자 확인(medical_ad_working_assumptions.md 전제 6).
+                      나이대를 10대로 고른 경우에만 뜨고, 체크해야 진행된다.
+                      ⚠ 자기신고 수준이다 — 본인인증·법정대리인 확인 방식은 법무 회신이 정해야 한다.
+                        확인 절차를 나중에 강화하더라도, 지금 아무 장치도 없는 것보다는 낫다. */}
+                  {isMinor && (
+                    <>
+                      <Alert severity="warning">
+                        {t('만 19세 미만은 보호자(법정대리인)의 동의가 필요합니다. 성형은 성장이 끝난 뒤 판단하는 것이 일반적이며, 이 결과는 의료적 권유가 아닙니다.')}
+                      </Alert>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={virtualSurgeryProfile.guardianConsent}
+                            onChange={(event) => setVirtualSurgeryProfile((prev) => ({ ...prev, guardianConsent: event.target.checked }))}
+                          />
+                        }
+                        label={t('보호자(법정대리인)의 동의를 받았습니다.')}
+                      />
+                    </>
+                  )}
                 </Stack>
               </Grid>
               <Grid item xs={12} md={6}>
