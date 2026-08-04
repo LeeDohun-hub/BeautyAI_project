@@ -1824,3 +1824,19 @@ body {
     padding-top: env(safe-area-inset-top, 0px);
   }
 }
+
+/* ── 한국어·일본어 줄바꿈 ──────────────────────────────────────────────────
+   기본값(word-break: normal)은 CJK 에서 **어절 중간을 자른다.** 폰처럼 좁은 폭에서
+   특히 심해서, 실측 캡처에 '선택해 주세 / 요.' 처럼 끊겼다.
+
+   keep-all 은 어절 단위로 끊는다. 대신 아주 긴 URL·영문 단어가 넘칠 수 있어
+   overflow-wrap: anywhere 를 같이 준다 — 어절 유지가 우선이고, 도저히 안 되면 자른다. */
+body {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* 숫자·코드는 어절 개념이 없어 keep-all 이 오히려 넘치게 만든다. */
+code, pre, .mono {
+  word-break: break-all;
+}
