@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryTuning } from '../types/api';
+import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, MyDataDeletionResult, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryTuning } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -187,6 +187,17 @@ export async function chat(message: string, scores?: SkinScores, survey?: Survey
 
 export async function getHistory(): Promise<HistoryItem[]> {
   const { data } = await api.get<HistoryItem[]>('/api/history');
+  return data;
+}
+
+/**
+ * 내 분석·설문·추천이력·상담기록을 지운다. **되돌릴 수 없다.**
+ *
+ * 계정 자체는 지우지 않는다 — 웹에서 넘어온 연동 정보라 여기서 지우면 로그인 상태와
+ * 어긋난다(탈퇴는 웹 소관). 테이블별 삭제 건수를 돌려주므로 무엇이 지워졌는지 보여줄 수 있다.
+ */
+export async function deleteMyData(): Promise<MyDataDeletionResult> {
+  const { data } = await api.delete<MyDataDeletionResult>('/api/me/data');
   return data;
 }
 

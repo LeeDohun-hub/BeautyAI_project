@@ -267,6 +267,11 @@ export type HistoryItem = {
   created_at: string;
 };
 
+/** 내 데이터 삭제 결과. 키는 테이블명, 값은 지운 건수. */
+export type MyDataDeletionResult = {
+  deleted: Record<string, number>;
+};
+
 export type NailDesignMatch = {
   design_id: string;
   region: string;           // 'foot' | 'hand'

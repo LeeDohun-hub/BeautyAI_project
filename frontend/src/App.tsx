@@ -5,7 +5,12 @@ import {
   Button,
   Checkbox,
   Chip,
+  CircularProgress,
   Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   FormControlLabel,
   FormControl,
@@ -13,6 +18,7 @@ import {
   IconButton,
   InputLabel,
   LinearProgress,
+  Menu,
   MenuItem,
   Paper,
   Select,
@@ -42,7 +48,7 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, setSessionToken, simulateVirtualSurgery } from './api/client';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, setSessionToken, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
 import type { AnalysisMode, DetectedNail, NailShade, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
 
@@ -570,15 +576,128 @@ const DEFAULT_FACE_PRODUCT_SET = FACE_PRODUCT_MAP['warm-light'];
 // 반대로 내부 카테고리는 'skincare','Face','body.scrub','lip' 같은 ASCII 단일 토큰이다.
 const INTERNAL_CATEGORY_BADGE = /^[a-z][a-z._-]*$/i;
 
+/** 삭제 결과의 테이블명을 사람이 읽는 말로. 없는 키는 그대로 보여준다(스키마가 늘어도 안 깨지게). */
+const MY_DATA_LABELS: Record<string, string> = {
+  skin_analyses: '피부 분석 기록',
+  surveys: '설문 응답',
+  recommendation_histories: '추천 이력',
+  chat_histories: '상담 기록',
+};
+
+/**
+ * 내 데이터 삭제. **되돌릴 수 없으므로** 무엇이 지워지는지 먼저 보여주고,
+ * 지운 뒤에는 테이블별 건수를 확인시킨다 — 확인이 없으면 정말 지워졌는지 알 수 없다.
+ *
+ * 성공 후 페이지를 새로 고치는 이유: 화면에 떠 있는 분석·추천은 이미 지워진 데이터라
+ * 그대로 두면 '지웠는데 아직 보인다' 가 된다.
+ */
+function MyDataDeleteDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<Record<string, number> | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setFailed(null);
+    try {
+      const result = await deleteMyData();
+      setDone(result.deleted ?? {});
+    } catch {
+      setFailed(t('삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const close = () => {
+    if (busy) return;
+    if (done) window.location.reload();
+    else onClose();
+  };
+
+  return (
+    <Dialog open={open} onClose={close} maxWidth="xs" fullWidth>
+      <DialogTitle>{t('내 데이터 삭제')}</DialogTitle>
+      <DialogContent>
+        {done ? (
+          <Stack spacing={1}>
+            <Alert severity="success">{t('삭제했습니다.')}</Alert>
+            {Object.entries(done).map(([key, count]) => (
+              <Typography key={key} variant="body2" color="text.secondary">
+                {t(MY_DATA_LABELS[key] ?? key)} — {count.toLocaleString()}{t('건')}
+              </Typography>
+            ))}
+          </Stack>
+        ) : (
+          <Stack spacing={1.5}>
+            <Typography variant="body2">{t('아래 기록이 모두 지워집니다. 되돌릴 수 없습니다.')}</Typography>
+            <Stack spacing={0.5} sx={{ pl: 1 }}>
+              {Object.values(MY_DATA_LABELS).map((label) => (
+                <Typography key={label} variant="body2" color="text.secondary">・{t(label)}</Typography>
+              ))}
+            </Stack>
+            {/* 계정을 안 지운다는 걸 미리 말해야 '탈퇴한 줄 알았다' 가 안 생긴다. */}
+            <Alert severity="info">{t('계정은 삭제되지 않습니다. 회원 탈퇴는 웹에서 진행해 주세요.')}</Alert>
+            {failed && <Alert severity="error">{failed}</Alert>}
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        {done ? (
+          <Button onClick={close} variant="contained">{t('확인')}</Button>
+        ) : (
+          <>
+            <Button onClick={close} disabled={busy}>{t('취소')}</Button>
+            <Button
+              onClick={run}
+              color="error"
+              variant="contained"
+              disabled={busy}
+              startIcon={busy ? <CircularProgress size={16} color="inherit" /> : <Trash2 size={16} />}
+            >
+              {t('삭제')}
+            </Button>
+          </>
+        )}
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 /** 화면 언어 토글(KO/JA)과 연동 계정 표시. 어느 화면에서나 우상단에 고정으로 보인다. */
 function AppLangToggle({ authUser }: { authUser?: AuthUser | null }) {
   const { lang, setLang } = useAppLang();
   const t = useT();
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   return (
     <Stack direction="row" spacing={0.5} alignItems="center" className="lang-toggle">
-      {/* 모듈마다 헤더가 달라서 여기 두면 홈·퍼스널컬러·네일 어디서나 연동 상태가 보인다. */}
+      {/* 모듈마다 헤더가 달라서 여기 두면 홈·퍼스널컬러·네일 어디서나 연동 상태가 보인다.
+          삭제도 여기 두는 이유: 개인정보 삭제는 특정 화면에 숨어 있으면 안 된다. */}
       {authUser && (
-        <Chip size="small" variant="outlined" label={`${authUser.name} ${t('님으로 연동됨')}`} sx={{ mr: 0.5 }} />
+        <>
+          <Chip
+            size="small"
+            variant="outlined"
+            label={`${authUser.name} ${t('님으로 연동됨')}`}
+            sx={{ mr: 0.5, cursor: 'pointer' }}
+            onClick={(event) => setMenuAnchor(event.currentTarget)}
+          />
+          <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+            <MenuItem
+              onClick={() => {
+                setMenuAnchor(null);
+                setDeleteOpen(true);
+              }}
+              sx={{ color: 'error.main' }}
+            >
+              <Trash2 size={16} style={{ marginRight: 8 }} />
+              {t('내 데이터 삭제')}
+            </MenuItem>
+          </Menu>
+          <MyDataDeleteDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} />
+        </>
       )}
       {(['ko', 'ja'] as const).map((code) => (
         <Button
