@@ -108,6 +108,18 @@ def test_never_says_a_procedure_is_needed(card_id: str) -> None:
             assert word not in text, f"{card_id} 에 단정 표현 '{word}': {text}"
 
 
+@pytest.mark.parametrize("card_id", CARD_IDS)
+def test_no_markdown_in_user_facing_text(card_id: str) -> None:
+    """화면은 이 문자열을 **평문으로 그대로** 출력한다(JSX 는 마크다운을 해석하지 않는다).
+
+    실제로 '**후보**' 가 별표째 노출됐다 — 결과지처럼 병원에 들고 가는 화면이라
+    이런 게 남으면 완성도가 그대로 보인다. 눈으로는 잘 안 잡히므로 검사로 둔다.
+    """
+    for text in _plan_texts(consultation_plan(card_id)):
+        for mark in ("**", "__", "`"):
+            assert mark not in text, f"{card_id} 에 마크다운 '{mark}': {text}"
+
+
 def test_notes_are_attached_to_every_plan() -> None:
     """비용 주석·후보 주석이 빠지면 티어만 남아 확정 가격처럼 읽힌다."""
     for card_id in CARD_IDS:
