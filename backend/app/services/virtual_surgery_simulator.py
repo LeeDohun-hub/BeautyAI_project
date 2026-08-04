@@ -315,9 +315,11 @@ def preview_cards(image_bytes: bytes, intensity: str = "balanced") -> dict:
     if not result.multi_face_landmarks:
         return {
             "detected": False,
-            "message": "얼굴을 찾지 못했습니다. 정면 얼굴과 밝은 조명의 사진으로 다시 시도해 주세요.",
+            "message": NO_FACE_MESSAGE,
             "original_image": _to_data_url(rgb),
             "cards": [],
+            # 왜 못 찾았는지를 짚어준다. 이게 없으면 사용자가 같은 사진을 다시 올린다.
+            "photo_quality": no_face_quality(rgb),
         }
 
     lm = result.multi_face_landmarks[0].landmark
@@ -433,6 +435,60 @@ def _face_region_stats(rgb: np.ndarray, face_pts: np.ndarray) -> dict[str, float
         "clipped": float((gray > 248).mean()),
         "occlusion": occlusion,
         "face_width": float(face_pts[:, 0].max() - face_pts[:, 0].min()),
+    }
+
+
+# 얼굴을 못 찾았을 때 **전체 이미지**로 이유를 짚기 위한 문턱.
+# 위의 얼굴영역 문턱과 값이 겹치지만 **별개로 측정한 것**이다(2026-08-04, 표본 5장):
+#
+#   조건        전체밝기      전체흐림      짧은변
+#   원본        130~138      144~338      750
+#   밝기0.4     51.7~54.6    25~56        750
+#   흐림r8      130~138      1.7~2.0      750
+#   축소0.05    130~138      105~291      127
+#
+# ⚠ 어두우면 흐림 지표도 같이 떨어진다(25~56). 그래서 진단 순서를 해상도→어두움→과노출→흐림
+#   으로 두어, 어두운 사진에 '흔들렸다'고 잘못 말하지 않게 한다.
+_NOFACE_SHORT_SIDE_MIN = 200
+
+
+def diagnose_no_face(rgb: np.ndarray) -> str:
+    """얼굴을 못 찾은 이유를 추정해 안내 문장 뒤에 붙일 조각을 만든다.
+
+    왜 필요한가: 지금까지는 "얼굴을 찾지 못했습니다"만 나갔다. 사용자는 무엇을 고쳐야
+    할지 모른 채 같은 사진을 다시 올린다. 랜드마크가 없어도 밝기·흐림·해상도는 잴 수 있다.
+
+    ⚠ 추정이다. 단정하지 않는 표현을 쓴다 — 정면이 아니거나 얼굴이 없어서일 수도 있다.
+    """
+    h, w = rgb.shape[:2]
+    gray = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    if min(h, w) < _NOFACE_SHORT_SIDE_MIN:
+        return "사진 해상도가 낮은 것 같습니다. 더 큰 사진으로 올려 주세요."
+    if gray.mean() < _QUALITY_DARK_MAX:
+        return "사진이 어두워서 얼굴을 찾지 못했을 수 있습니다. 밝은 곳에서 다시 찍어 주세요."
+    if float((gray > 248).mean()) > _QUALITY_CLIPPED_MAX:
+        return "빛이 너무 강해 얼굴이 하얗게 날아간 것 같습니다. 직사광선을 피해 주세요."
+    lap = gray[:-2, 1:-1] + gray[1:-1, :-2] - 4 * gray[1:-1, 1:-1] + gray[1:-1, 2:] + gray[2:, 1:-1]
+    if float(lap.var()) < _QUALITY_BLUR_MIN:
+        return "사진이 흔들렸거나 초점이 맞지 않은 것 같습니다. 다시 찍어 주세요."
+    return ""
+
+
+NO_FACE_MESSAGE = "얼굴을 찾지 못했습니다. 정면 얼굴과 밝은 조명의 사진으로 다시 시도해 주세요."
+
+
+def no_face_quality(rgb: np.ndarray) -> dict:
+    """얼굴 미검출 시의 photo_quality. 짚을 수 있는 이유를 issue 하나로 담는다.
+
+    ⚠ 안내 문장에 **이어붙이지 않는다.** 이어붙이면 번역 키가 '기본문 + 이유' 조합만큼
+    늘어나고(현재 5가지), 이유를 하나 추가할 때마다 조합이 또 늘어난다.
+    분리해 두면 기본문과 이유가 각자 한 번씩만 번역되면 된다.
+    """
+    reason = diagnose_no_face(rgb)
+    return {
+        "ok": not reason,
+        "issues": [{"code": "no_face_reason", "message": reason}] if reason else [],
+        "metrics": {},
     }
 
 
@@ -556,13 +612,14 @@ def simulate(
     if not result.multi_face_landmarks:
         return {
             "detected": False,
-            "message": "얼굴을 찾지 못했습니다. 정면 얼굴과 밝은 조명의 사진으로 다시 시도해 주세요.",
+            "message": NO_FACE_MESSAGE,
             "original_image": original_url,
             "preview_image": original_url,
             "face_shape": None,
             "recommendations": [],
             "metrics": {},
             "disclaimer": DISCLAIMER_SHORT,
+            "photo_quality": no_face_quality(rgb),
         }
 
     lm = result.multi_face_landmarks[0].landmark

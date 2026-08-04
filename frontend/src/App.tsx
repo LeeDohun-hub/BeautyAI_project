@@ -4329,7 +4329,18 @@ export default function App() {
                   </Stack>
                   {virtualSurgeryLoading && <LinearProgress />}
                   {/* ⚠ 백엔드가 보내는 문자열은 한국어다 — t() 를 빼면 일본어 모드에서 한국어가 나온다. */}
-                  {virtualSurgeryResult && <Alert severity={virtualSurgeryResult.detected ? 'success' : 'warning'}>{t(virtualSurgeryResult.message)}</Alert>}
+                  {virtualSurgeryResult && (
+                    <Alert severity={virtualSurgeryResult.detected ? 'success' : 'warning'}>
+                      {t(virtualSurgeryResult.message)}
+                      {/* 얼굴을 못 찾았을 때 **왜인지**. 이게 없으면 사용자가 같은 사진을 다시 올린다.
+                          안내 문장과 따로 오므로 각각 번역된다(조합 폭발 방지). */}
+                      {(virtualSurgeryResult.photo_quality?.issues ?? []).map((issue) => (
+                        <Typography key={issue.code} variant="body2" sx={{ mt: 0.5 }}>
+                          {t(issue.message)}
+                        </Typography>
+                      ))}
+                    </Alert>
+                  )}
                 </Stack>
               </Grid>
             </Grid>

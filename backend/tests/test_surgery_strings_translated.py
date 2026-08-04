@@ -37,11 +37,18 @@ def _simulator_literals() -> list[str]:
     여러 줄 문자열이 되자 정규식이 못 잡아 검사 대상에서 조용히 빠졌다(29건 → 28건).
     '통과'로 보였지만 실제로는 검사를 안 한 것이었다. 값을 직접 읽으면 그 일이 없다.
     """
-    from app.services.virtual_surgery_simulator import DISCLAIMER_FULL, DISCLAIMER_SHORT
+    from app.services.virtual_surgery_simulator import (
+        DISCLAIMER_FULL,
+        DISCLAIMER_SHORT,
+        NO_FACE_MESSAGE,
+    )
 
-    return [DISCLAIMER_SHORT, DISCLAIMER_FULL] + _korean_literals(
+    return [DISCLAIMER_SHORT, DISCLAIMER_FULL, NO_FACE_MESSAGE] + _korean_literals(
         SIMULATOR, r'^\s*message = "([^"]+)"'
-    ) + _korean_literals(SIMULATOR, r'"message":\s*"([^"]+)"')
+    ) + _korean_literals(SIMULATOR, r'"message":\s*"([^"]+)"') + _korean_literals(
+        # 얼굴 미검출 이유 — diagnose_no_face 의 return 문들.
+        SIMULATOR, r'^\s*return "([^"]+)"'
+    )
 
 
 @pytest.mark.parametrize("literal", _simulator_literals())
