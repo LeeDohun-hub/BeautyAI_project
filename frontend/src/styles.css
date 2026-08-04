@@ -1951,3 +1951,48 @@ code, pre, .mono {
 /* 수술은 가장 무거운 선택이라 눈에 띄게 — 다만 경고색(빨강)은 쓰지 않는다.
    위험 표시가 아니라 '무게'를 말하는 것이고, 겁주는 화면이 되면 안 된다. */
 .consult-tier-surgery { border-left-color: #e2789e; }
+
+/* ── 촬영 조명 힌트 ────────────────────────────────────────────────────────
+   프리뷰 프레임 밝기로 '이 조명이면 색 분석이 어렵다'를 **찍기 전에** 알린다.
+
+   ⚠ 참고 표시다. 촬영을 막지 않는다 — 프리뷰(작은 프레임)와 촬영 원본은 판정이 다를 수
+     있어(실측 8장 중 2장이 해상도에 따라 뒤집힘) 여기서 막으면 '녹색이었는데 거부'가 난다.
+     최종 판정은 촬영 후 서버가 원본으로 한다. */
+.camera-box.light-ok {
+  box-shadow: 0 0 0 3px #2e9e5b inset;
+}
+
+.camera-box.light-dark {
+  box-shadow: 0 0 0 3px #d9534f inset;
+}
+
+/* 판정 전에는 테두리를 주지 않는다 — 켜자마자 빨강이 번쩍이면 고장처럼 보인다. */
+.camera-box.light-checking {
+  box-shadow: none;
+}
+
+.light-badge {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 2;
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  text-align: center;
+  /* 배경이 밝든 어둡든 읽히도록 반투명 검정 + 그림자. */
+  background: rgba(24, 35, 58, 0.82);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+.light-badge-ok {
+  background: rgba(46, 158, 91, 0.9);
+}
+
+.light-badge-dark {
+  background: rgba(217, 83, 79, 0.92);
+}

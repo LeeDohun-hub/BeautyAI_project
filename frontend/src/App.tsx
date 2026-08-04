@@ -666,6 +666,41 @@ function MyDataDeleteDialog({ open, onClose }: { open: boolean; onClose: () => v
 }
 
 /**
+ * 촬영 조명 힌트 — 프리뷰 프레임이 분석에 쓸 만한 밝기인가.
+ *
+ * ⚠ **약속이 아니라 참고다.** 최종 판정은 촬영 후 원본으로 서버가 한다.
+ *   여기서 녹색이어도 거부될 수 있고, 그래서 촬영을 막지 않는다.
+ *   (해상도가 판정을 뒤집는 것을 실측으로 확인했다 — 8장 중 2장이 크기에 따라 뒤집혔다.
+ *    프리뷰 판정을 약속으로 쓰면 '녹색이었는데 거부'가 실제로 난다.)
+ *
+ * 왜 MediaPipe 를 안 쓰나: 참고 표시라 정밀도 요구가 낮고, 프레임 전체 밝기만으로
+ * 실측 정확도 87%(미달을 미달로 10/11)가 나왔다. 랜드마크를 위해 수 MB 를 더 받을 이유가 없다.
+ *
+ * 문턱 0.40 근거(2026-08-04, 실기기 사진 × 밝기배율 15건):
+ *   통과 프레임밝기 0.350~0.513 / 미달 0.174~0.513
+ *   0.40 에서 전체 정확도 87%, 0.55 로 올리면 통과까지 다 막는다(73%).
+ */
+const CAPTURE_LIGHT_MIN = 0.40;
+
+type LightHint = 'checking' | 'ok' | 'dark';
+
+/** 비디오 프레임의 평균 밝기(0~1). 작은 캔버스에 줄여 그려서 비용을 낮춘다. */
+function sampleFrameBrightness(video: HTMLVideoElement, canvas: HTMLCanvasElement): number | null {
+  if (!video.videoWidth || !video.videoHeight) return null;
+  const w = 64;
+  const h = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * w));
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(video, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 4) sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
+  return sum / (data.length / 4) / 255;
+}
+
+/**
  * 터치 기기(폰·태블릿)인가. 화면 폭이 아니라 **포인터 종류**로 본다 —
  * 창을 좁힌 데스크톱은 터치가 아니고, 가로로 든 태블릿은 넓어도 터치다.
  * 카메라 선택 방식(장치 목록 vs 전/후면)이 여기서 갈린다.
@@ -1393,6 +1428,9 @@ export default function App() {
   // 마지막으로 연 카메라 면. 재시작(단계 이동·다시찍기) 때 같은 면이 열리게 한다 —
   // 얼굴 화면에서 갑자기 후면이 열리면 사용자는 고장으로 받아들인다.
   const lastFacingRef = useRef<'user' | 'environment'>('user');
+  // 촬영 조명 힌트(참고용). 촬영을 막지 않는다 — 최종 판정은 촬영 후 서버가 원본으로 한다.
+  const [lightHint, setLightHint] = useState<LightHint>('checking');
+  const lightCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [analysis, setAnalysis] = useState<AnalyzeSkinResponse | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
@@ -1463,6 +1501,31 @@ export default function App() {
     if (authBooting) return;
     getHistory().then(setHistory).catch(() => undefined);
   }, [recommendation, authBooting, authUser?.id]);
+
+  // 촬영 조명 힌트 — 카메라가 켜져 있는 동안만 프레임 밝기를 샘플링한다.
+  //
+  // ⚠ 초당 4회면 충분하다. 조명은 급변하지 않고, 매 프레임 재면 배터리만 먹는다.
+  //   테두리가 깜빡이지 않도록 문턱 근처에서는 이전 상태를 유지한다(히스테리시스) —
+  //   0.40 경계에서 값이 오르내리면 빨강↔녹색이 번쩍여 오히려 불안해 보인다.
+  useEffect(() => {
+    if (!cameraReady) {
+      setLightHint('checking');
+      return;
+    }
+    if (!lightCanvasRef.current) lightCanvasRef.current = document.createElement('canvas');
+    const timer = window.setInterval(() => {
+      const video = videoRef.current;
+      const canvas = lightCanvasRef.current;
+      if (!video || !canvas) return;
+      const value = sampleFrameBrightness(video, canvas);
+      if (value === null) return;
+      setLightHint((prev) => {
+        if (prev === 'ok') return value < CAPTURE_LIGHT_MIN - 0.03 ? 'dark' : 'ok';
+        return value >= CAPTURE_LIGHT_MIN ? 'ok' : 'dark';
+      });
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [cameraReady]);
 
   // 웹 마이페이지에 저장한 값으로 설문을 미리 채운다. 값이 없는 항목은 손대지 않아
   // 기본값(또는 사용자가 이미 고른 값)이 남는다 — 화면에서 언제든 바꿀 수 있다.
@@ -1880,8 +1943,15 @@ export default function App() {
     try {
       const files = personalColorFiles.length > 0 ? personalColorFiles : [personalColorFile];
       setPersonalColorResult(await analyzePersonalColor(files));
-    } catch {
-      setError('퍼스널컬러 분석에 실패했습니다. 정면 얼굴 사진과 조명이 충분한 이미지를 다시 선택해 주세요.');
+    } catch (err) {
+      // ⚠ 422 는 서버가 **왜 못 하는지**를 담아 보낸다(어두움 / 색조명 / 얼굴 미검출).
+      //   예전처럼 통째로 삼키고 일반 문구로 덮으면, 구체적 이유를 만들어 놓고 화면에서 버리는 셈이다.
+      const detail = (err as { response?: { status?: number; data?: { detail?: string } } })?.response;
+      if (detail?.status === 422 && typeof detail.data?.detail === 'string') {
+        setError(detail.data.detail);
+      } else {
+        setError('퍼스널컬러 분석에 실패했습니다. 정면 얼굴 사진과 조명이 충분한 이미지를 다시 선택해 주세요.');
+      }
     } finally {
       setLoading('');
     }
@@ -3688,7 +3758,10 @@ export default function App() {
               <ToggleButton value="body">{t('바디 피부 케어')}</ToggleButton>
             </ToggleButtonGroup>
 
-            <Box className="camera-box large-camera" sx={{ mt: 2 }}>
+            {/* 조명 힌트 테두리. **촬영을 막지 않는다** — 최종 판정은 촬영 후 서버가 원본으로 한다.
+                프리뷰(작은 프레임)와 원본은 판정이 다를 수 있어(실측 8장 중 2장), 여기서 막으면
+                '녹색이었는데 거부' 가 난다. */}
+            <Box className={`camera-box large-camera light-${lightHint}`} sx={{ mt: 2 }}>
               <video
                 ref={videoRef}
                 className="camera-video"
@@ -3699,6 +3772,13 @@ export default function App() {
                   videoRef.current?.play().catch(() => undefined);
                 }}
               />
+              {cameraReady && (
+                <span className={`light-badge light-badge-${lightHint}`}>
+                  {lightHint === 'dark'
+                    ? t('조명이 어두워 색 분석이 어려울 수 있어요')
+                    : t('조명 좋아요')}
+                </span>
+              )}
               {!cameraReady && (
                 <Stack className="camera-empty" alignItems="center" spacing={1}>
                   <Camera size={32} />
