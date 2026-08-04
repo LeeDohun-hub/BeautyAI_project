@@ -57,6 +57,38 @@ FACE_OVAL = [
 ]
 NOSE_LINE = [6, 197, 195, 5, 4, 1, 19, 94, 2]
 
+# 잡티 후보에서 **빼야 하는** 영역: 눈·눈썹·입술.
+#
+# 왜 필요한가(2026-08-04 실측): 잡티 탐지는 '주변보다 어두운 국소 영역'을 찾는데,
+# 눈썹·쌍꺼풀선·속눈썹·입술선·콧구멍이 전부 그 조건을 만족한다. 변화량을 6배 증폭해
+# 히트맵을 떠 보니 **건드리는 곳이 잡티가 아니라 전부 이목구비였다.**
+# 지금은 효과가 약해(평균 픽셀차 0.02) 티가 안 났을 뿐, 강도를 올리면 눈썹이 지워진다.
+LEFT_EYE = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+RIGHT_EYE = [263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466]
+LEFT_BROW = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46]
+RIGHT_BROW = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276]
+LIPS = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185]
+# 콧구멍 주변. 그림자가 깊어 잡티로 잡힌다.
+NOSTRILS = [1, 2, 98, 97, 326, 327, 94, 19]
+
+_FEATURE_REGIONS = (LEFT_EYE, RIGHT_EYE, LEFT_BROW, RIGHT_BROW, LIPS, NOSTRILS)
+
+
+def _feature_exclusion_mask(landmarks, w: int, h: int) -> np.ndarray:
+    """이목구비 영역 마스크(255=제외). 잡티 후보에서 뺀다.
+
+    각 영역을 볼록껍질로 채운 뒤 넉넉히 부풀린다 — 속눈썹·눈썹 끝처럼 랜드마크 바깥으로
+    삐져나오는 부분까지 덮어야 한다.
+    """
+    mask = np.zeros((h, w), dtype=np.uint8)
+    for indices in _FEATURE_REGIONS:
+        points = _points(landmarks, indices, w, h)
+        if len(points) >= 3:
+            cv2.fillConvexPoly(mask, cv2.convexHull(points), 255)
+    # 얼굴 폭에 비례해 부풀린다(사진 해상도가 달라도 같은 비율로 덮이게).
+    grow = max(5, int(w * 0.018))
+    return cv2.dilate(mask, np.ones((grow, grow), np.uint8))
+
 
 def _load_rgb(image_bytes: bytes, max_size: int = 1000) -> np.ndarray:
     image = Image.open(BytesIO(image_bytes))
@@ -146,48 +178,105 @@ def _reshape_face(
     return np.clip(rgb * (1 - alpha) + warped * alpha, 0, 255).astype(np.uint8)
 
 
-def _soften_blemishes(rgb: np.ndarray, face_mask: np.ndarray, strength: float) -> tuple[np.ndarray, int]:
-    if strength <= 0:
-        return rgb, 0
+def find_blemish_candidates(
+    rgb: np.ndarray,
+    face_mask: np.ndarray,
+    landmarks=None,
+) -> list[dict]:
+    """점·잡티 **후보 위치**를 찾는다. 지우지는 않는다.
+
+    왜 자동으로 안 지우나(2026-08-04 결정): 자동 제거는 오탐/미탐 줄다리기가 끝나지 않는다.
+    실측에서 후보 45개 중 대부분이 눈썹·쌍꺼풀선·입술선이었고(이목구비 제외로 13개까지
+    줄였지만 여전히 헤어라인이 섞인다), 정작 뚜렷한 주근깨는 못 잡았다.
+    설계안이 말한 대로 **후보만 보여주고 지울지는 사용자가 고른다** — 오탐이 나와도
+    사용자가 안 고르면 그만이라, 정밀도 요구가 훨씬 낮아진다.
+
+    좌표는 **0~1 정규화**로 돌려준다. 프론트가 이미지를 어떤 크기로 그리든 그대로 얹을 수 있게.
+    """
+    h, w = rgb.shape[:2]
     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
     lightness = lab[:, :, 0].astype(np.float32)
     local = cv2.GaussianBlur(lightness, (31, 31), 0)
     dark_delta = np.clip(local - lightness, 0, 255)
-    candidate = ((dark_delta > 13) & (face_mask > 0.55)).astype(np.uint8) * 255
+
+    usable = face_mask > 0.55
+    if landmarks is not None:
+        # 이목구비(눈·눈썹·입술·콧구멍)를 뺀다. 안 빼면 후보의 70% 가 여기서 나온다.
+        usable &= _feature_exclusion_mask(landmarks, w, h) == 0
+
+    candidate = ((dark_delta > 13) & usable).astype(np.uint8) * 255
     candidate = cv2.morphologyEx(candidate, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
-    num, labels, stats, _ = cv2.connectedComponentsWithStats(candidate, 8)
-    mask = np.zeros(candidate.shape, dtype=np.uint8)
-    count = 0
+    num, _labels, stats, centroids = cv2.connectedComponentsWithStats(candidate, 8)
+    found: list[dict] = []
     for idx in range(1, num):
-      area = int(stats[idx, cv2.CC_STAT_AREA])
-      if 5 <= area <= 170:
-          mask[labels == idx] = 255
-          count += 1
+        area = int(stats[idx, cv2.CC_STAT_AREA])
+        if not (5 <= area <= 170):
+            continue
+        bw = int(stats[idx, cv2.CC_STAT_WIDTH])
+        bh = int(stats[idx, cv2.CC_STAT_HEIGHT])
+        # 잡티는 둥글다. 눈썹·헤어라인 조각처럼 **길쭉한 것**은 뺀다.
+        if max(bw, bh) > 3 * max(1, min(bw, bh)):
+            continue
+        cx, cy = centroids[idx]
+        found.append({
+            "x": round(float(cx) / w, 4),
+            "y": round(float(cy) / h, 4),
+            "r": round(max(bw, bh) / 2.0 / w, 4),
+        })
 
-    if count == 0:
-        return rgb, 0
+    # 화면에 점이 너무 많으면 고를 수가 없다. 큰 것부터 남긴다(눈에 띄는 순).
+    found.sort(key=lambda c: c["r"], reverse=True)
+    return found[:30]
 
-    radius = 3
-    mask = cv2.dilate(mask, np.ones((radius, radius), np.uint8))
+
+def remove_blemishes(rgb: np.ndarray, points: list[dict], strength: float = 0.9) -> np.ndarray:
+    """사용자가 고른 지점만 지운다. 좌표는 0~1 정규화."""
+    if not points or strength <= 0:
+        return rgb
+    h, w = rgb.shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    for point in points:
+        x = int(float(point.get("x", 0)) * w)
+        y = int(float(point.get("y", 0)) * h)
+        # 반지름이 없거나 너무 작으면 최소 크기를 준다 — 점만 찍으면 티가 안 지워진다.
+        r = max(3, int(float(point.get("r", 0)) * w) + 2)
+        cv2.circle(mask, (x, y), r, 255, -1)
+
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     repaired = cv2.inpaint(bgr, mask, 3, cv2.INPAINT_TELEA)
-    alpha = (cv2.GaussianBlur(mask, (13, 13), 0).astype(np.float32) / 255.0) * min(0.86, strength)
+    alpha = (cv2.GaussianBlur(mask, (13, 13), 0).astype(np.float32) / 255.0) * min(0.95, strength)
     out = bgr * (1 - alpha[..., None]) + repaired * alpha[..., None]
-    return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB), count
+    return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
 
 
 def _add_contour_guides(rgb: np.ndarray, landmarks, w: int, h: int, nose_strength: float) -> np.ndarray:
-    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-    overlay = bgr.copy()
+    """콧대에 하이라이트를 얹는다.
+
+    ⚠ 예전에는 흰 선(polylines)과 점(circle)을 **그렸다.** 결과물을 보니 하이라이터가 아니라
+    **코에 그어놓은 낙서**로 보였다(실측 2026-08-04). 사용자는 '왜 선이 그어졌지'로 받아들인다.
+    지금은 콧대를 따라 만든 마스크를 크게 블러해 **밝기만 더한다** — 실제 하이라이터에 가깝다.
+
+    밝기는 Lab 의 L 채널에만 더한다. BGR 에 흰색을 섞으면 채도가 빠져 회색빛이 돈다.
+    """
+    if nose_strength <= 0:
+        return rgb
+
     nose = _points(landmarks, NOSE_LINE, w, h)
-    if nose_strength > 0:
-        cv2.polylines(overlay, [nose], False, (246, 248, 255), max(1, int(w * 0.004)), cv2.LINE_AA)
-        for p in nose[2:7:2]:
-            cv2.circle(overlay, tuple(int(v) for v in p), max(2, int(w * 0.007)), (238, 226, 214), -1, cv2.LINE_AA)
-    alpha = min(0.22, 0.08 + nose_strength * 0.16)
-    out = cv2.addWeighted(overlay, alpha, bgr, 1 - alpha, 0)
-    return cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
+    band = np.zeros((h, w), dtype=np.uint8)
+    # 콧대 폭에 맞춘 굵기. 얼굴 크기에 비례해야 사진 해상도가 달라도 같게 보인다.
+    thickness = max(3, int(w * 0.030))
+    cv2.polylines(band, [nose], False, 255, thickness, cv2.LINE_AA)
+    # 큰 블러가 핵심이다. 경계가 남으면 다시 '그린 것'처럼 보인다.
+    blur = max(3, int(w * 0.05)) | 1
+    soft = cv2.GaussianBlur(band, (blur, blur), 0).astype(np.float32) / 255.0
+
+    lab = cv2.cvtColor(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2LAB).astype(np.float32)
+    # 최대 +14 L. 그 이상은 콧대가 하얗게 떠서 합성 티가 난다(눈으로 비교해 정한 값).
+    lab[:, :, 0] = np.clip(lab[:, :, 0] + soft * (14.0 * nose_strength), 0, 255)
+    bgr = cv2.cvtColor(lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 # 사용자가 1단계에서 고르는 '개선하고 싶은 부위' → 추천 카테고리(복수 가능).
@@ -275,7 +364,9 @@ def _render(rgb, lm, face_mask, face_pts, tuning: dict, frontal: float) -> np.nd
     h, w = rgb.shape[:2]
     strength = np.clip(tuning["face_line"] / 100.0, 0.0, 1.0) * frontal
     out = _reshape_face(rgb, face_mask, face_pts, strength, tuning["jaw_balance"] / 100.0)
-    out, _ = _soften_blemishes(out, face_mask, np.clip(tuning["blemish_care"] / 100.0, 0.0, 1.0))
+    # ⚠ 카드 미리보기에서는 잡티를 건드리지 않는다. 카드가 말하는 것은 **얼굴선·코**이고,
+    #   잡티 자동 제거는 어차피 눈에 안 보이는 수준이었다(실측 픽셀차 0.005).
+    #   지우는 것은 결과 화면에서 사용자가 고른 지점만 한다(2026-08-04 결정).
     return _add_contour_guides(out, lm, w, h, np.clip(tuning["nose_contour"] / 100.0, 0.0, 1.0))
 
 
@@ -707,8 +798,14 @@ def simulate(
 
     face_strength = np.clip(face_line / 100.0, 0.0, 1.0) * frontal
     out = _reshape_face(rgb, face_mask, face_pts, face_strength, jaw_balance / 100.0)
-    out, blemish_count = _soften_blemishes(out, face_mask, np.clip(blemish_care / 100.0, 0.0, 1.0))
     out = _add_contour_guides(out, lm, w, h, np.clip(nose_contour / 100.0, 0.0, 1.0))
+
+    # 잡티는 **자동으로 지우지 않는다.** 후보 위치만 돌려주고, 지울지는 사용자가 고른다
+    # (2026-08-04 결정). blemish_care 는 이제 '지우는 강도'가 아니라 후보를 볼지 여부다.
+    blemish_points = (
+        find_blemish_candidates(rgb, face_mask, lm) if blemish_care > 0 else []
+    )
+    blemish_count = len(blemish_points)
 
     # ⚠ 여기서 Face Mesh 가 한 번 더 돈다(이 모듈에서 이미 한 번 돌렸다). 재사용을 시도했다가
     #   되돌렸다 — 측정해 보니 **이득이 작고 부작용이 있었다**:
@@ -757,4 +854,6 @@ def simulate(
         "consultation_questions": consultation_questions(
             concerns, recommendations, bool(referral.get("urgent")),
         ),
+        # 점·잡티 후보 위치(0~1 정규화). 지우지는 않았다 — 사용자가 고른 것만 지운다.
+        "blemish_points": blemish_points,
     }

@@ -164,6 +164,18 @@ class VirtualSurgeryPreviewCard(BaseModel):
     preview_image: str
 
 
+class BlemishPoint(BaseModel):
+    """점·잡티 후보 한 곳.
+
+    좌표는 이미지 크기에 대한 **0~1 비율**이다. 프론트가 이미지를 어떤 크기로 그리든
+    그대로 얹을 수 있어야 하기 때문 — 픽셀 좌표로 주면 화면 크기마다 어긋난다.
+    """
+
+    x: float
+    y: float
+    r: float = 0.0
+
+
 class PhotoQualityIssue(BaseModel):
     code: str
     message: str
@@ -218,6 +230,13 @@ class VirtualSurgeryResponse(BaseModel):
     # 상담에서 물어볼 질문(설계안 §16). 시술 추천이 아니라 **질문 목록**이라,
     # 의료광고 회신 전에도 넣을 수 있다(무엇을 하라고 말하지 않는다).
     consultation_questions: list[str] = Field(default_factory=list)
+    # 점·잡티 **후보 위치**(0~1 정규화). 자동으로 지우지 않는다 — 사용자가 고른 것만 지운다.
+    blemish_points: list[BlemishPoint] = Field(default_factory=list)
+
+
+class VirtualSurgeryRetouchResponse(BaseModel):
+    preview_image: str
+    removed: int = 0
 
 
 class RecommendationRequest(BaseModel):

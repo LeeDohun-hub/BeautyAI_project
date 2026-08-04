@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, MyDataDeletionResult, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryTuning } from '../types/api';
+import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, MyDataDeletionResult, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryRetouchResponse, VirtualSurgeryTuning } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -134,6 +134,23 @@ export async function simulateVirtualSurgery(
   form.append('concerns', (choices.concerns ?? []).join(','));
   form.append('desired_moods', (choices.desiredMoods ?? []).join(','));
   const { data } = await api.post<VirtualSurgeryResponse>('/api/virtual-surgery/simulate', form);
+  return data;
+}
+
+/**
+ * 사용자가 고른 점·잡티만 지운다.
+ *
+ * ⚠ 원본 파일을 다시 보낸다. 서버가 사진을 들고 있지 않기 때문이다(개인정보 미저장).
+ *   왕복이 한 번 더 늘지만 '적용'을 누를 때만 일어난다.
+ */
+export async function retouchBlemishes(
+  file: File,
+  points: { x: number; y: number; r: number }[],
+): Promise<VirtualSurgeryRetouchResponse> {
+  const form = new FormData();
+  form.append('image', file);
+  form.append('points', points.map((p) => `${p.x},${p.y},${p.r}`).join(';'));
+  const { data } = await api.post<VirtualSurgeryRetouchResponse>('/api/virtual-surgery/retouch', form);
   return data;
 }
 

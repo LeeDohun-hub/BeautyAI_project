@@ -48,7 +48,7 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, setSessionToken, simulateVirtualSurgery } from './api/client';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, retouchBlemishes, setSessionToken, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
 import type { AnalysisMode, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
 
@@ -1303,6 +1303,11 @@ export default function App() {
   const [surgeryCardsLoading, setSurgeryCardsLoading] = useState(false);
   // 사진 품질 경고. 카드 화면에서 보여줘야 결과지까지 간 뒤에 '다시 찍으세요'를 듣지 않는다.
   const [photoQuality, setPhotoQuality] = useState<PhotoQuality | null>(null);
+  // 점·잡티: 사용자가 고른 후보의 인덱스. **자동으로 지우지 않는다** —
+  // 자동 제거는 오탐/미탐 줄다리기가 끝나지 않아, 고르게 하는 쪽으로 바꿨다(2026-08-04).
+  const [pickedBlemishes, setPickedBlemishes] = useState<number[]>([]);
+  const [retouchedImage, setRetouchedImage] = useState<string | null>(null);
+  const [retouching, setRetouching] = useState(false);
   // 변화 강도 — 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다.
   const [surgeryIntensity, setSurgeryIntensity] = useState<VirtualSurgeryIntensity>('balanced');
   // ⚠ 이 훅은 **컴포넌트 최상위**에 있어야 한다. 처음에 renderVirtualSurgeryFlowPage() 안에
@@ -1674,12 +1679,32 @@ export default function App() {
     try {
       const result = await simulateVirtualSurgery(file, virtualSurgeryTuning, virtualSurgeryProfile);
       setVirtualSurgeryResult(result);
+      // 새 분석이면 이전에 고른 점은 무효다. 안 지우면 다른 사진에 옛 좌표가 얹힌다.
+      setPickedBlemishes([]);
+      setRetouchedImage(null);
       if (result.detected) setVirtualSurgeryStep((step) => Math.max(step, 2));
       if (!result.detected) setError(result.message);
     } catch {
       setError('가상 성형 추천을 생성하지 못했습니다. 정면 얼굴 사진과 밝은 조명의 이미지를 다시 선택해 주세요.');
     } finally {
       setVirtualSurgeryLoading(false);
+    }
+  }
+
+  /** 고른 점만 지운다. 원본을 다시 보내는 이유는 서버가 사진을 안 들고 있어서다(개인정보 미저장). */
+  async function applyBlemishRemoval() {
+    const points = virtualSurgeryResult?.blemish_points ?? [];
+    if (!virtualSurgeryFile || !pickedBlemishes.length) return;
+    setRetouching(true);
+    try {
+      const chosen = pickedBlemishes.map((i) => points[i]).filter(Boolean);
+      const res = await retouchBlemishes(virtualSurgeryFile, chosen);
+      setRetouchedImage(res.preview_image);
+    } catch {
+      // 보정은 부가 기능이다 — 실패해도 원래 결과는 그대로 남는다.
+      setError('점 제거에 실패했습니다. 다시 시도해 주세요.');
+    } finally {
+      setRetouching(false);
     }
   }
 
@@ -1710,6 +1735,9 @@ export default function App() {
     try {
       const result = await simulateVirtualSurgery(virtualSurgeryFile, virtualSurgeryTuning, virtualSurgeryProfile);
       setVirtualSurgeryResult(result);
+      // 새 분석이면 이전에 고른 점은 무효다. 안 지우면 다른 사진에 옛 좌표가 얹힌다.
+      setPickedBlemishes([]);
+      setRetouchedImage(null);
       if (result.detected) setVirtualSurgeryStep((step) => Math.max(step, 2));
       if (!result.detected) setError(result.message);
     } catch {
@@ -4275,12 +4303,60 @@ export default function App() {
           <Grid item xs={12} sm={6}>
             <Box className="virtual-result-image">
               <span>Recommended</span>
-              <img src={virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
+              <img src={retouchedImage ?? virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
             </Box>
           </Grid>
         </Grid>
       )
     ) : uploadBox;
+
+    // 점·잡티 후보를 사진 위에 얹어 **사용자가 고르게** 한다.
+    // 자동 제거를 쓰지 않는 이유: 실측에서 후보의 상당수가 이목구비·헤어라인이었고,
+    // 정작 뚜렷한 주근깨는 못 잡았다. 고르게 하면 오탐이 나와도 안 고르면 그만이다.
+    const blemishPoints = virtualSurgeryResult?.blemish_points ?? [];
+    const blemishPicker = blemishPoints.length > 0 ? (
+      <Box sx={{ mt: 2 }}>
+        <Typography fontWeight={900}>{t('점·잡티 지우기')}</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          {t('사진에서 지우고 싶은 점을 눌러 고르세요. 고른 것만 지웁니다.')}
+        </Typography>
+        <Box className="blemish-stage">
+          <img src={virtualSurgeryResult?.original_image} alt={t('원본 얼굴 사진')} />
+          {blemishPoints.map((point, index) => (
+            <button
+              type="button"
+              key={`${point.x}-${point.y}`}
+              className={`blemish-dot${pickedBlemishes.includes(index) ? ' picked' : ''}`}
+              style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }}
+              aria-label={t('점 선택')}
+              aria-pressed={pickedBlemishes.includes(index)}
+              onClick={() => setPickedBlemishes((prev) => (
+                prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
+              ))}
+            />
+          ))}
+        </Box>
+        <Stack direction="row" spacing={1} sx={{ mt: 1 }} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Button
+            variant="contained"
+            size="small"
+            disabled={!pickedBlemishes.length || retouching || !virtualSurgeryFile}
+            startIcon={retouching ? <CircularProgress size={14} color="inherit" /> : undefined}
+            onClick={() => void applyBlemishRemoval()}
+          >
+            {t('고른 점 지우기')} ({pickedBlemishes.length})
+          </Button>
+          {(pickedBlemishes.length > 0 || retouchedImage) && (
+            <Button
+              size="small"
+              onClick={() => { setPickedBlemishes([]); setRetouchedImage(null); }}
+            >
+              {t('되돌리기')}
+            </Button>
+          )}
+        </Stack>
+      </Box>
+    ) : null;
 
     const renderFlowStep = () => {
       if (virtualSurgeryStep === 0) {
@@ -4453,7 +4529,11 @@ export default function App() {
         return (
           <Grid container spacing={2}>
             <Grid item xs={12} md={6}>
-              <Paper elevation={0} className="virtual-preview-panel">{beforeAfter}</Paper>
+              <Paper elevation={0} className="virtual-preview-panel">
+                {beforeAfter}
+                {/* 점 고르기는 미리보기 바로 아래에 둔다 — 사진을 보면서 골라야 한다. */}
+                {blemishPicker}
+              </Paper>
             </Grid>
             <Grid item xs={12} md={6}>
               <Paper elevation={0} className="virtual-control-panel">

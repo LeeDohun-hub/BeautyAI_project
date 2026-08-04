@@ -47,6 +47,7 @@ from app.schemas.api import (
     RecommendationResponse,
     SkinScores,
     VirtualSurgeryPreviewCardsResponse,
+    VirtualSurgeryRetouchResponse,
     VirtualSurgeryResponse,
 )
 from app.services import amazon_catalog
@@ -1043,6 +1044,48 @@ async def preview_virtual_surgery_cards(
         return VirtualSurgeryPreviewCardsResponse(**preview_cards(image_bytes, intensity=intensity))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not build previews for this image.") from exc
+
+
+@router.post("/virtual-surgery/retouch", response_model=VirtualSurgeryRetouchResponse)
+async def retouch_virtual_surgery(
+    image: UploadFile = File(...),
+    # "x,y,r;x,y,r;…" (0~1 정규화). 사용자가 화면에서 고른 지점만 온다.
+    points: str = Form(default=""),
+) -> VirtualSurgeryRetouchResponse:
+    """사용자가 고른 점·잡티만 지운다.
+
+    자동 제거를 하지 않는 이유(2026-08-04 결정): 자동은 오탐/미탐 줄다리기가 끝나지 않는다.
+    후보만 보여주고 사용자가 고르면, 오탐이 나와도 안 고르면 그만이라 정밀도 요구가 낮아진다.
+
+    ⚠ 원본을 다시 받는다. 서버에 사진을 들고 있지 않기 때문이다(개인정보 미저장 원칙).
+      왕복이 한 번 더 늘지만, 사용자가 '적용'을 누를 때만 일어난다.
+    """
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="An image file is required.")
+    image_bytes = await image.read()
+
+    parsed: list[dict] = []
+    for chunk in (points or "").split(";"):
+        parts = [p for p in chunk.split(",") if p.strip()]
+        if len(parts) < 2:
+            continue
+        try:
+            parsed.append({
+                "x": float(parts[0]),
+                "y": float(parts[1]),
+                "r": float(parts[2]) if len(parts) > 2 else 0.0,
+            })
+        except ValueError:
+            continue
+
+    from app.services.virtual_surgery_simulator import _load_rgb, _to_data_url, remove_blemishes
+
+    try:
+        rgb = _load_rgb(image_bytes)
+        out = remove_blemishes(rgb, parsed)
+        return VirtualSurgeryRetouchResponse(preview_image=_to_data_url(out), removed=len(parsed))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Could not retouch this image.") from exc
 
 
 @router.post("/analyze-nail-design", response_model=AnalyzeNailDesignResponse)

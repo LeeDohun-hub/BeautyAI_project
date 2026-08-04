@@ -257,6 +257,18 @@ export type VirtualSurgeryResponse = {
   photo_quality?: PhotoQuality | null;
   /** 상담에서 물어볼 질문. 시술 추천이 아니라 질문 목록이다(설계안 §16). */
   consultation_questions?: string[];
+  /**
+   * 점·잡티 **후보 위치**(이미지 크기 대비 0~1 비율).
+   * 자동으로 지우지 않는다 — 사용자가 고른 것만 retouch 로 지운다.
+   */
+  blemish_points?: BlemishPoint[];
+};
+
+export type BlemishPoint = { x: number; y: number; r: number };
+
+export type VirtualSurgeryRetouchResponse = {
+  preview_image: string;
+  removed: number;
 };
 
 export type ProductColumn = {

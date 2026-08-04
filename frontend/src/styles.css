@@ -1884,3 +1884,55 @@ code, pre, .mono {
     max-width: 42vw;
   }
 }
+
+/* ── 점·잡티 고르기 ────────────────────────────────────────────────────────
+   자동 제거를 쓰지 않고 사용자가 고르게 한다(2026-08-04 결정).
+   점을 사진 위에 절대배치로 얹는데, 좌표가 **0~1 비율**로 오므로 % 로 그대로 쓴다 —
+   픽셀로 받으면 화면 크기마다 어긋난다. */
+.blemish-stage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.blemish-stage img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.blemish-dot {
+  position: absolute;
+  /* 좌표가 점의 중심이므로 자기 크기의 절반만큼 당긴다. */
+  transform: translate(-50%, -50%);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: rgba(29, 143, 199, 0.28);
+  cursor: pointer;
+  transition: background 0.12s, transform 0.12s;
+}
+
+.blemish-dot:hover {
+  background: rgba(29, 143, 199, 0.5);
+}
+
+.blemish-dot.picked {
+  background: rgba(240, 111, 155, 0.85);
+  border-color: #ffffff;
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+/* 터치 기기에서는 손가락으로 눌러야 하므로 더 크게.
+   ⚠ 위의 전역 min-height:44px 는 button 에도 걸리지만, 여기선 width 도 같이 키워야
+     원이 찌그러지지 않는다. */
+@media (pointer: coarse) {
+  .blemish-dot {
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+  }
+}
