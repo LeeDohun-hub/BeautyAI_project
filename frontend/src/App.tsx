@@ -2706,7 +2706,7 @@ export default function App() {
                           '혼혈/다인종',
                           '선택 안 함',
                         ].map((option) => (
-                          <MenuItem key={option} value={option}>{option}</MenuItem>
+                          <MenuItem key={option} value={option}>{t(option)}</MenuItem>
                         ))}
                       </Select>
                     </FormControl>
@@ -3892,7 +3892,7 @@ export default function App() {
                     disabled={loading === 'recommend' || loading === 'analyzing'}
                   >
                     {ITEM_REGION_FILTERS.map((region) => (
-                      <MenuItem key={region.value} value={region.value}>{region.label}</MenuItem>
+                      <MenuItem key={region.value} value={region.value}>{t(region.label)}</MenuItem>
                     ))}
                   </Select>
                 </FormControl>
@@ -3905,7 +3905,7 @@ export default function App() {
                     disabled={loading === 'recommend' || loading === 'analyzing'}
                   >
                     {(skinRegion === 'jp' ? JP_ITEM_PLATFORM_FILTERS : KR_ITEM_PLATFORM_FILTERS).map((platform) => (
-                      <MenuItem key={platform.value} value={platform.value}>{platform.label}</MenuItem>
+                      <MenuItem key={platform.value} value={platform.value}>{t(platform.label)}</MenuItem>
                     ))}
                   </Select>
                 </FormControl>
