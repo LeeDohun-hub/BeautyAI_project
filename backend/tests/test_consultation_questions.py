@@ -5,6 +5,8 @@
 테스트도 그 성격을 지킨다(시술명·비용이 새어 들어가면 전제가 무너진다).
 """
 
+import re
+
 import pytest
 
 from app.services.virtual_surgery_simulator import (
@@ -50,18 +52,40 @@ def test_no_duplicates() -> None:
 
 
 @pytest.mark.parametrize("concerns", [None, [], ["코 라인"], ["점·잡티 제거"], ["윤곽·얼굴형"]])
-def test_never_names_a_procedure_or_price(concerns: list[str] | None) -> None:
-    """법무 회신 전까지 시술명·비용은 금지다(medical_ad_working_assumptions.md).
+def test_never_names_a_procedure(concerns: list[str] | None) -> None:
+    """시술명은 쓰지 않는다(medical_ad_working_assumptions.md).
 
-    질문 문구에 그것들이 섞이면 '질문을 줄 뿐'이라는 전제가 무너진다.
+    이름을 대는 순간 '질문을 줄 뿐'이 아니라 그 시술을 가리키는 것이 된다.
     """
-    banned = [
-        "보톡스", "필러", "리프팅", "절골", "양악", "안면윤곽", "쌍꺼풀", "코성형",
-        "만원", "비용은", "가격", "원대",
-    ]
+    banned = ["보톡스", "필러", "리프팅", "절골", "양악", "안면윤곽", "쌍꺼풀", "코성형", "지방이식"]
     for question in consultation_questions(concerns, referral_urgent=True):
         for word in banned:
-            assert word not in question, f"금지어 '{word}' 가 들어 있습니다: {question}"
+            assert word not in question, f"시술명 '{word}' 가 들어 있습니다: {question}"
+
+
+@pytest.mark.parametrize("concerns", [None, ["코 라인"], ["윤곽·얼굴형"]])
+def test_never_states_an_amount(concerns: list[str] | None) -> None:
+    """막아야 할 것은 '비용이라는 단어'가 아니라 **금액**이다.
+
+    ⚠ 예전 검사는 금지어에 '비용은'을 넣어 두었는데, 비용을 **묻는** 질문
+    ("총 비용이 얼마인가요?")이 조사 차이로 우연히 통과했다. 통과한 건 맞지만
+    검사가 의도를 표현하지 못한 것이라 규칙을 다시 썼다.
+
+    우리가 금액을 말하면 광고가 되고, 사용자가 묻게 하면 안 된다(§6).
+    """
+    amount = re.compile(r"\d[\d,]*\s*(원|만원|엔|円|만\s*원)")
+    for question in consultation_questions(concerns, referral_urgent=True):
+        assert not amount.search(question), f"금액이 들어 있습니다: {question}"
+
+
+def test_cost_is_asked_not_stated() -> None:
+    """비용은 **묻는다**. 가격 데이터가 없기도 하고, 표시하면 광고 판정의 핵심 요소가 된다(§6)."""
+    questions = consultation_questions(["코 라인"])
+    assert any("총 비용" in q and q.rstrip().endswith("?") for q in questions), (
+        "비용을 묻는 질문이 없습니다 — 사용자가 상담에서 확인할 방법이 사라진다"
+    )
+    # 추가 청구 항목까지 묻게 한다. 총액만 물으면 마취·검사·재수술을 나중에 알게 된다.
+    assert any("따로 청구" in q for q in questions)
 
 
 def test_questions_are_questions() -> None:
