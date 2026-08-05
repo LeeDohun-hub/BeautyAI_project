@@ -14,6 +14,18 @@ COPY . .
 #    미정의면 undefined → localhost 폴백이 번들에 구워져 프로덕션에서 깨진다.
 ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
+# 쇼핑몰(BeautyWEB)로 나가는 주소. compose 가 넘겨도 **여기서 ARG 로 선언하지 않으면
+# Docker 가 경고만 남기고 버린다** — 실제로 그래서 운영 ai.yopalette.com 의 홈 버튼이
+# localhost:5175 를 가리켰다(제보 2026-08-05). compose 에 배선하는 것만으로는 부족하고,
+# 이 파일에도 반드시 같이 추가해야 한다.
+ARG VITE_WEB_BASE_URL_KO=""
+ARG VITE_WEB_BASE_URL_JA=""
+ARG VITE_WEB_BASE_URL=""
+ENV VITE_WEB_BASE_URL_KO=$VITE_WEB_BASE_URL_KO
+ENV VITE_WEB_BASE_URL_JA=$VITE_WEB_BASE_URL_JA
+ENV VITE_WEB_BASE_URL=$VITE_WEB_BASE_URL
+
 RUN npm run build
 
 # --- 서빙 ---

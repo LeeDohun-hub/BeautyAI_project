@@ -9,6 +9,10 @@
 
 이 부류는 **화면을 열어 눌러 보기 전에는 드러나지 않는다** — 빌드도 배포도 테스트도
 전부 통과한다. 그래서 여기서 잡는다.
+
+⚠ 2026-08-05: compose 만 검사했더니 이 테스트가 통과하는데도 증상이 그대로였다.
+Docker 는 **Dockerfile 에 ARG 로 선언되지 않은 build arg 를 경고만 남기고 버린다.**
+그래서 compose 의 args 와 Dockerfile 의 ARG **둘 다** 있어야 값이 실제로 전달된다.
 """
 
 import re
@@ -19,6 +23,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "frontend" / "src" / "App.tsx"
 COMPOSE = ROOT / "docker-compose.prod.yml"
+DOCKERFILE = ROOT / "frontend" / "Dockerfile.prod"
 
 
 def _env_keys_with_local_default() -> set[str]:
@@ -54,4 +59,23 @@ def test_local_defaulted_env_is_passed_at_build_time(key: str) -> None:
         f"{key} 가 docker-compose.prod.yml 의 build args 에 없습니다.\n"
         "  Vite 는 빌드 시점에 치환하므로 런타임 환경변수로는 못 고칩니다 —\n"
         "  인자를 안 주면 코드의 로컬 기본값(localhost)이 번들에 그대로 구워집니다."
+    )
+
+
+@pytest.mark.parametrize("key", LOCAL_DEFAULTED)
+def test_local_defaulted_env_is_declared_in_dockerfile(key: str) -> None:
+    """Dockerfile 에도 ARG 로 선언돼야 한다.
+
+    compose 에만 적고 여기를 빼면 Docker 가 그 인자를 **조용히 버린다**(경고뿐).
+    빌드는 성공하고 배포도 성공하는데 번들에는 localhost 가 들어간다 — 실제 사고 경로다.
+    ENV 까지 있어야 `npm run build` 단계의 Vite 가 값을 본다.
+    """
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert re.search(rf"^\s*ARG\s+{key}\b", dockerfile, re.MULTILINE), (
+        f"{key} 가 frontend/Dockerfile.prod 에 ARG 로 선언돼 있지 않습니다.\n"
+        "  compose 의 build args 만으로는 전달되지 않습니다 — Docker 가 버립니다."
+    )
+    assert re.search(rf"^\s*ENV\s+{key}=", dockerfile, re.MULTILINE), (
+        f"{key} 가 frontend/Dockerfile.prod 에 ENV 로 노출돼 있지 않습니다.\n"
+        "  ARG 만 있으면 RUN npm run build 안의 Vite 가 값을 보지 못합니다."
     )
