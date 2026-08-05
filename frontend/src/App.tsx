@@ -255,8 +255,26 @@ function CartHandoffQr({
   }, [signature, linked]);
 
   if (!linked) {
+    // 부모는 74×74 고정 박스다. 예전엔 여기서 maxWidth:132 로 안내문을 뿜어 박스를 넘겼고,
+    // 일본어처럼 문장이 길어지면 옆 QR 캡션과 겹쳐 읽을 수 없었다(2026-08-05 실측).
+    // 박스 안에 맞춰 접고, 넘치면 말줄임으로 끊는다 — 결과지는 고정 크기 인쇄면이라
+    // 넘친 만큼 그대로 잘려 나간다.
     return (
-      <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 132, display: 'block' }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          display: '-webkit-box',
+          WebkitBoxOrient: 'vertical',
+          WebkitLineClamp: 4,
+          overflow: 'hidden',
+          width: '100%',
+          height: '100%',
+          fontSize: '0.5rem',
+          lineHeight: 1.25,
+          textAlign: 'center',
+        }}
+      >
         {t('웹 계정으로 로그인하면 QR 로 장바구니에 담을 수 있습니다.')}
       </Typography>
     );
@@ -884,7 +902,7 @@ function RakutenProductCard({
         <Chip label={badgeText} size="small" sx={{ width: 'fit-content' }} />
       )}
       <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
-      <Typography variant="body2" color="text.secondary" noWrap>{product.brand}</Typography>
+      <Typography variant="body2" color="text.secondary" noWrap>{t(product.brand)}</Typography>
       {/* 가격은 일부러 표시하지 않는다(2026-07-29 실측 근거).
           카드 하나에 구매 버튼이 여러 개인데 가격은 하나뿐이라, 어느 버튼을 누르든 최소
           하나는 틀린 값이 된다. 올리브영 버튼이 붙은 카드 5건을 실제 국내몰 판매가와 대조하니
@@ -916,7 +934,7 @@ function RakutenProductCard({
             }
             sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
           >
-            {platform.label}
+            {t(platform.label)}
           </Button>
         ))}
       </Stack>
@@ -1198,6 +1216,9 @@ const PC_COLOR_ATOMS_JA: Record<string, string> = {
   푸시아: 'フクシア',
   // 결과지 '메이크업 톤'에 실제로 나오는데 빠져 있던 색상어(실측 확인).
   와인: 'ワイン', 페일: 'ペール', 베리: 'ベリー', 라일락: 'ライラック',
+  // 얼굴형 화면의 블러셔·셰이딩 색상(FACE_PRODUCT_MAP)에 쓰이는데 빠져 있던 것(2026-08-05).
+  그레이시: 'グレイッシュ', 토프: 'トープ', 애쉬: 'アッシュ',
+  모카: 'モカ', 초콜릿: 'チョコレート',
 };
 
 function localizeColorToJa(koPhrase: string): string {
@@ -1286,6 +1307,15 @@ export default function App() {
     const dict = t(value);
     if (dict !== value || appLang !== 'ja') return dict;
     return localizePcPhraseToJa(value);
+  };
+  /** 얼굴 비율 라벨. 서버가 `상/중/하안부 1.0 : 1.5 : 1.1` 처럼 **이름+수치**로 조립해
+   *  내려주므로 완성형은 사전에 못 넣는다 — 앞의 이름만 번역하고 수치는 그대로 둔다. */
+  const localizeRatioLabel = (label: string): string => {
+    const names = ['상/중/하안부', '눈 사이/눈 크기', '얼굴 가로/세로', '턱선/광대 대비'];
+    for (const name of names) {
+      if (label.startsWith(name)) return `${t(name)}${label.slice(name.length)}`;
+    }
+    return t(label);
   };
   /** 서버가 조립해 내려주는 문장(판정 이유·경계 안내)을 화면 언어로 고른다.
    *
@@ -3132,17 +3162,20 @@ export default function App() {
           ? `${personalColorResult.tone}-${personalColorResult.subtype}`
           : '';
         const faceProductSet = FACE_PRODUCT_MAP[personalColorKey] ?? DEFAULT_FACE_PRODUCT_SET;
-        const shapeTags = faceShape?.detected ? faceShape.tags.join(' ') : null;
+        // 태그는 `#계란형` 처럼 '#'+얼굴형이라 '#'를 떼고 번역한 뒤 다시 붙인다.
+        const shapeTags = faceShape?.detected
+          ? faceShape.tags.map((tag) => (tag.startsWith('#') ? `#${t(tag.slice(1))}` : t(tag))).join(' ')
+          : null;
         const shapeSummary = faceShape?.detected
-          ? faceShape.summary
+          ? t(faceShape.summary)
           : faceShape
-            ? faceShape.summary
+            ? t(faceShape.summary)
             // 저장된 퍼스널 컬러로 들어오면 사진이 없다 — '분석 중'으로 두면 영영 안 끝난다.
             : personalColorResult && personalColorCount === 0
-              ? '저장된 퍼스널 컬러로 진행 중이라 얼굴형 분석은 건너뛰었습니다. 사진을 넣으면 얼굴형까지 함께 분석합니다.'
+              ? t('저장된 퍼스널 컬러로 진행 중이라 얼굴형 분석은 건너뛰었습니다. 사진을 넣으면 얼굴형까지 함께 분석합니다.')
               : personalColorResult
-                ? '얼굴형을 분석하고 있어요…'
-                : 'AI 퍼스널컬러 분석을 먼저 진행하면 사진을 바탕으로 얼굴형이 표시됩니다.';
+                ? t('얼굴형을 분석하고 있어요…')
+                : t('AI 퍼스널컬러 분석을 먼저 진행하면 사진을 바탕으로 얼굴형이 표시됩니다.');
         const ratioRows = faceShape?.detected && faceShape.ratios.length
           ? faceShape.ratios
           : [
@@ -3151,12 +3184,16 @@ export default function App() {
               { label: '얼굴 가로/세로', width: 78 },
               { label: '턱선/광대 대비', width: 64 },
             ];
-        const blusherTip = faceShape?.detected
-          ? faceShape.blusher_tip
-          : '웃을 때 볼 중앙보다 살짝 바깥에 생기 있게 올려 부드러운 인상을 살려주세요.';
-        const shadingTip = faceShape?.detected
-          ? faceShape.shading_tip
-          : '턱선 양옆과 광대 외곽에 부드럽게 넣어 얼굴 윤곽을 자연스럽게 정리해 보세요.';
+        const blusherTip = t(
+          faceShape?.detected
+            ? faceShape.blusher_tip
+            : '웃을 때 볼 중앙보다 살짝 바깥에 생기 있게 올려 부드러운 인상을 살려주세요.',
+        );
+        const shadingTip = t(
+          faceShape?.detected
+            ? faceShape.shading_tip
+            : '턱선 양옆과 광대 외곽에 부드럽게 넣어 얼굴 윤곽을 자연스럽게 정리해 보세요.',
+        );
 
         const toneMatchLabel = personalColorResult
           ? `${t(personalColorResult.label)} ${t('매치')}`
@@ -3216,8 +3253,8 @@ export default function App() {
                 <Box className="face-ratio-panel">
                   <Typography fontWeight={900}>{t('얼굴 비율 측정')}</Typography>
                   {ratioRows.map((row) => (
-                    <Box className="face-ratio-row" key={t(row.label)}>
-                      <Typography variant="body2">{t(row.label)}</Typography>
+                    <Box className="face-ratio-row" key={row.label}>
+                      <Typography variant="body2">{localizeRatioLabel(row.label)}</Typography>
                       <Box className="face-ratio-track">
                         <Box sx={{ width: `${row.width}%` }} />
                       </Box>
@@ -3253,7 +3290,7 @@ export default function App() {
                         <Box className="face-product-row" key={row.brand}>
                           <Box className="product-swatch" sx={{ backgroundColor: faceProductSet.blushSwatch }} />
                           <Box>
-                            <Typography fontWeight={900}>{row.brand}</Typography>
+                            <Typography fontWeight={900}>{t(row.brand)}</Typography>
                             <Typography variant="body2" color="text.secondary">{row.desc}</Typography>
                             <Typography variant="caption" color="error">● {toneMatchLabel}</Typography>
                           </Box>
@@ -3276,7 +3313,7 @@ export default function App() {
                         <Box className="face-product-row" key={row.brand}>
                           <Box className="product-swatch" sx={{ backgroundColor: faceProductSet.shadingSwatch }} />
                           <Box>
-                            <Typography fontWeight={900}>{row.brand}</Typography>
+                            <Typography fontWeight={900}>{t(row.brand)}</Typography>
                             <Typography variant="body2" color="text.secondary">{row.desc}</Typography>
                             <Typography variant="caption" color="error">● {toneMatchLabel}</Typography>
                           </Box>
@@ -3331,7 +3368,7 @@ export default function App() {
                     )}
                     <Typography className="style-mood-label" fontWeight={900}>{t(mood.label)}</Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {index + 1}순위 · {reason}
+                      {index + 1}{t('순위')} · {reason}
                     </Typography>
                   </Box>
                 </Grid>
@@ -3350,9 +3387,9 @@ export default function App() {
                   onClick={() => setPersonalColorStep(4)}
                   disabled={loading === 'style-mood-items'}
                 >
-                  {loading === 'style-mood-items'
+                  {t(loading === 'style-mood-items'
                     ? '추천 제품 불러오는 중…'
-                    : '아이템 매칭에서 추천 제품 보기 →'}
+                    : '아이템 매칭에서 추천 제품 보기 →')}
                 </Button>
               </Box>
             )}
@@ -3502,7 +3539,7 @@ export default function App() {
                   ))}
                 </Box>
                 <Typography className="report-copy">
-                  {personalColorResult?.advice?.[0] ?? t(reportProfile.colorLine)}
+                  {t(personalColorResult?.advice?.[0] ?? reportProfile.colorLine)}
                 </Typography>
                 <Stack direction="row" spacing={0.8} sx={{ mt: 1.2 }} flexWrap="wrap" useFlexGap>
                   {personalColorResult?.alternate_label && (
@@ -3530,7 +3567,7 @@ export default function App() {
                       {myFaceMakeup?.mood === activeMood.id ? (
                         <img src={myFaceMakeup.image} alt={`${t('내 사진에')} ${t(activeMood.label)} ${t('적용')}`} />
                       ) : moodThumbnails[activeMood.id] ? (
-                        <img src={moodThumbnails[activeMood.id]} alt={activeMood.label} />
+                        <img src={moodThumbnails[activeMood.id]} alt={t(activeMood.label)} />
                       ) : (
                         <Box className={`style-mood-thumb ${activeMood.thumbClass}`} />
                       )}
@@ -3543,11 +3580,11 @@ export default function App() {
                         onClick={() => applyMoodToMyFace(activeMood.id)}
                         sx={{ mt: 0.6, fontSize: 12 }}
                       >
-                        {myFaceLoading
+                        {t(myFaceLoading
                           ? '적용 중…'
                           : myFaceMakeup?.mood === activeMood.id
                             ? '모델 사진 보기'
-                            : '내 사진으로 보기'}
+                            : '내 사진으로 보기')}
                       </Button>
                     ) : null}
                     {myFaceError ? (
@@ -3591,7 +3628,7 @@ export default function App() {
                       </Box>
                       <Box className="report-product-info">
                         <span>{String(index + 1).padStart(2, '0')}</span>
-                        <Typography>{product.brand} {product.name}</Typography>
+                        <Typography>{t(product.brand)} {product.name}</Typography>
                       </Box>
                     </Box>
                   )) : ['립 메이크업 추천템', '블러셔 추천템', '아이 메이크업 추천템', '베이스 추천템'].map((item, index) => (
@@ -3601,7 +3638,7 @@ export default function App() {
                       </Box>
                       <Box className="report-product-info">
                         <span>{String(index + 1).padStart(2, '0')}</span>
-                        <Typography>{item}</Typography>
+                        <Typography>{t(item)}</Typography>
                       </Box>
                     </Box>
                   ))}
@@ -4085,7 +4122,7 @@ export default function App() {
                                     {/* 가격 미표시 — 아이템매칭 카드와 같은 이유(카드 하나에 판매처가
                                         여럿이라 표시가가 어느 곳에서도 맞지 않는다). */}
                                     <Typography variant="body2" color="text.secondary" noWrap>
-                                      {rp.brand}
+                                      {t(rp.brand)}
                                     </Typography>
                                     {rp.avg_rating != null && (
                                       <Typography variant="caption" color="text.secondary">
@@ -4118,7 +4155,7 @@ export default function App() {
                                           }
                                           sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
                                         >
-                                          {platform.label}
+                                          {t(platform.label)}
                                         </Button>
                                       ))}
                                     </Stack>
@@ -4164,7 +4201,7 @@ export default function App() {
                           <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
                           {/* 가격 미표시 — 위와 동일한 이유. */}
                           <Typography variant="body2" color="text.secondary" noWrap>
-                            {product.brand}
+                            {t(product.brand)}
                           </Typography>
                           {product.avg_rating != null && (
                             <Typography variant="caption" color="text.secondary">
@@ -4212,7 +4249,7 @@ export default function App() {
                                 }
                                 sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
                               >
-                                {platform.label}
+                                {t(platform.label)}
                               </Button>
                             ))}
                           </Stack>
@@ -5397,7 +5434,7 @@ export default function App() {
                       <Box className="report-product-body">
                         <span className="report-product-no">{String(index + 1).padStart(2, '0')}</span>
                         <Typography className="report-product-name">{product.name}</Typography>
-                        <Typography className="report-product-brand">{product.brand}</Typography>
+                        <Typography className="report-product-brand">{t(product.brand)}</Typography>
                       </Box>
                     </Box>
                   ))}

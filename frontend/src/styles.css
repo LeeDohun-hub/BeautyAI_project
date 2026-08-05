@@ -809,7 +809,15 @@ body {
   border-right: 1px solid #d8dde3;
 }
 
+/* QR 줄이 위 내용 길이에 밀려 인쇄면 밖으로 나가지 않게, 세로 flex 로 두고
+   .report-bottom 을 margin-top:auto 로 바닥에 붙인다. 언어에 따라 본문 줄 수가
+   달라져도(일본어가 한국어보다 길다) QR 캡션 위치는 고정된다. */
 .report-main {
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 14px 18px;
 }
 
@@ -1016,7 +1024,10 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 14px;
-  margin-top: 12px;
+  margin-top: auto; /* 바닥 고정 — 위 내용이 길어져도 밀려나지 않는다 */
+  /* 12px 였는데 일본어에서 인쇄면을 4px 넘겨 캡션 마지막 줄이 잘렸다(실측). */
+  padding-top: 6px;
+  flex-shrink: 0;
 }
 
 .fake-qr.small {
@@ -1031,12 +1042,21 @@ body {
   filter: invert(0.08);
 }
 
+/* 결과지는 aspect-ratio 로 높이가 고정된 인쇄면(.print-report-card)이라, 이 캡션이
+   한 줄 늘어나는 것만으로 카드 밖으로 밀려 잘린다. 실측(2026-08-05): 한국어는 2줄(28px)
+   로 12px 여유가 남았는데, 일본어는 92px 폭에서 3줄(42px)이 되어 18px 넘쳤다.
+   → 폭을 넓혀 2줄에 들어가게 하고, 그래도 길어지면 2줄에서 잘라 레이아웃을 지킨다. */
 .report-qr-label {
   margin-top: 4px !important;
-  width: 92px;
+  width: 120px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   color: #4a5562;
   font-size: 0.58rem !important;
   font-weight: 900 !important;
+  line-height: 1.35;
   text-align: center;
 }
 
