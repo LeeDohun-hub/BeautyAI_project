@@ -13,6 +13,7 @@ import {
   DialogTitle,
   Divider,
   FormControlLabel,
+  Switch,
   FormControl,
   Grid,
   IconButton,
@@ -50,7 +51,7 @@ import {
 } from 'lucide-react';
 import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, retouchBlemishes, setSessionToken, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
-import type { AnalysisMode, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
+import type { AnalysisMode, BlemishPoint, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
 // 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
@@ -1424,6 +1425,14 @@ export default function App() {
   // 점·잡티: 사용자가 고른 후보의 인덱스. **자동으로 지우지 않는다** —
   // 자동 제거는 오탐/미탐 줄다리기가 끝나지 않아, 고르게 하는 쪽으로 바꿨다(2026-08-04).
   const [pickedBlemishes, setPickedBlemishes] = useState<number[]>([]);
+  /** 사용자가 사진을 직접 눌러 찍은 점. AI 후보와 별도로 들고 간다.
+   *
+   * 자동 검출은 '주변보다 어두운 곳'을 찾는 휴리스틱이라 이목구비 제외 마스크의 **경계**
+   * (눈꼬리·콧방울·입꼬리)가 자주 살아남고, 정작 옅은 주근깨는 놓친다(제보 2026-08-05).
+   * 서버의 retouch 는 좌표만 받고 출처를 따지지 않으므로, 직접 찍은 점도 그대로 보낸다.
+   * 직접 찍은 점은 '지우겠다는 의사표시'라 별도 선택 단계 없이 항상 대상이다. */
+  const [manualBlemishes, setManualBlemishes] = useState<BlemishPoint[]>([]);
+  const [showAiBlemishes, setShowAiBlemishes] = useState(true);
   const [retouchedImage, setRetouchedImage] = useState<string | null>(null);
   const [retouching, setRetouching] = useState(false);
   // 변화 강도 — 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다.
@@ -1850,10 +1859,11 @@ export default function App() {
   /** 고른 점만 지운다. 원본을 다시 보내는 이유는 서버가 사진을 안 들고 있어서다(개인정보 미저장). */
   async function applyBlemishRemoval() {
     const points = virtualSurgeryResult?.blemish_points ?? [];
-    if (!virtualSurgeryFile || !pickedBlemishes.length) return;
+    const picked = showAiBlemishes ? pickedBlemishes.map((i) => points[i]).filter(Boolean) : [];
+    const chosen = [...picked, ...manualBlemishes];
+    if (!virtualSurgeryFile || !chosen.length) return;
     setRetouching(true);
     try {
-      const chosen = pickedBlemishes.map((i) => points[i]).filter(Boolean);
       const res = await retouchBlemishes(virtualSurgeryFile, chosen);
       setRetouchedImage(res.preview_image);
     } catch {
@@ -4509,42 +4519,93 @@ export default function App() {
     // 자동 제거를 쓰지 않는 이유: 실측에서 후보의 상당수가 이목구비·헤어라인이었고,
     // 정작 뚜렷한 주근깨는 못 잡았다. 고르게 하면 오탐이 나와도 안 고르면 그만이다.
     const blemishPoints = virtualSurgeryResult?.blemish_points ?? [];
-    const blemishPicker = blemishPoints.length > 0 ? (
+    // 직접 찍는 점의 반지름은 AI 후보의 중앙값을 따른다 — 사진 해상도에 따라 튀지 않게.
+    const medianBlemishRadius = (() => {
+      const radii = blemishPoints.map((p) => p.r).filter((r) => r > 0).sort((a, b) => a - b);
+      return radii.length ? radii[Math.floor(radii.length / 2)] : 0.015;
+    })();
+    const totalPicked = (showAiBlemishes ? pickedBlemishes.length : 0) + manualBlemishes.length;
+    const blemishPicker = virtualSurgeryResult?.original_image ? (
       <Box sx={{ mt: 2 }}>
         <Typography fontWeight={900}>{t('점·잡티 지우기')}</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          {t('사진에서 지우고 싶은 점을 눌러 고르세요. 고른 것만 지웁니다.')}
+          {t('지우고 싶은 곳을 사진에서 직접 눌러 찍으세요. AI 후보는 눌러서 고르면 됩니다.')}
         </Typography>
-        <Box className="blemish-stage">
+        <Box
+          className="blemish-stage"
+          onClick={(event) => {
+            // 사진의 빈 곳을 누르면 그 자리에 점을 찍는다. 점 마커 자체의 클릭은
+            // stopPropagation 으로 여기까지 오지 않는다.
+            const rect = event.currentTarget.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            const x = (event.clientX - rect.left) / rect.width;
+            const y = (event.clientY - rect.top) / rect.height;
+            if (x < 0 || x > 1 || y < 0 || y > 1) return;
+            setManualBlemishes((prev) => [...prev, { x: Number(x.toFixed(4)), y: Number(y.toFixed(4)), r: medianBlemishRadius }]);
+          }}
+        >
           <img src={virtualSurgeryResult?.original_image} alt={t('원본 얼굴 사진')} />
-          {blemishPoints.map((point, index) => (
+          {showAiBlemishes && blemishPoints.map((point, index) => (
             <button
               type="button"
-              key={`${point.x}-${point.y}`}
+              key={`ai-${point.x}-${point.y}`}
               className={`blemish-dot${pickedBlemishes.includes(index) ? ' picked' : ''}`}
               style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }}
               aria-label={t('점 선택')}
               aria-pressed={pickedBlemishes.includes(index)}
-              onClick={() => setPickedBlemishes((prev) => (
-                prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
-              ))}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPickedBlemishes((prev) => (
+                  prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
+                ));
+              }}
+            />
+          ))}
+          {manualBlemishes.map((point, index) => (
+            <button
+              type="button"
+              key={`manual-${index}-${point.x}-${point.y}`}
+              className="blemish-dot manual"
+              style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }}
+              aria-label={t('직접 찍은 점 — 다시 누르면 지워집니다')}
+              onClick={(event) => {
+                event.stopPropagation();
+                setManualBlemishes((prev) => prev.filter((_, i) => i !== index));
+              }}
             />
           ))}
         </Box>
+        {blemishPoints.length > 0 && (
+          <FormControlLabel
+            sx={{ mt: 0.5 }}
+            control={(
+              <Switch
+                size="small"
+                checked={showAiBlemishes}
+                onChange={(event) => setShowAiBlemishes(event.target.checked)}
+              />
+            )}
+            label={(
+              <Typography variant="body2" color="text.secondary">
+                {t('AI 후보 보기')} ({blemishPoints.length})
+              </Typography>
+            )}
+          />
+        )}
         <Stack direction="row" spacing={1} sx={{ mt: 1 }} alignItems="center" flexWrap="wrap" useFlexGap>
           <Button
             variant="contained"
             size="small"
-            disabled={!pickedBlemishes.length || retouching || !virtualSurgeryFile}
+            disabled={!totalPicked || retouching || !virtualSurgeryFile}
             startIcon={retouching ? <CircularProgress size={14} color="inherit" /> : undefined}
             onClick={() => void applyBlemishRemoval()}
           >
-            {t('고른 점 지우기')} ({pickedBlemishes.length})
+            {t('고른 점 지우기')} ({totalPicked})
           </Button>
-          {(pickedBlemishes.length > 0 || retouchedImage) && (
+          {(totalPicked > 0 || retouchedImage) && (
             <Button
               size="small"
-              onClick={() => { setPickedBlemishes([]); setRetouchedImage(null); }}
+              onClick={() => { setPickedBlemishes([]); setManualBlemishes([]); setRetouchedImage(null); }}
             >
               {t('되돌리기')}
             </Button>

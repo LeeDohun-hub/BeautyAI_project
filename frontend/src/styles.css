@@ -1914,6 +1914,8 @@ code, pre, .mono {
   display: inline-block;
   max-width: 100%;
   line-height: 0;
+  /* 빈 곳을 눌러 직접 점을 찍을 수 있다는 걸 커서로 알린다. */
+  cursor: crosshair;
 }
 
 .blemish-stage img {
@@ -1944,6 +1946,18 @@ code, pre, .mono {
   background: rgba(240, 111, 155, 0.85);
   border-color: #ffffff;
   transform: translate(-50%, -50%) scale(1.15);
+}
+
+/* 사용자가 직접 찍은 점. AI 후보(파랑)와 색으로 구분한다 — 직접 찍은 건 이미 '지울 것'이라
+   선택 단계가 없고, 다시 누르면 삭제된다. */
+.blemish-dot.manual {
+  background: rgba(46, 173, 122, 0.85);
+  border-color: #ffffff;
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.blemish-dot.manual:hover {
+  background: rgba(46, 173, 122, 1);
 }
 
 /* 터치 기기에서는 손가락으로 눌러야 하므로 더 크게.
