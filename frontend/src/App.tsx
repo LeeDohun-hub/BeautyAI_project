@@ -1416,7 +1416,10 @@ export default function App() {
       if (current.length >= max) return prev;
       return { ...prev, [key]: [...current, option] };
     });
-  const [virtualSurgeryTarget, setVirtualSurgeryTarget] = useState('oval');
+  // 기본은 **아무것도 안 고른 상태**. 다음 단계로는 1단계 목표를 적용한 미리보기가
+  // 그대로 넘어가고, 여기서 카드를 고른 경우에만 그 방향으로 덮어쓴다(제보 2026-08-05).
+  // 예전엔 'oval' 이 미리 선택돼 있어, 사용자가 손대지 않아도 결과지가 '계란형 밸런스'로 나갔다.
+  const [virtualSurgeryTarget, setVirtualSurgeryTarget] = useState('');
   // 카드별 '내 얼굴 적용' 미리보기. 예전 카드는 일러스트라 고르고 나서야 결과를 봤다.
   const [surgeryCards, setSurgeryCards] = useState<VirtualSurgeryPreviewCard[]>([]);
   /** 1단계 목표를 그대로 적용한 미리보기. 4단계의 주인공이라 카드 4장과 분리해 둔다. */
@@ -4407,9 +4410,11 @@ export default function App() {
       },
       {
         id: 'defined',
-        title: '입체 세련형',
-        copy: '코 라인과 중안부 입체감을 살려 또렷한 인상을 만듭니다.',
-        tuning: { faceLine: 46, jawBalance: 34, noseContour: 62, blemishCare: 42 },
+        // 백엔드 CARD_PRESETS 와 같은 값이어야 한다 — 이름·문구가 어긋나면 미리보기와
+        // 결과지가 다른 카드를 말하게 된다.
+        title: '코 라인 정리',
+        copy: '콧방울 폭을 좁히고 중안부를 정돈해 또렷한 인상을 만듭니다.',
+        tuning: { faceLine: 40, jawBalance: 30, noseContour: 95, blemishCare: 45 },
       },
     ] as const;
     const concernOptions = [
@@ -4428,11 +4433,13 @@ export default function App() {
       '좌우 균형 개선',
       '피부결까지 깨끗하게',
     ];
-    const selectedTarget = targetCards.find((item) => item.id === virtualSurgeryTarget) ?? targetCards[0];
+    // 카드를 고르지 않았으면 1단계 목표가 기준이다. targetCards[0] 로 떨어지면
+    // 고르지도 않은 '계란형 밸런스'가 결과지에 실린다.
+    const selectedTarget = targetCards.find((item) => item.id === virtualSurgeryTarget) ?? null;
     const resultCards = virtualSurgeryResult?.recommendations.length
       ? virtualSurgeryResult.recommendations
       : [
-          { title: '윤곽 균형 추천', score: 80, summary: selectedTarget.copy, category: 'face_frame' },
+          { title: '윤곽 균형 추천', score: 80, summary: selectedTarget?.copy ?? targetCards[0].copy, category: 'face_frame' },
           { title: '자연스러움 기준', score: 76, summary: '변화 강도를 높일수록 전후 차이는 커지고 원래 인상 보존 점수는 낮아집니다.', category: 'naturalness' },
           { title: '점·잡티 제거 후보', score: 70, summary: '사진 분석 후 작은 점과 잡티 후보를 분리해 사용자가 확인할 수 있게 합니다.', category: 'blemish' },
         ];
@@ -4445,7 +4452,8 @@ export default function App() {
         ? virtualSurgeryProfile.privacyConsent && (!isMinor || virtualSurgeryProfile.guardianConsent)
       : virtualSurgeryStep === 1 ? Boolean(virtualSurgeryResult?.detected)
       : virtualSurgeryStep === 2 ? Boolean(virtualSurgeryResult?.detected)
-      : virtualSurgeryStep === 3 ? Boolean(virtualSurgeryTarget)
+      // 카드를 안 골라도 넘어간다 — 목표 미리보기가 기본값이기 때문이다.
+      : virtualSurgeryStep === 3 ? Boolean(virtualSurgeryResult?.detected)
       : true;
 
     const goNextVirtualStep = () => setVirtualSurgeryStep((step) => Math.min(step + 1, flowSteps.length - 1));
@@ -4981,9 +4989,29 @@ export default function App() {
                 <Grid item xs={12} md={5}>
                   <Stack spacing={1.5}>
                     <Paper elevation={0} className="virtual-report-summary">
-                      <Typography fontWeight={900}>{t('선택한 개선 얼굴형')}</Typography>
-                      <Typography variant="h6" fontWeight={900}>{t(selectedTarget.title)}</Typography>
-                      <Typography color="text.secondary">{t(selectedTarget.copy)}</Typography>
+                      {/* 카드를 안 골랐으면 1단계 목표가 기준이다. 고르지도 않은 카드 이름을
+                          결과지에 싣지 않는다. */}
+                      <Typography fontWeight={900}>
+                        {t(selectedTarget ? '선택한 개선 얼굴형' : '적용한 목표')}
+                      </Typography>
+                      <Typography variant="h6" fontWeight={900}>
+                        {selectedTarget ? t(selectedTarget.title) : t(surgeryGoalCard?.title ?? '내가 고른 목표 적용')}
+                      </Typography>
+                      <Typography color="text.secondary">
+                        {selectedTarget
+                          ? t(selectedTarget.copy)
+                          : (surgeryGoalCard?.summary
+                            ?? t('1단계에서 고른 목표를 그대로 적용했습니다.'))}
+                      </Typography>
+                      {!selectedTarget && !!surgeryGoalCard?.effects?.length && (
+                        <Stack spacing={0.4} sx={{ mt: 1 }}>
+                          {surgeryGoalCard.effects.map((effect) => (
+                            <Typography key={effect.label} variant="body2" color="text.secondary">
+                              ・<b>{t(effect.label)}</b> {effect.detail}
+                            </Typography>
+                          ))}
+                        </Stack>
+                      )}
                     </Paper>
                     {/* 결과지에서 '조절 퍼센티지'를 뺐다. 의학적 의미가 없는 워프 강도인데, 병원에
                         들고 가면 '62% 해주세요'가 된다. 대신 고른 강도만 말로 적는다. */}

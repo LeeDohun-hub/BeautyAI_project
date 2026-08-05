@@ -472,9 +472,13 @@ CARD_PRESETS: tuple[dict, ...] = (
     {"id": "soft", "title": "부드러운 동안형",
      "summary": "각진 인상을 줄이고 볼륨감과 부드러운 얼굴선을 우선합니다.",
      "tuning": {"face_line": 30, "jaw_balance": 15, "nose_contour": 20, "blemish_care": 62}},
-    {"id": "defined", "title": "입체 세련형",
-     "summary": "코 라인과 중안부 입체감을 살려 또렷한 인상을 만듭니다.",
-     "tuning": {"face_line": 18, "jaw_balance": 55, "nose_contour": 85, "blemish_care": 45}},
+    # '입체 세련형'을 여기서 바꿨다(제보 2026-08-05). face_line 이 18 이라 윤곽을 거의
+    # 안 건드리고 코만 손대는 카드였는데, 코 보정이 하이라이트뿐이던 시절엔 원본과
+    # 구분이 안 됐다. 코 워프를 넣은 지금도 face_line 18 로는 4장 중 혼자만 밋밋하다.
+    # → 코를 확실히 좁히면서 얼굴선도 함께 정리해, 카드 이름값을 하게 만든다.
+    {"id": "defined", "title": "코 라인 정리",
+     "summary": "콧방울 폭을 좁히고 중안부를 정돈해 또렷한 인상을 만듭니다.",
+     "tuning": {"face_line": 40, "jaw_balance": 30, "nose_contour": 95, "blemish_care": 45}},
 )
 
 # ── 상담 후보·비용·회복 (설계안 §6·§7·§8) ──────────────────────────────────────
