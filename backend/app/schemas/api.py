@@ -193,12 +193,22 @@ class ConsultationPlan(BaseModel):
     candidate_note: str = ""
 
 
+class GoalEffect(BaseModel):
+    """미리보기에서 실제로 바뀐 것 한 줄. 렌더에 쓴 값에서 계산한다."""
+
+    label: str
+    detail: str
+
+
 class VirtualSurgeryPreviewCard(BaseModel):
     id: str
     title: str
     summary: str
     preview_image: str
     consultation: ConsultationPlan | None = None
+    # 아래 둘은 '내가 고른 목표' 카드에만 채워진다.
+    goals: list[str] = Field(default_factory=list)
+    effects: list[GoalEffect] = Field(default_factory=list)
 
 
 class BlemishPoint(BaseModel):

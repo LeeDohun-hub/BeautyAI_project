@@ -634,6 +634,53 @@ def goal_tuning(concerns: list[str] | None, desired_moods: list[str] | None) -> 
     return {key: int(max(0, min(100, round(value)))) for key, value in tuning.items()}
 
 
+def goal_effects(tuning: dict, frontal: float) -> list[dict]:
+    """미리보기에서 **실제로 무엇이 얼마나 바뀌었는지**를 문장으로 돌려준다.
+
+    렌더에 쓰는 값과 상한(_MAX_*)에서 그대로 계산한다 — 화면 문구와 실제 워프가
+    어긋나지 않게 하려면 한 곳에서 나와야 한다. 값을 지어내지 않는다.
+
+    ⚠ 퍼센트는 '픽셀 폭이 줄어든 비율'이지 의학적 수치가 아니다. 문구도 그렇게 쓴다.
+    """
+    effects: list[dict] = []
+
+    face = float(np.clip(tuning.get("face_line", 0) / 100.0, 0.0, 1.0)) * max(0.0, frontal)
+    narrowed = min(_MAX_FACE_NARROWING, face * _MAX_FACE_NARROWING)
+    if narrowed > 0.005:
+        focus = float(np.clip(tuning.get("jaw_balance", 50) / 100.0, 0.0, 1.0))
+        # 조사가 붙는 자리라 어절을 완성형으로 둔다("넓게으로" 같은 조합을 막는다).
+        where = (
+            "턱끝 쪽에서" if focus >= 0.6
+            else "중안부까지 넓게" if focus <= 0.35
+            else "하관을 중심으로"
+        )
+        effects.append({
+            "label": "얼굴선",
+            "detail": f"{where} 폭을 약 {narrowed * 100:.0f}% 정리했습니다.",
+        })
+    elif frontal <= 0.0:
+        effects.append({
+            "label": "얼굴선",
+            "detail": "얼굴이 옆으로 돌아가 있어 얼굴선은 건드리지 않았습니다.",
+        })
+
+    nose = float(np.clip(tuning.get("nose_contour", 0) / 100.0, 0.0, 1.0))
+    nose_narrowed = min(_MAX_NOSE_NARROWING, nose * _MAX_NOSE_NARROWING)
+    if nose_narrowed > 0.005:
+        effects.append({
+            "label": "코",
+            "detail": f"콧방울 폭을 약 {nose_narrowed * 100:.0f}% 좁히고 콧대에 하이라이트를 얹었습니다.",
+        })
+
+    # 잡티는 카드 미리보기에서 건드리지 않는다(자동 제거 없음). 오해를 막으려 명시한다.
+    if tuning.get("blemish_care", 0) >= 45:
+        effects.append({
+            "label": "점·잡티",
+            "detail": "미리보기에서는 지우지 않습니다. 앞 단계에서 직접 고른 지점만 지워집니다.",
+        })
+    return effects
+
+
 def preview_cards(
     image_bytes: bytes,
     intensity: str = "balanced",
@@ -675,6 +722,9 @@ def preview_cards(
             "summary": "1단계에서 고른 " + " · ".join(picked[:3]) + " 를 반영한 미리보기입니다.",
             "preview_image": _to_data_url(_render(rgb, lm, face_mask, face_pts, goal, frontal)),
             "consultation": None,
+            # 무엇이 얼마나 바뀌었는지. 렌더에 쓴 값에서 그대로 계산한다.
+            "goals": picked,
+            "effects": goal_effects(goal, frontal),
         }
 
     cards = []

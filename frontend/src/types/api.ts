@@ -367,12 +367,17 @@ export type ConsultationPlan = {
   candidate_note: string;
 };
 
+export type GoalEffect = { label: string; detail: string };
+
 export type VirtualSurgeryPreviewCard = {
   id: string;
   title: string;
   summary: string;
   preview_image: string;
   consultation?: ConsultationPlan | null;
+  /** 아래 둘은 '내가 고른 목표' 카드에만 채워진다. */
+  goals?: string[];
+  effects?: GoalEffect[];
 };
 
 export type VirtualSurgeryPreviewCardsResponse = {

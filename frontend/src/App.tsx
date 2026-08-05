@@ -4385,7 +4385,7 @@ export default function App() {
     // '비율 조절' 단계를 뺐다(2026-08-03). 슬라이더 4개 중 2개는 내부에서 합산돼 자유도가 1개였고,
     // '코 라인 62%' 같은 숫자는 의학적 의미가 없는데 결과지에 실려 수술 수치로 읽힌다.
     // 강도는 카드 화면의 3단계(자연스럽게/적당히/또렷하게)가 대신한다.
-    const flowSteps = ['기본정보·목표 설정', '사진 업로드·AI 분석', '얼굴 비율 분석', '개선 방향 선택', '상담용 리포트'];
+    const flowSteps = ['기본정보·목표 설정', '사진 업로드·AI 분석', '얼굴 비율 분석', 'AI 성형 미리보기', '상담용 리포트'];
     const targetCards = [
       {
         id: 'oval',
@@ -4849,16 +4849,36 @@ export default function App() {
                       <img src={surgeryGoalCard.preview_image} alt={t('내 목표를 적용한 미리보기')} />
                     </Box>
                   </Box>
-                  <Box>
+                  <Box sx={{ minWidth: 0 }}>
                     <Typography fontWeight={900}>{t(surgeryGoalCard.title)}</Typography>
-                    <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>
-                      {surgeryGoalCard.summary}
+                    {/* 1단계에서 고른 목표를 그대로 다시 보여준다 — 순서가 우선순위다. */}
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                      {t('1단계에서 고른 목표')}
                     </Typography>
-                    <Stack direction="row" spacing={0.6} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
-                      {[...virtualSurgeryProfile.concerns, ...virtualSurgeryProfile.desiredMoods].map((item) => (
-                        <Chip key={item} size="small" label={t(item)} />
+                    <Stack direction="row" spacing={0.6} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+                      {(surgeryGoalCard.goals?.length
+                        ? surgeryGoalCard.goals
+                        : [...virtualSurgeryProfile.concerns, ...virtualSurgeryProfile.desiredMoods]
+                      ).map((item, index) => (
+                        <Chip key={item} size="small" label={`${index + 1}. ${t(item)}`} />
                       ))}
                     </Stack>
+                    {/* 무엇이 얼마나 바뀌었는지. 서버가 렌더에 쓴 값에서 계산해 내려준다. */}
+                    {!!surgeryGoalCard.effects?.length && (
+                      <Box sx={{ mt: 1.5 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                          {t('무엇이 달라졌나')}
+                        </Typography>
+                        <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                          {surgeryGoalCard.effects.map((effect) => (
+                            <Stack key={effect.label} direction="row" spacing={1} alignItems="flex-start">
+                              <Chip size="small" label={t(effect.label)} variant="outlined" sx={{ flexShrink: 0 }} />
+                              <Typography variant="body2" color="text.secondary">{effect.detail}</Typography>
+                            </Stack>
+                          ))}
+                        </Stack>
+                      </Box>
+                    )}
                   </Box>
                 </Stack>
               </Box>
