@@ -225,10 +225,14 @@ export async function deleteMyData(): Promise<MyDataDeletionResult> {
 export async function previewVirtualSurgeryCards(
   file: File,
   intensity: VirtualSurgeryIntensity = 'balanced',
+  // 1단계 선택. 안 보내면 4단계 카드가 1단계와 무관한 고정 4장이 된다.
+  choices: { concerns?: string[]; desiredMoods?: string[] } = {},
 ): Promise<VirtualSurgeryPreviewCardsResponse> {
   const form = new FormData();
   form.append('image', file);
   form.append('intensity', intensity);
+  form.append('concerns', (choices.concerns ?? []).join(','));
+  form.append('desired_moods', (choices.desiredMoods ?? []).join(','));
   const { data } = await api.post<VirtualSurgeryPreviewCardsResponse>(
     '/api/virtual-surgery/preview-cards',
     form,

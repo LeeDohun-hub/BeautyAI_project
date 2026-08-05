@@ -1042,14 +1042,22 @@ async def preview_virtual_surgery_cards(
     # 변화 강도. 슬라이더 숫자(%)를 대신한다 — 의학적 의미가 없는 워프 강도가 '62%' 처럼
     # 결과지에 실리면 수술 수치로 읽힌다.
     intensity: str = Form(default="balanced"),
+    # 1단계에서 고른 값(콤마 구분, 순서가 곧 우선순위). simulate 와 같은 형식이다.
+    # 이게 없으면 4단계 카드가 1단계 선택과 무관한 고정 4장이 된다(2026-08-05 제보).
+    concerns: str = Form(default=""),
+    desired_moods: str = Form(default=""),
 ) -> VirtualSurgeryPreviewCardsResponse:
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="An image file is required.")
     image_bytes = await image.read()
     from app.services.virtual_surgery_simulator import preview_cards
 
+    picked = [item.strip() for item in concerns.split(",") if item.strip()]
+    moods = [item.strip() for item in desired_moods.split(",") if item.strip()]
     try:
-        return VirtualSurgeryPreviewCardsResponse(**preview_cards(image_bytes, intensity=intensity))
+        return VirtualSurgeryPreviewCardsResponse(
+            **preview_cards(image_bytes, intensity=intensity, concerns=picked, desired_moods=moods)
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not build previews for this image.") from exc
 

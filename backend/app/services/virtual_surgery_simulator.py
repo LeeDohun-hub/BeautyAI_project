@@ -56,6 +56,13 @@ FACE_OVAL = [
     172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109,
 ]
 NOSE_LINE = [6, 197, 195, 5, 4, 1, 19, 94, 2]
+# 콧방울 좌·우 끝과 콧대 위·아래. 코 폭을 실제로 좁히는 워프의 기준점이다.
+NOSE_ALAE = [129, 358]      # 왼쪽/오른쪽 콧방울 바깥
+NOSE_BRIDGE_TOP = 6         # 콧대 시작(미간 아래)
+NOSE_TIP = 4                # 코끝
+# 코 폭을 줄이는 최대 비율. 얼굴 축소(0.12)보다 작게 잡는다 — 코는 조금만 좁혀도
+# 티가 나고, 과하면 '합성한 사진'으로 보인다(설계안 §5 의 과장 금지와 같은 취지).
+_MAX_NOSE_NARROWING = 0.16
 
 # 잡티 후보에서 **빼야 하는** 영역: 눈·눈썹·입술.
 #
@@ -267,6 +274,54 @@ def remove_blemishes(rgb: np.ndarray, points: list[dict], strength: float = 0.9)
     return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
 
 
+def _narrow_nose(rgb: np.ndarray, landmarks, w: int, h: int, strength: float) -> np.ndarray:
+    """코 폭을 실제로 좁힌다.
+
+    왜 필요한가(2026-08-05 제보): `nose_contour` 가 **밝기만 더하는 하이라이트**라
+    '입체 세련형' 카드가 원본과 구분되지 않았다. 그 카드는 face_line 이 18(4장 중 최저)
+    이라 윤곽도 거의 안 건드리는데, 코까지 안 보이니 '어디가 바뀐 거냐'가 된다.
+
+    얼굴 축소와 같은 remap 기법을 쓰되 **코 주변에만** 적용한다. 세로로는 콧대 위~코끝
+    아래까지, 가로로는 콧방울 폭 기준으로 가우시안 가중을 준다 — 경계가 생기면
+    '오려붙인 코'로 보인다.
+    """
+    if strength <= 0:
+        return rgb
+    try:
+        alae = _points(landmarks, NOSE_ALAE, w, h)
+        bridge = _points(landmarks, [NOSE_BRIDGE_TOP, NOSE_TIP], w, h)
+    except (IndexError, KeyError):
+        return rgb
+    if len(alae) < 2 or len(bridge) < 2:
+        return rgb
+
+    cx = float(alae[:, 0].mean())
+    half_width = max(4.0, abs(float(alae[1, 0] - alae[0, 0])) / 2.0)
+    y_top = float(bridge[0, 1])
+    y_tip = float(bridge[1, 1])
+    # 코끝 아래까지 조금 더 내려가야 콧방울이 온전히 들어온다.
+    y_bottom = y_tip + (y_tip - y_top) * 0.35
+    if y_bottom <= y_top:
+        return rgb
+
+    yy, xx = np.indices((h, w), dtype=np.float32)
+    # 세로: 콧대 시작~콧방울 아래 구간에서만 1에 가깝게.
+    y_center = (y_top + y_bottom) / 2.0
+    y_sigma = max(1.0, (y_bottom - y_top) / 2.2)
+    weight_y = np.exp(-((yy - y_center) ** 2) / (2.0 * y_sigma ** 2))
+    # 가로: 콧방울 폭의 1.6배 안에서만.
+    x_sigma = max(1.0, half_width * 1.6)
+    weight_x = np.exp(-((xx - cx) ** 2) / (2.0 * x_sigma ** 2))
+    weight = np.clip(weight_y * weight_x, 0.0, 1.0)
+
+    cap = _MAX_NOSE_NARROWING
+    scale = 1.0 - min(cap, strength * cap) * weight
+    map_x = cx + (xx - cx) / np.clip(scale, 1.0 - cap - 0.02, 1.0)
+    warped = cv2.remap(rgb, map_x, yy, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+    alpha = weight[..., None]
+    return np.clip(rgb * (1 - alpha) + warped * alpha, 0, 255).astype(np.uint8)
+
+
 def _add_contour_guides(rgb: np.ndarray, landmarks, w: int, h: int, nose_strength: float) -> np.ndarray:
     """콧대에 하이라이트를 얹는다.
 
@@ -383,7 +438,10 @@ def _render(rgb, lm, face_mask, face_pts, tuning: dict, frontal: float) -> np.nd
     # ⚠ 카드 미리보기에서는 잡티를 건드리지 않는다. 카드가 말하는 것은 **얼굴선·코**이고,
     #   잡티 자동 제거는 어차피 눈에 안 보이는 수준이었다(실측 픽셀차 0.005).
     #   지우는 것은 결과 화면에서 사용자가 고른 지점만 한다(2026-08-04 결정).
-    return _add_contour_guides(out, lm, w, h, np.clip(tuning["nose_contour"] / 100.0, 0.0, 1.0))
+    nose = float(np.clip(tuning["nose_contour"] / 100.0, 0.0, 1.0))
+    # 하이라이트만으로는 사진에서 변화가 안 보인다 — 폭을 실제로 좁힌 뒤 하이라이트를 얹는다.
+    out = _narrow_nose(out, lm, w, h, nose)
+    return _add_contour_guides(out, lm, w, h, nose)
 
 
 # 개선 방향 카드 = 슬라이더 프리셋. **백엔드가 단일 출처**다 — 예전엔 프론트에만 있어서
@@ -521,7 +579,53 @@ def consultation_plan(card_id: str | None) -> dict:
 INTENSITY_SCALE = {"natural": 0.6, "balanced": 1.0, "defined": 1.35}
 
 
-def preview_cards(image_bytes: bytes, intensity: str = "balanced") -> dict:
+# 1단계에서 고른 값 → 튜닝 가중치. 순서가 우선순위라 앞에서 고른 쪽에 더 준다.
+_CONCERN_TUNING = {
+    "윤곽·얼굴형": {"face_line": 34, "jaw_balance": 18},
+    "턱끝·하관": {"face_line": 22, "jaw_balance": 40},
+    "광대·볼 폭": {"face_line": 30, "jaw_balance": 8},
+    "코 라인": {"nose_contour": 46},
+    "중안부 비율": {"nose_contour": 26, "face_line": 10},
+    "점·잡티 제거": {"blemish_care": 34},
+}
+_MOOD_TUNING = {
+    "자연스러운 변화": {"face_line": 6, "jaw_balance": 4, "nose_contour": 6},
+    "V라인처럼 갸름하게": {"face_line": 28, "jaw_balance": 30},
+    "부드러운 동안 이미지": {"face_line": 12, "jaw_balance": -8, "blemish_care": 14},
+    "또렷하고 세련된 인상": {"nose_contour": 32, "jaw_balance": 14},
+    "좌우 균형 개선": {"jaw_balance": 20, "face_line": 10},
+    "피부결까지 깨끗하게": {"blemish_care": 34},
+}
+_BASE_TUNING = {"face_line": 24, "jaw_balance": 20, "nose_contour": 20, "blemish_care": 40}
+
+
+def goal_tuning(concerns: list[str] | None, desired_moods: list[str] | None) -> dict:
+    """1단계 선택을 미리보기 튜닝값으로 바꾼다.
+
+    왜 필요한가(2026-08-05 제보): 예전에는 4단계 카드가 고정 프리셋이라, 1단계에서
+    무엇을 고르든 **같은 4장**이 나왔다. 사용자 입장에서는 같은 질문을 두 번 받고
+    첫 답이 버려지는 셈이었다.
+
+    순서가 곧 우선순위다 — 1순위에 가중치를 온전히 주고 뒤로 갈수록 줄인다.
+    """
+    tuning = dict(_BASE_TUNING)
+    for rank, concern in enumerate(concerns or []):
+        weight = 1.0 / (1.0 + rank)  # 1순위 1.0, 2순위 0.5, 3순위 0.33
+        for key, value in _CONCERN_TUNING.get(concern, {}).items():
+            tuning[key] = tuning.get(key, 0) + value * weight
+    for rank, mood in enumerate(desired_moods or []):
+        weight = 1.0 / (1.0 + rank)
+        for key, value in _MOOD_TUNING.get(mood, {}).items():
+            tuning[key] = tuning.get(key, 0) + value * weight
+    return {key: int(max(0, min(100, round(value)))) for key, value in tuning.items()}
+
+
+def preview_cards(
+    image_bytes: bytes,
+    intensity: str = "balanced",
+    concerns: list[str] | None = None,
+    desired_moods: list[str] | None = None,
+) -> dict:
     """카드별로 '내 얼굴에 적용한' 미리보기를 만든다.
 
     Face Mesh 는 **1회만** 돌리고 워프만 카드 수만큼 반복한다 — 탐지가 가장 비싼 단계라,
@@ -546,6 +650,19 @@ def preview_cards(image_bytes: bytes, intensity: str = "balanced") -> dict:
     frontal = _frontal_factor(_frontal_offset(lm, w, h))
     scale = INTENSITY_SCALE.get((intensity or "balanced").strip().lower(), 1.0)
 
+    # 1단계에서 고른 목표를 그대로 적용한 카드. 4단계의 주인공이라 맨 앞에 둔다.
+    goal_card = None
+    if concerns or desired_moods:
+        goal = {key: min(100, int(value * scale)) for key, value in goal_tuning(concerns, desired_moods).items()}
+        picked = [*(concerns or []), *(desired_moods or [])]
+        goal_card = {
+            "id": "goal",
+            "title": "내가 고른 목표 적용",
+            "summary": "1단계에서 고른 " + " · ".join(picked[:3]) + " 를 반영한 미리보기입니다.",
+            "preview_image": _to_data_url(_render(rgb, lm, face_mask, face_pts, goal, frontal)),
+            "consultation": None,
+        }
+
     cards = []
     for preset in CARD_PRESETS:
         tuning = {key: min(100, int(value * scale)) for key, value in preset["tuning"].items()}
@@ -568,6 +685,7 @@ def preview_cards(image_bytes: bytes, intensity: str = "balanced") -> dict:
         "detected": True,
         "message": message,
         "original_image": _to_data_url(rgb),
+        "goal_card": goal_card,
         "cards": cards,
         # 카드 화면이 사진 업로드 직후에 오므로, 품질 경고를 여기서 보여줘야 사용자가
         # 결과지까지 간 뒤에야 '다시 찍으세요' 를 듣는 일이 없다.

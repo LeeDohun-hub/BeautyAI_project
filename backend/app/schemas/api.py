@@ -236,6 +236,8 @@ class VirtualSurgeryPreviewCardsResponse(BaseModel):
     detected: bool
     message: str
     original_image: str
+    # 1단계에서 고른 목표를 그대로 적용한 카드. 고른 게 없으면 None.
+    goal_card: VirtualSurgeryPreviewCard | None = None
     cards: list[VirtualSurgeryPreviewCard] = Field(default_factory=list)
     photo_quality: PhotoQuality | None = None
 

@@ -1419,6 +1419,8 @@ export default function App() {
   const [virtualSurgeryTarget, setVirtualSurgeryTarget] = useState('oval');
   // 카드별 '내 얼굴 적용' 미리보기. 예전 카드는 일러스트라 고르고 나서야 결과를 봤다.
   const [surgeryCards, setSurgeryCards] = useState<VirtualSurgeryPreviewCard[]>([]);
+  /** 1단계 목표를 그대로 적용한 미리보기. 4단계의 주인공이라 카드 4장과 분리해 둔다. */
+  const [surgeryGoalCard, setSurgeryGoalCard] = useState<VirtualSurgeryPreviewCard | null>(null);
   const [surgeryCardsLoading, setSurgeryCardsLoading] = useState(false);
   // 사진 품질 경고. 카드 화면에서 보여줘야 결과지까지 간 뒤에 '다시 찍으세요'를 듣지 않는다.
   const [photoQuality, setPhotoQuality] = useState<PhotoQuality | null>(null);
@@ -1879,7 +1881,11 @@ export default function App() {
     if (!virtualSurgeryFile) return;
     setSurgeryCardsLoading(true);
     try {
-      const res = await previewVirtualSurgeryCards(virtualSurgeryFile, intensity);
+      const res = await previewVirtualSurgeryCards(virtualSurgeryFile, intensity, {
+        concerns: virtualSurgeryProfile.concerns,
+        desiredMoods: virtualSurgeryProfile.desiredMoods,
+      });
+      setSurgeryGoalCard(res.detected ? (res.goal_card ?? null) : null);
       setSurgeryCards(res.detected ? res.cards : []);
       setPhotoQuality(res.photo_quality ?? null);
     } catch {
@@ -4820,9 +4826,44 @@ export default function App() {
       if (virtualSurgeryStep === 3) {
         return (
           <Paper elevation={0} className="virtual-upload-panel">
-            <Typography variant="h5" fontWeight={900}>{t('원하는 개선된 얼굴형 카드 선택')}</Typography>
+            <Typography variant="h5" fontWeight={900}>{t('내가 고른 목표를 적용한 미리보기')}</Typography>
             <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              {t('각 카드를 내 사진에 적용한 미리보기입니다. 참고용이며 실제 결과를 보장하지 않습니다.')}
+              {t('1단계에서 고른 목표를 그대로 적용했습니다. 참고용이며 실제 결과를 보장하지 않습니다.')}
+            </Typography>
+
+            {/* 1단계 선택을 그대로 적용한 미리보기. 예전에는 4단계가 고정 카드 4장이라
+                1단계에서 무엇을 골랐든 같은 화면이 나왔다 — 같은 질문을 두 번 하는 셈이었다. */}
+            {surgeryGoalCard && (
+              <Box className="virtual-goal-preview" sx={{ mt: 2 }}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="flex-start">
+                  <Box className="virtual-goal-images">
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">Before</Typography>
+                      <img src={virtualSurgeryResult?.original_image} alt={t('원본 얼굴 사진')} />
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="primary" fontWeight={800}>{t('내 목표 적용')}</Typography>
+                      <img src={surgeryGoalCard.preview_image} alt={t('내 목표를 적용한 미리보기')} />
+                    </Box>
+                  </Box>
+                  <Box>
+                    <Typography fontWeight={900}>{t(surgeryGoalCard.title)}</Typography>
+                    <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>
+                      {surgeryGoalCard.summary}
+                    </Typography>
+                    <Stack direction="row" spacing={0.6} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+                      {[...virtualSurgeryProfile.concerns, ...virtualSurgeryProfile.desiredMoods].map((item) => (
+                        <Chip key={item} size="small" label={t(item)} />
+                      ))}
+                    </Stack>
+                  </Box>
+                </Stack>
+              </Box>
+            )}
+
+            <Typography variant="h6" fontWeight={900} sx={{ mt: 3 }}>{t('다른 방향도 보기')}</Typography>
+            <Typography color="text.secondary" variant="body2">
+              {t('목표와 다른 방향이 궁금하면 아래 카드를 고르세요.')}
             </Typography>
 
             {/* 변화 강도 — 예전 '비율 조절' 단계의 슬라이더를 대신한다. 숫자(%)를 없앤 이유는

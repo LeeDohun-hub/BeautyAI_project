@@ -379,6 +379,8 @@ export type VirtualSurgeryPreviewCardsResponse = {
   detected: boolean;
   message: string;
   original_image: string;
+  /** 1단계에서 고른 목표를 그대로 적용한 카드. 고른 게 없으면 null. */
+  goal_card?: VirtualSurgeryPreviewCard | null;
   cards: VirtualSurgeryPreviewCard[];
   photo_quality?: PhotoQuality | null;
 };
