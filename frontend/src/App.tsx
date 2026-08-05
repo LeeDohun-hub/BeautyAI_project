@@ -4743,7 +4743,7 @@ export default function App() {
                   {ratios.map((ratio) => (
                     <Box key={ratio.label}>
                       <Stack direction="row" justifyContent="space-between">
-                        <Typography variant="body2" fontWeight={800}>{ratio.label}</Typography>
+                        <Typography variant="body2" fontWeight={800}>{localizeRatioLabel(ratio.label)}</Typography>
                         <Typography variant="body2" color="text.secondary">{ratio.width}%</Typography>
                       </Stack>
                       <LinearProgress variant="determinate" value={Math.min(100, ratio.width)} sx={{ height: 8, borderRadius: 4 }} />
