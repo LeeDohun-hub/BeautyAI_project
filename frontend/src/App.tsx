@@ -1308,6 +1308,36 @@ export default function App() {
     if (dict !== value || appLang !== 'ja') return dict;
     return localizePcPhraseToJa(value);
   };
+  /** 추천 사유 배지. `Ceramide 함유`, `3개 바디 진정 성분` 처럼 **성분명·숫자 + 접미사**
+   *  조합이라 완성형은 사전에 못 넣는다 — 접미사만 옮긴다. */
+  const tReasonTag = (tag: string): string => {
+    const dict = t(tag);
+    if (dict !== tag) return dict;
+    const suffixed = tag.match(/^(.+?)\s*함유$/);
+    if (suffixed) return `${suffixed[1]} ${t('함유')}`;
+    const counted = tag.match(/^(\d+)개\s*(.+)$/);
+    if (counted) return `${counted[1]}${t('개')} ${t(counted[2])}`;
+    return tPhrase(tag);
+  };
+  /** 피부질환 선별 요약. 한 갈래만 분류명이 끼는 조합형이라 자리표시자로 처리한다. */
+  const tScreeningSummary = (text: string | null | undefined): string => {
+    if (!text) return '';
+    const dict = t(text);
+    if (dict !== text) return dict;
+    const m = text.match(/^양성으로 보이며 (.+?) 계열 가능성이 있습니다\.\s*(.+)$/);
+    if (m) {
+      return t('양성으로 보이며 {label} 계열 가능성이 있습니다. 케어·상담 안내용이며 확정 진단은 아닙니다.')
+        .replace('{label}', t(m[1]));
+    }
+    // 네일: "사진 속 컬러는 '여름 쿨 뮤트'에 가장 가깝습니다(말린 장미)."
+    const nail = text.match(/^사진 속 컬러는 '(.+?)'에 가장 가깝습니다\((.+?)\)\.$/);
+    if (nail) {
+      return t("사진 속 컬러는 '{season}'에 가장 가깝습니다({shade}).")
+        .replace('{season}', t(nail[1]))
+        .replace('{shade}', tPhrase(nail[2]));
+    }
+    return text;
+  };
   /** 얼굴 비율 라벨. 서버가 `상/중/하안부 1.0 : 1.5 : 1.1` 처럼 **이름+수치**로 조립해
    *  내려주므로 완성형은 사전에 못 넣는다 — 앞의 이름만 번역하고 수치는 그대로 둔다. */
   const localizeRatioLabel = (label: string): string => {
@@ -1489,8 +1519,17 @@ export default function App() {
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
   const [skinRegion, setSkinRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [selectedPlatform, setSelectedPlatform] = useState<ItemPlatform>('all');
-  // 입력칸의 **기본값**이라 화면 언어를 따라야 한다(마운트 시점 언어로 채운다).
-  const [message, setMessage] = useState(() => t('제 피부 상태에 맞는 루틴을 어떻게 구성하면 좋을까요?'));
+  // 입력칸의 **기본값**이라 화면 언어를 따라야 한다.
+  // ⚠ 마운트 때 한 번만 채우면, 한국어로 열어 둔 뒤 일본어로 바꾼 사람은 한국어 문장을
+  //   그대로 보게 된다(제보 2026-08-05). 언어가 바뀌면 **사용자가 손대지 않은 경우에만**
+  //   새 언어의 기본 문장으로 갈아끼운다.
+  const defaultQuestion = t('제 피부 상태에 맞는 루틴을 어떻게 구성하면 좋을까요?');
+  const [message, setMessage] = useState(defaultQuestion);
+  const lastDefaultQuestionRef = useRef(defaultQuestion);
+  useEffect(() => {
+    setMessage((current) => (current === lastDefaultQuestionRef.current ? defaultQuestion : current));
+    lastDefaultQuestionRef.current = defaultQuestion;
+  }, [defaultQuestion]);
   const [answer, setAnswer] = useState('');
   const [answerSources, setAnswerSources] = useState<string[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -4010,9 +4049,11 @@ export default function App() {
                 <Typography variant="body2" textAlign="right">{item.probability}%</Typography>
               </Box>
             ))}
-            <Alert severity={analysis.urgent ? 'error' : analysis.model_available ? 'info' : 'warning'}>{analysis.summary}</Alert>
+            <Alert severity={analysis.urgent ? 'error' : analysis.model_available ? 'info' : 'warning'}>
+              {tScreeningSummary(analysis.summary)}
+            </Alert>
             {analysis.confidence_note && (
-              <Typography variant="caption" color="text.secondary">{analysis.confidence_note}</Typography>
+              <Typography variant="caption" color="text.secondary">{t(analysis.confidence_note)}</Typography>
             )}
           </Stack>
         ) : !loading ? (
@@ -4065,7 +4106,7 @@ export default function App() {
             {loading === 'recommend' && <LinearProgress sx={{ mt: 2 }} />}
             {recommendation ? (
               <Stack spacing={2} sx={{ mt: 2 }}>
-                <Alert severity={analysis?.urgent ? 'error' : analysis?.analysis_mode === 'body' && !recommendation.products.length ? 'warning' : 'success'}>{recommendation.explanation}</Alert>
+                <Alert severity={analysis?.urgent ? 'error' : analysis?.analysis_mode === 'body' && !recommendation.products.length ? 'warning' : 'success'}>{tScreeningSummary(recommendation.explanation)}</Alert>
                 {recommendation.ingredients.length > 0 && (
                   <Box>
                     <Typography variant="subtitle2" gutterBottom>{t('추천 성분')}</Typography>
@@ -4134,7 +4175,7 @@ export default function App() {
                                     {!!rp.reason_tags?.length && (
                                       <Stack direction="row" gap={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
                                         {rp.reason_tags.slice(0, 2).map((tag) => (
-                                          <Chip key={tag} size="small" label={tag} variant="outlined" />
+                                          <Chip key={tag} size="small" label={tReasonTag(tag)} variant="outlined" />
                                         ))}
                                       </Stack>
                                     )}
@@ -4219,7 +4260,7 @@ export default function App() {
                           {!!product.reason_tags?.length && (
                             <Stack direction="row" gap={0.6} flexWrap="wrap" sx={{ mt: 1 }}>
                               {product.reason_tags.slice(0, 4).map((tag) => (
-                                <Chip key={tag} size="small" label={tag} variant="outlined" />
+                                <Chip key={tag} size="small" label={tReasonTag(tag)} variant="outlined" />
                               ))}
                             </Stack>
                           )}
@@ -4229,7 +4270,7 @@ export default function App() {
                               color="text.secondary"
                               sx={{ mt: 0.8, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                             >
-                              {product.evidence_note}
+                              {t(product.evidence_note)}
                             </Typography>
                           )}
                           <Stack direction="row" gap={0.8} flexWrap="wrap" sx={{ mt: 'auto', pt: 1.2 }}>
@@ -5120,11 +5161,11 @@ export default function App() {
                       <Box>
                         <Typography fontWeight={700}>{primary.color_hex}</Typography>
                         <Typography color="text.secondary" variant="body2">
-                          네일 {nailResult.detected.length}개 검출 · 신뢰도 {Math.round(primary.confidence * 100)}%
+                          {t('네일')} {nailResult.detected.length}{t('개 검출 · 신뢰도')} {Math.round(primary.confidence * 100)}%
                         </Typography>
                       </Box>
                     </Stack>
-                    {bestSeason && <Alert severity="success" sx={{ mt: 2 }}>{nailResult.note}</Alert>}
+                    {bestSeason && <Alert severity="success" sx={{ mt: 2 }}>{tScreeningSummary(nailResult.note)}</Alert>}
                   </Paper>
                 ) : (
                   <Paper elevation={0} className="nail-guide">
@@ -5174,7 +5215,7 @@ export default function App() {
             )}
 
             {nailResult?.feature_available && !primary && (
-              <Alert severity="warning">{nailResult.note}</Alert>
+              <Alert severity="warning">{t(nailResult.note)}</Alert>
             )}
 
             {primary && (
@@ -5199,7 +5240,7 @@ export default function App() {
                             onClick={() => void applyNailShade(shade)}
                           >
                             <Box className="nail-swatch-dot" sx={{ bgcolor: shade.hex }} />
-                            <Typography variant="caption">{t(shade.name)}</Typography>
+                            <Typography variant="caption">{tPhrase(shade.name)}</Typography>
                           </Stack>
                         ))}
                       </Stack>
@@ -5211,7 +5252,7 @@ export default function App() {
                           </Grid>
                           <Grid item xs={12} sm={6}>
                             <Typography variant="caption" color="text.secondary">
-                              {t('발색 미리보기')}{nailShade ? ` · ${t(nailShade.name)}` : ''}
+                              {t('발색 미리보기')}{nailShade ? ` · ${tPhrase(nailShade.name)}` : ''}
                             </Typography>
                             <Box component="img" src={nailTryOn} alt={t('발색 미리보기')} className="nail-tryon-img" />
                           </Grid>
@@ -5279,7 +5320,7 @@ export default function App() {
                     {nailResult.detected.map((nail) => (
                       <Stack key={nail.index} spacing={1}>
                         <Typography variant="body2" color="text.secondary">
-                          검출 #{nail.index + 1} · {nail.color_hex}
+                          {t('검출')} #{nail.index + 1} · {nail.color_hex}
                         </Typography>
                         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                           {nail.matches.map((match, i) => (
@@ -5295,7 +5336,7 @@ export default function App() {
                                 <Box sx={{ width: 72, height: 72, borderRadius: 1.5, bgcolor: match.color_hex, border: '1px solid #e1e7ef' }} />
                               )}
                               <Typography variant="caption" color="text.secondary">
-                                {match.region === 'foot' ? '발' : '손'} · ΔE {match.delta_e}
+                                {t(match.region === 'foot' ? '발' : '손')} · ΔE {match.delta_e}
                               </Typography>
                             </Stack>
                           ))}
@@ -5313,16 +5354,16 @@ export default function App() {
                         <Stack key={fit.label} direction="row" spacing={2} alignItems="center">
                           <Box sx={{ width: 24, height: 24, borderRadius: '50%', bgcolor: fit.shade_hex, border: '1px solid #e1e7ef' }} />
                           <Typography sx={{ minWidth: 130 }} fontWeight={fit.label === bestSeason?.label ? 800 : 400}>
-                            {fit.label}
+                            {t(fit.label)}
                           </Typography>
                           <Typography variant="body2" color="text.secondary" sx={{ minWidth: 90 }}>
-                            {fit.shade_name}
+                            {tPhrase(fit.shade_name)}
                           </Typography>
                           <Box sx={{ flex: 1 }}>
                             <LinearProgress variant="determinate" value={fit.score} />
                           </Box>
                           <Typography variant="body2" sx={{ minWidth: 48, textAlign: 'right' }}>
-                            {fit.score}점
+                            {fit.score}{t('점')}
                           </Typography>
                         </Stack>
                       ))}
@@ -5334,7 +5375,7 @@ export default function App() {
                         </Typography>
                         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                           {nailResult.recommended_shades.map((shade) => (
-                            <Chip key={shade} label={shade} size="small" />
+                            <Chip key={shade} label={tPhrase(shade)} size="small" />
                           ))}
                         </Stack>
                       </Box>
@@ -5395,7 +5436,7 @@ export default function App() {
                   {previewUrls[0] ? <img src={previewUrls[0]} alt={t('분석 사진')} /> : <Sparkles size={34} />}
                 </Box>
                 <Typography className="report-section-title">{t('진단 요약')}</Typography>
-                <Typography className="report-copy">{analysis?.summary || '-'}</Typography>
+                <Typography className="report-copy">{tScreeningSummary(analysis?.summary) || '-'}</Typography>
                 {analysis?.scores && (
                   <Stack spacing={0.5} sx={{ mt: 1 }}>
                     {scoreKeys.map((key) => (
