@@ -1434,7 +1434,10 @@ export default function App() {
    * 서버의 retouch 는 좌표만 받고 출처를 따지지 않으므로, 직접 찍은 점도 그대로 보낸다.
    * 직접 찍은 점은 '지우겠다는 의사표시'라 별도 선택 단계 없이 항상 대상이다. */
   const [manualBlemishes, setManualBlemishes] = useState<BlemishPoint[]>([]);
-  const [showAiBlemishes, setShowAiBlemishes] = useState(true);
+  // 기본은 **끔**. 자동 검출은 정밀도가 낮아(테두리 밖 어두운 픽셀을 자주 잡는다)
+  // 처음부터 엉뚱한 점이 찍혀 있으면 '이건 점도 아닌데' 가 첫인상이 된다(제보 2026-08-05).
+  // 빈 사진에서 사용자가 직접 찍는 것을 기본 동작으로 두고, 후보는 켜서 보는 보조 수단으로 둔다.
+  const [showAiBlemishes, setShowAiBlemishes] = useState(false);
   const [retouchedImage, setRetouchedImage] = useState<string | null>(null);
   const [retouching, setRetouching] = useState(false);
   // 변화 강도 — 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다.
@@ -4535,7 +4538,7 @@ export default function App() {
       <Box sx={{ mt: 2 }}>
         <Typography fontWeight={900}>{t('점·잡티 지우기')}</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          {t('지우고 싶은 곳을 사진에서 직접 눌러 찍으세요. AI 후보는 눌러서 고르면 됩니다.')}
+          {t('지우고 싶은 곳을 사진에서 직접 눌러 찍으세요.')}
         </Typography>
         <Box
           className="blemish-stage"

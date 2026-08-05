@@ -207,10 +207,24 @@ def find_blemish_candidates(
     local = cv2.GaussianBlur(lightness, (31, 31), 0)
     dark_delta = np.clip(local - lightness, 0, 255)
 
-    usable = face_mask > 0.55
+    # ⚠ 예전엔 `face_mask > 0.55` 였다. 소프트 마스크는 블러라 0.55 등고선이 **얼굴
+    #   테두리 바로 위**여서, 헤어라인·구레나룻·턱선 바깥의 배경이 그대로 검사 범위에
+    #   들어왔다. 실제로 후보가 배경 검정·머리카락·코 옆 그림자에 찍혔다(제보 2026-08-05).
+    #   → 테두리에서 얼굴 폭의 4.5% 만큼 **안쪽으로 깎아** 피부만 남긴다.
+    inner = (face_mask > 0.92).astype(np.uint8) * 255
+    margin = max(6, int(w * 0.045))
+    inner = cv2.erode(inner, np.ones((margin, margin), np.uint8))
+    usable = inner > 0
     if landmarks is not None:
         # 이목구비(눈·눈썹·입술·콧구멍)를 뺀다. 안 빼면 후보의 70% 가 여기서 나온다.
         usable &= _feature_exclusion_mask(landmarks, w, h) == 0
+
+    # 머리카락·수염·짙은 그림자는 '어두운 점'이 아니라 **원래 검은 것**이다. 잡티는
+    #   피부톤에서 조금 어두워질 뿐이라, 피부 밝기 중앙값보다 지나치게 어두우면 뺀다.
+    skin = lightness[usable]
+    if skin.size:
+        floor = float(np.median(skin)) * 0.62
+        usable &= lightness > floor
 
     candidate = ((dark_delta > 13) & usable).astype(np.uint8) * 255
     candidate = cv2.morphologyEx(candidate, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
