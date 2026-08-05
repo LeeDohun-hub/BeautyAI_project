@@ -1489,7 +1489,8 @@ export default function App() {
   const [recommendation, setRecommendation] = useState<RecommendationResponse | null>(null);
   const [skinRegion, setSkinRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [selectedPlatform, setSelectedPlatform] = useState<ItemPlatform>('all');
-  const [message, setMessage] = useState('제 피부 상태에 맞는 루틴을 어떻게 구성하면 좋을까요?');
+  // 입력칸의 **기본값**이라 화면 언어를 따라야 한다(마운트 시점 언어로 채운다).
+  const [message, setMessage] = useState(() => t('제 피부 상태에 맞는 루틴을 어떻게 구성하면 좋을까요?'));
   const [answer, setAnswer] = useState('');
   const [answerSources, setAnswerSources] = useState<string[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -3925,7 +3926,7 @@ export default function App() {
                 </Button>
               </Stack>
               <Alert severity={faceFiles.length >= 3 ? 'success' : 'info'}>
-                현재 {faceFiles.length}/5장 선택됨. 분석에는 최소 1장이 필요합니다.
+                {t('현재')} {faceFiles.length}{t('/5장 선택됨. 분석에는 최소 1장이 필요합니다.')}
               </Alert>
               {!!faceFiles.length && (
                 <Stack direction="row" justifyContent="flex-end">
@@ -4274,7 +4275,10 @@ export default function App() {
               {history.slice(0, 5).map((item) => (
                 <Box key={item.id}>
                   <Typography variant="body2" fontWeight={700}>{item.recommended_products.slice(0, 2).join(', ')}</Typography>
-                  <Typography variant="caption" color="text.secondary">{new Date(item.created_at).toLocaleString('ko-KR')}</Typography>
+                  {/* 'ko-KR' 고정이면 일본어 화면에서도 '오전/오후'가 한글로 찍힌다(2026-08-05). */}
+                  <Typography variant="caption" color="text.secondary">
+                    {new Date(item.created_at).toLocaleString(appLang === 'ja' ? 'ja-JP' : 'ko-KR')}
+                  </Typography>
                 </Box>
               ))}
               {!history.length && <Typography color="text.secondary" variant="body2">{t('아직 추천 기록이 없습니다.')}</Typography>}
