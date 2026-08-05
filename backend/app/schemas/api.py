@@ -68,6 +68,12 @@ class PersonalColorResponse(BaseModel):
     decision_note: str | None = None
     confidence: float
     skin_summary: str
+    # 일본어판 문장. 서버가 조립하는 문장이라 프론트의 정적 사전으로는 번역할 수 없어
+    # 여기서 같이 만들어 내려준다(조합이 수십 가지라 사전에 키로 넣을 수 없다).
+    # ⚠ 타입명은 `{label}` / `{alt}` 자리표시자로 남긴다 — 한국어→일본어 타입명 사전이
+    #   프론트에 이미 있고, 서버에 같은 표를 또 두면 두 곳이 어긋난다.
+    skin_summary_ja: str | None = None
+    decision_note_ja: str | None = None
     palette: list[str]
     makeup: PersonalColorMakeup
     advice: list[str]

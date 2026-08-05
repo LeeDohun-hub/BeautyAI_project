@@ -418,6 +418,7 @@ class PersonalColorAnalyzer:
 
         profile = PROFILES.get((tone, subtype)) or PROFILES[(tone, "soft")]
         decision_note = self._decision_note(profile, alternate_profile, season_margin, samples, season_consistency)
+        decision_note_ja = self._decision_note_ja(alternate_profile, season_margin, samples, season_consistency)
         color_quality = float(color_vector.get("quality", 0.0))
         if season_probs is not None:
             if samples > 1:
@@ -428,6 +429,7 @@ class PersonalColorAnalyzer:
         else:
             confidence = min(0.9, max(0.56, 0.62 + abs(warmth) * 1.8 + abs(brightness - 0.58) * 0.22 + chroma * 0.24))
         summary = self._summary(profile, brightness, chroma, warmth, redness, model_used)
+        summary_ja = self._summary_ja(profile, brightness, chroma, warmth, redness, model_used)
         capture_advice = self._capture_advice(confidence, white_balanced, model_used, brightness, chroma)
         if samples <= 1:
             capture_advice = [
@@ -459,8 +461,10 @@ class PersonalColorAnalyzer:
             alternate_season=alternate_profile.season if alternate_profile else None,
             alternate_label=alternate_profile.label if alternate_profile else None,
             decision_note=decision_note,
+            decision_note_ja=decision_note_ja,
             confidence=round(confidence, 2),
             skin_summary=summary,
+            skin_summary_ja=summary_ja,
             palette=profile.palette,
             makeup=profile.makeup,
             advice=[*profile.advice, *capture_advice],
@@ -662,6 +666,27 @@ class PersonalColorAnalyzer:
             return f"주 타입은 {profile.label}이며, 보조 경향은 {alternate_profile.label} 쪽에 가깝습니다."
         if samples > 1 and season_consistency < 0.72:
             return f"최종 타입은 {profile.label}입니다. 사진별 결과 흔들림이 있어 {alternate_profile.label} 경향도 함께 참고하세요."
+        return None
+
+    def _decision_note_ja(
+        self,
+        alternate_profile: PersonalColorProfile | None,
+        season_margin: float,
+        samples: int,
+        season_consistency: float,
+    ) -> str | None:
+        """경계 안내의 일본어판. 타입명은 `{label}` / `{alt}` 자리표시자로 남긴다."""
+        if alternate_profile is None:
+            return None
+        if season_margin < 0.08:
+            return "{label}と判定しましたが、{alt}と非常に近い境界の結果です。"
+        if season_margin < 0.16:
+            return "主なタイプは {label} で、補助的な傾向は {alt} 寄りです。"
+        if samples > 1 and season_consistency < 0.72:
+            return (
+                "最終タイプは {label} です。写真ごとに結果のばらつきがあるため、"
+                "{alt} の傾向も併せて参考にしてください。"
+            )
         return None
 
     def _predict_season(self, rgb: np.ndarray) -> tuple[str, float] | None:
@@ -1107,6 +1132,37 @@ class PersonalColorAnalyzer:
             tone_text += ", 로지한 혈색"
         return f"{light_text} 피부 밝기와 {chroma_text} 대비, {tone_text}이 감지되어 {profile.label} 경향으로 분석했습니다."
 
+    def _summary_ja(
+        self,
+        profile: PersonalColorProfile,
+        brightness: float,
+        chroma: float,
+        warmth: float,
+        redness: float,
+        model_used: bool,
+    ) -> str:
+        """판정 이유 문장의 일본어판. 타입명은 `{label}` 자리표시자로 남긴다."""
+        light_text = "明るめの" if brightness >= 0.66 else "深みのある" if brightness <= 0.48 else "中間の"
+        chroma_text = "くっきりした" if chroma >= 0.18 else "やわらかい"
+        if model_used:
+            tone_text = "クールトーンの顔色分布" if profile.tone == "cool" else "ウォームトーンの顔色分布"
+            if redness > 0.08:
+                return (
+                    f"{light_text}肌トーンと{chroma_text}コントラスト、{tone_text}、"
+                    "そしてローズがかった血色を総合して、{label}タイプと判定しました。"
+                )
+            return (
+                f"{light_text}肌トーンと{chroma_text}コントラスト、{tone_text}を総合して、"
+                "{label}タイプと判定しました。"
+            )
+        tone_text = "黄みと温かさ" if warmth >= 0.035 else "赤みと冷たさ"
+        if redness > 0.08:
+            tone_text += "、ローズがかった血色"
+        return (
+            f"{light_text}肌トーンと{chroma_text}コントラスト、{tone_text}が検出されたため、"
+            "{label}傾向として分析しました。"
+        )
+
 
 # ── 웹 계정에 저장된 퍼스널컬러 → 결과지 ──────────────────────────────────────────
 # 웹 마이페이지의 8종 라벨을 앱의 PROFILES 키로 옮긴다. 사진 분석 없이 팔레트/메이크업
@@ -1147,8 +1203,10 @@ def declared_personal_color_result(web_label: str) -> PersonalColorResponse | No
         subtype=profile.subtype,
         label=profile.label,
         decision_note="회원 정보에 저장된 퍼스널 컬러를 그대로 사용했습니다.",
+        decision_note_ja="会員情報に保存されたパーソナルカラーをそのまま使用しました。",
         confidence=1.0,
         skin_summary=f"{profile.label} 기준으로 어울리는 색을 정리했습니다.",
+        skin_summary_ja="{label}を基準に似合う色をまとめました。",
         palette=list(profile.palette),
         makeup=profile.makeup,
         advice=list(profile.advice),

@@ -517,18 +517,26 @@ const STYLE_MOOD_SCORE_MAP: Record<string, Partial<Record<string, number>>> = {
   'warm-deep': { 'caramel-mocha': 5, 'cherry-chocolate': 4.5, 'rose-wine': 3.5, 'tomato-red': 2.5 },
 };
 
-function moodRecommendationReason(result: PersonalColorResponse | null, mood: StyleMood): string {
-  if (!result) return '퍼스널컬러 분석 전 기본 무드 후보입니다.';
+/** 무드 추천 사유. 계절명·무드명이 끼는 조합 문장이라 **자리표시자 템플릿**을 번역하고
+ *  값만 끼워 넣는다 — 완성된 문장을 사전 키로 쓰면 조합 수만큼 키가 필요해진다. */
+function moodRecommendationReason(
+  result: PersonalColorResponse | null,
+  mood: StyleMood,
+  t: (ko: string) => string,
+): string {
+  if (!result) return t('퍼스널컬러 분석 전 기본 무드 후보입니다.');
   const season = displaySeasonLabel(result.label);
-  if (result.tone === 'cool') {
-    return `${season}의 차가운 색감과 ${mood.label}의 로즈·베리 계열 포인트가 잘 맞습니다.`;
-  }
-  return `${season}의 따뜻한 색감과 ${mood.label}의 피치·브라운 계열 포인트가 잘 맞습니다.`;
+  const template =
+    result.tone === 'cool'
+      ? t('{season}의 차가운 색감과 {mood}의 로즈·베리 계열 포인트가 잘 맞습니다.')
+      : t('{season}의 따뜻한 색감과 {mood}의 피치·브라운 계열 포인트가 잘 맞습니다.');
+  return template.replace('{season}', t(season)).replace('{mood}', t(mood.label));
 }
 
 function recommendStyleMoods(
   result: PersonalColorResponse | null,
   face: FaceShapeResponse | null,
+  t: (ko: string) => string,
 ): StyleMoodRecommendation[] {
   const key = result ? `${result.tone}-${result.subtype}` : 'cool-soft';
   const baseScores = STYLE_MOOD_SCORE_MAP[key] ?? STYLE_MOOD_SCORE_MAP[`${result?.tone ?? 'cool'}-soft`] ?? {};
@@ -540,7 +548,7 @@ function recommendStyleMoods(
       if (/둥근|하트|계란/.test(faceShape) && ['berry-sorbet', 'peach-latte', 'plum-creme'].includes(mood.id)) score += 0.35;
       if (/각진|긴/.test(faceShape) && ['cherry-chocolate', 'rose-wine', 'caramel-mocha'].includes(mood.id)) score += 0.35;
       if (result?.metrics?.season_consistency && result.metrics.season_consistency >= 0.8) score += 0.25;
-      return { mood, score, reason: moodRecommendationReason(result, mood) };
+      return { mood, score, reason: moodRecommendationReason(result, mood, t) };
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, 3);
@@ -1279,6 +1287,21 @@ export default function App() {
     if (dict !== value || appLang !== 'ja') return dict;
     return localizePcPhraseToJa(value);
   };
+  /** 서버가 조립해 내려주는 문장(판정 이유·경계 안내)을 화면 언어로 고른다.
+   *
+   * 일본어판은 타입명을 `{label}` / `{alt}` 자리표시자로 받는다. 타입명 사전은 프론트에만
+   * 두고 서버에 같은 표를 두 번 두지 않기 위해서다(두 곳에 두면 반드시 어긋난다).
+   * 일본어판이 없으면 한국어 원문으로 안전하게 폴백한다. */
+  const localizedSentence = (
+    ko: string | null | undefined,
+    ja: string | null | undefined,
+    labels?: { label?: string | null; alt?: string | null },
+  ): string => {
+    if (appLang !== 'ja' || !ja) return ko ?? '';
+    return ja
+      .replace(/\{label\}/g, labels?.label ? t(labels.label) : '')
+      .replace(/\{alt\}/g, labels?.alt ? t(labels.alt) : '');
+  };
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1443,8 +1466,8 @@ export default function App() {
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
   const styleMoodRecommendations = useMemo(
-    () => recommendStyleMoods(personalColorResult, faceShape),
-    [personalColorResult, faceShape],
+    () => recommendStyleMoods(personalColorResult, faceShape, t),
+    [personalColorResult, faceShape, t],
   );
 
   // 퍼스널컬러 다중 사진: files/previews는 인덱스로 정렬되며, 화살표로 순회한다.
@@ -1860,13 +1883,13 @@ export default function App() {
     }
     const availableSlots = PERSONAL_COLOR_MAX - personalColorFiles.length;
     if (availableSlots <= 0) {
-      setError(`퍼스널컬러 사진은 최대 ${PERSONAL_COLOR_MAX}장까지 선택할 수 있습니다.`);
+      setError(t('퍼스널컬러 사진은 최대 5장까지 선택할 수 있습니다.'));
       return;
     }
     const filesToAdd = images.slice(0, availableSlots);
     setError(
       images.length > availableSlots
-        ? `퍼스널컬러 사진은 최대 ${PERSONAL_COLOR_MAX}장까지 선택할 수 있어 일부만 추가했습니다.`
+        ? t('퍼스널컬러 사진은 최대 5장까지 선택할 수 있어 일부만 추가했습니다.')
         : '',
     );
     setPersonalColorFiles((current) => [...current, ...filesToAdd]);
@@ -2139,7 +2162,7 @@ export default function App() {
     }
 
     const filesToAdd = imageFiles.slice(0, availableSlots);
-    setError(imageFiles.length > availableSlots ? '피부 케어 분석 사진은 최대 5장까지 선택할 수 있어 일부 파일만 추가했습니다.' : '');
+    setError(imageFiles.length > availableSlots ? t('피부 케어 분석 사진은 최대 5장까지 선택할 수 있어 일부 파일만 추가했습니다.') : '');
     setFaceFiles((current) => [...current, ...filesToAdd]);
     setPreviewUrls((current) => [...current, ...filesToAdd.map((item) => URL.createObjectURL(item))]);
     resetResults();
@@ -2306,7 +2329,7 @@ export default function App() {
             ...(faceResults[0] ?? results[0]),
             analysis_mode: 'face',
             scores: averageSkinScores(faceResults.length ? faceResults : results),
-            summary: `${faceResults.length || results.length}장의 피부 케어 사진을 얼굴 피부로 평균 분석했습니다.`,
+            summary: `${faceResults.length || results.length}${t('장의 피부 케어 사진을 얼굴 피부로 평균 분석했습니다.')}`,
           }
         : {
             ...(bodyResults[0] ?? results[0]),
@@ -2812,7 +2835,7 @@ export default function App() {
                 <Box className="personal-color-preview kiosk-preview" sx={{ position: 'relative' }}>
                   {personalColorPreview ? (
                     <>
-                      <img src={personalColorPreview} alt={`퍼스널컬러 분석 미리보기 ${safePersonalColorIndex + 1}`} />
+                      <img src={personalColorPreview} alt={`${t('퍼스널컬러 분석 미리보기')} ${safePersonalColorIndex + 1}`} />
                       {personalColorCount > 1 && (
                         <>
                           <IconButton
@@ -2877,9 +2900,9 @@ export default function App() {
                             `2px solid ${index === safePersonalColorIndex ? theme.palette.primary.main : 'transparent'}`,
                         }}
                       >
-                        <img src={url} alt={`선택한 사진 ${index + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={url} alt={`${t('선택한 사진')} ${index + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         <IconButton
-                          aria-label={`${index + 1}번 사진 삭제`}
+                          aria-label={`${index + 1}${t('번 사진 삭제')}`}
                           onClick={(event) => { event.stopPropagation(); removePersonalColorFile(index); }}
                           sx={{
                             position: 'absolute', top: 0, right: 0, p: 0.2,
@@ -2900,7 +2923,7 @@ export default function App() {
                     startIcon={<ImagePlus size={18} />}
                     disabled={personalColorCount >= PERSONAL_COLOR_MAX}
                   >
-                    {personalColorCount > 0 ? '사진 추가' : '사진 선택'}
+                    {t(personalColorCount > 0 ? '사진 추가' : '사진 선택')}
                     <input hidden multiple type="file" accept="image/*" onChange={(event) => { handlePersonalColorUpload(event.target.files); event.target.value = ''; }} />
                   </Button>
                   <Button
@@ -2910,7 +2933,7 @@ export default function App() {
                     onClick={handlePersonalColorAnalyze}
                     endIcon={<Sparkles size={18} />}
                   >
-                    {loading === 'personal-color' ? '분석 중...' : '분석 시작'}
+                    {t(loading === 'personal-color' ? '분석 중...' : '분석 시작')}
                   </Button>
                 </Stack>
                 {/* 웹 계정에 퍼스널 컬러를 저장해 둔 사람은 촬영 없이 바로 결과를 볼 수 있다. */}
@@ -2934,7 +2957,11 @@ export default function App() {
                 {personalColorCount > 0 && (
                   <Stack direction="row" justifyContent="space-between" alignItems="center">
                     <Typography variant="caption" color="text.secondary">
-                      {personalColorCount}/{PERSONAL_COLOR_MAX}장 선택됨{personalColorCount === 1 ? ' · 2~3장을 함께 넣으면 판정이 더 안정적입니다.' : ' · 여러 장 평균으로 판정합니다.'}
+                      {personalColorCount}/{PERSONAL_COLOR_MAX}
+                      {t('장 선택됨')}
+                      {personalColorCount === 1
+                        ? ` · ${t('2~3장을 함께 넣으면 판정이 더 안정적입니다.')}`
+                        : ` · ${t('여러 장 평균으로 판정합니다.')}`}
                     </Typography>
                     <Button size="small" color="inherit" startIcon={<Trash2 size={14} />} onClick={clearPersonalColorFiles}>
                       {t('전체 삭제')}
@@ -2963,13 +2990,19 @@ export default function App() {
                     }}
                   >
                     <Typography variant="overline">Personal color result</Typography>
-                    <Typography variant="h3" fontWeight={900}>{personalColorResult.label}</Typography>
+                    <Typography variant="h3" fontWeight={900}>{t(personalColorResult.label)}</Typography>
                     <Typography color="text.secondary" sx={{ mt: 1 }}>
-                      {personalColorResult.skin_summary}
+                      {localizedSentence(personalColorResult.skin_summary, personalColorResult.skin_summary_ja, {
+                        label: personalColorResult.label,
+                        alt: personalColorResult.alternate_label,
+                      })}
                     </Typography>
                     {personalColorResult.decision_note && (
                       <Typography color="rgba(255,255,255,0.76)" sx={{ mt: 0.75, fontSize: 13 }}>
-                        {personalColorResult.decision_note}
+                        {localizedSentence(personalColorResult.decision_note, personalColorResult.decision_note_ja, {
+                          label: personalColorResult.label,
+                          alt: personalColorResult.alternate_label,
+                        })}
                       </Typography>
                     )}
                     {(() => {
@@ -3001,7 +3034,7 @@ export default function App() {
                           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
                             <Chip
                               size="small"
-                              label={`${personalColorResult.label} · ${p1}%`}
+                              label={`${t(personalColorResult.label)} · ${p1}%`}
                               sx={{ bgcolor: 'rgba(255,255,255,0.18)', color: 'common.white', fontWeight: 700 }}
                             />
                             {personalColorResult.alternate_label && (
@@ -3012,7 +3045,7 @@ export default function App() {
                                 <Chip
                                   size="small"
                                   variant="outlined"
-                                  label={`${personalColorResult.alternate_label}${p2 != null ? ` · ${p2}%` : ''}`}
+                                  label={`${t(personalColorResult.alternate_label)}${p2 != null ? ` · ${p2}%` : ''}`}
                                   sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
                                 />
                               </>
@@ -3041,25 +3074,25 @@ export default function App() {
                       {personalColorResult.metrics.capture_quality != null && (
                         <Chip
                           size="small"
-                          label={`촬영 품질 ${Math.round(personalColorResult.metrics.capture_quality * 100)}%`}
+                          label={`${t('촬영 품질')} ${Math.round(personalColorResult.metrics.capture_quality * 100)}%`}
                           color={personalColorResult.metrics.capture_quality >= 0.72 ? 'success' : 'warning'}
                         />
                       )}
                       <Chip
                         size="small"
-                        label={personalColorResult.metrics.face_detected ? '얼굴 crop 적용' : '얼굴 crop 제한'}
+                        label={t(personalColorResult.metrics.face_detected ? '얼굴 crop 적용' : '얼굴 crop 제한')}
                         variant="outlined"
                         sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
                       />
                       <Chip
                         size="small"
-                        label={personalColorResult.metrics.model_used ? '딥러닝 모델 사용' : '휴리스틱 보조'}
+                        label={t(personalColorResult.metrics.model_used ? '딥러닝 모델 사용' : '휴리스틱 보조')}
                         variant="outlined"
                         sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
                       />
                       <Chip
                         size="small"
-                        label={personalColorResult.metrics.white_balanced ? '조명 보정 적용' : '조명 보정 제한'}
+                        label={t(personalColorResult.metrics.white_balanced ? '조명 보정 적용' : '조명 보정 제한')}
                         variant="outlined"
                         sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.45)' }}
                       />
@@ -3132,12 +3165,12 @@ export default function App() {
         const blusherRows = (blushColors.length ? blushColors.slice(0, 2) : ['생기 코랄', '맑은 핑크']).map(
           (color, i) => ({
             brand: faceProductSet.blushBrands[i] ?? faceProductSet.blushBrands[0],
-            desc: `${color} 톤으로 생기 강조`,
+            desc: `${tPhrase(color)} ${t('톤으로 생기 강조')}`,
           }),
         );
         const shadingRows = faceProductSet.shadingColors.map((color, i) => ({
           brand: faceProductSet.shadingBrands[i] ?? faceProductSet.shadingBrands[0],
-          desc: `${color} 음영으로 턱선·광대 외곽 정리`,
+          desc: `${tPhrase(color)} ${t('음영으로 턱선·광대 외곽 정리')}`,
         }));
 
         return (
@@ -3145,7 +3178,7 @@ export default function App() {
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
               <Stack direction="row" spacing={1} className="kiosk-sub-tabs">
                 {['내 퍼스널 컬러', '내 얼굴형 분석', '메이크업 무드 선택', '아이템 매칭'].map((tab) => (
-                  <Chip key={tab} label={tab} className={tab === '내 얼굴형 분석' ? 'selected' : ''} />
+                  <Chip key={tab} label={t(tab)} className={tab === '내 얼굴형 분석' ? 'selected' : ''} />
                 ))}
               </Stack>
               <Button variant="text" color="inherit">{t('나가기')}</Button>
@@ -3154,7 +3187,7 @@ export default function App() {
             <Box sx={{ mt: 3 }}>
               <Typography variant="caption" color="primary" fontWeight={900}>{t('내 얼굴형 분석')}</Typography>
               <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
-                {shapeTags ? `내 얼굴형 유형은 ${shapeTags}` : '내 얼굴형 분석'}
+                {shapeTags ? `${t('내 얼굴형 유형은')} ${shapeTags}` : t('내 얼굴형 분석')}
               </Typography>
               <Typography color="text.secondary" sx={{ mt: 0.6 }}>
                 {shapeSummary}
@@ -3270,7 +3303,7 @@ export default function App() {
           <Box className="style-consult-screen">
             <Typography variant="caption" color="primary" fontWeight={900}>{t('메이크업 무드 선택')}</Typography>
             <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
-              AI 스타일 컨설턴트가<br />추천하는 메이크업 무드에요!
+              {t('AI 스타일 컨설턴트가')}<br />{t('추천하는 메이크업 무드에요!')}
             </Typography>
             <Chip className="style-consult-hint" label={t('퍼스널컬러 분석 결과로 상위 3개 무드를 골랐습니다')} sx={{ mt: 2 }} />
 
@@ -3291,7 +3324,7 @@ export default function App() {
                   >
                     {moodThumbnails[mood.id] ? (
                       <Box className="style-mood-thumb photo">
-                        <img src={moodThumbnails[mood.id]} alt={`${t(mood.label)} 적용`} />
+                        <img src={moodThumbnails[mood.id]} alt={`${t(mood.label)} ${t('적용')}`} />
                       </Box>
                     ) : (
                       <Box className={`style-mood-thumb ${mood.thumbClass}`} />
@@ -3495,7 +3528,7 @@ export default function App() {
                   <Box>
                     <Box className="report-mood-thumb">
                       {myFaceMakeup?.mood === activeMood.id ? (
-                        <img src={myFaceMakeup.image} alt={`내 사진에 ${activeMood.label} 적용`} />
+                        <img src={myFaceMakeup.image} alt={`${t('내 사진에')} ${t(activeMood.label)} ${t('적용')}`} />
                       ) : moodThumbnails[activeMood.id] ? (
                         <img src={moodThumbnails[activeMood.id]} alt={activeMood.label} />
                       ) : (
@@ -3815,7 +3848,7 @@ export default function App() {
                   >
                     {cameraDevices.map((device, index) => (
                       <MenuItem key={device.deviceId} value={device.deviceId}>
-                        {device.label || `카메라 ${index + 1}`}
+                        {device.label || `${t('카메라')} ${index + 1}`}
                       </MenuItem>
                     ))}
                   </Select>
@@ -3873,16 +3906,16 @@ export default function App() {
                 <Box className="photo-grid">
                   {previewUrls.map((url, index) => (
                     <Box className="capture-preview" key={url}>
-                      <img src={url} alt={`선택한 피부 사진 ${index + 1}`} />
+                      <img src={url} alt={`${t('선택한 피부 사진')} ${index + 1}`} />
                       <Box minWidth={0}>
                         <Typography variant="body2" noWrap>{faceFiles[index]?.name}</Typography>
-                        <Typography variant="caption" color="text.secondary">사진 {index + 1}</Typography>
+                        <Typography variant="caption" color="text.secondary">{t('사진')} {index + 1}</Typography>
                       </Box>
                       <Button
                         variant="text"
                         color="inherit"
                         size="small"
-                        aria-label={`${index + 1}번째 사진 삭제`}
+                        aria-label={`${index + 1}${t('번째 사진 삭제')}`}
                         onClick={() => removeFaceFile(index)}
                         sx={{ minWidth: 36 }}
                       >
@@ -4125,7 +4158,7 @@ export default function App() {
                             <ProductImage src={product.image_url} alt={product.name} fallback={<Sparkles size={26} />} />
                           </Box>
                           <Stack direction="row" justifyContent="space-between" alignItems="center">
-                            <Chip label={`추천 ${index + 1} · ${product.category}`} size="small" sx={{ width: 'fit-content' }} />
+                            <Chip label={`${t('추천')} ${index + 1} · ${tPhrase(product.category)}`} size="small" sx={{ width: 'fit-content' }} />
                             <Chip size="small" label={`${product.score ?? 0}`} color="secondary" />
                           </Stack>
                           <Typography fontWeight={900} className="rakuten-product-title">{product.name}</Typography>
@@ -4620,9 +4653,9 @@ export default function App() {
                 <Typography variant="h5" fontWeight={900}>{t('얼굴형 분석결과')}</Typography>
                 <Typography color="text.secondary" sx={{ mt: 1 }}>{t(virtualSurgeryResult?.face_shape?.summary ?? '')}</Typography>
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 2 }}>
-                  <Chip label={virtualSurgeryResult?.face_shape?.shape || '분석 전'} color="primary" variant="outlined" />
-                  <Chip label={`자연스러움 ${virtualSurgeryResult?.metrics.naturalness_score ?? '-'}점`} variant="outlined" />
-                  <Chip label={`점·잡티 후보 ${virtualSurgeryResult?.metrics.blemish_candidates ?? 0}개`} variant="outlined" />
+                  <Chip label={t(virtualSurgeryResult?.face_shape?.shape || '분석 전')} color="primary" variant="outlined" />
+                  <Chip label={`${t('자연스러움')} ${virtualSurgeryResult?.metrics.naturalness_score ?? '-'}${t('점')}`} variant="outlined" />
+                  <Chip label={`${t('점·잡티 후보')} ${virtualSurgeryResult?.metrics.blemish_candidates ?? 0}${t('개')}`} variant="outlined" />
                 </Stack>
                 <Stack spacing={1.3} sx={{ mt: 2 }}>
                   {ratios.map((ratio) => (
@@ -4761,7 +4794,7 @@ export default function App() {
                   <Grid item xs={12} md={4} key={`${card.category}-${index}`}>
                     <Paper elevation={0} className="virtual-reco-card">
                       <span className="virtual-reco-no">{String(index + 1).padStart(2, '0')}</span>
-                      <Chip label={`${card.score}점`} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
+                      <Chip label={`${card.score}${t('점')}`} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
                       {/* 1단계에서 고른 부위임을 표시한다. 백엔드가 selected 로 알려주고 정렬도
                           해 주는데, 결과지에 아무 표시가 없으면 '내 선택이 반영됐나'를 알 수 없다.
                           ⚠ 예전엔 이 배지를 displayedRecommendationCards(다른 렌더러)에만 넣어서
@@ -5497,7 +5530,7 @@ export default function App() {
                 disabled={!canGoNext()}
                 onClick={goNext}
               >
-                {currentStep === 1 ? '분석 시작' : currentStep === 5 ? '완료' : '다음'}
+                {t(currentStep === 1 ? '분석 시작' : currentStep === 5 ? '완료' : '다음')}
               </Button>
             </Stack>
           </Stack>
@@ -5542,7 +5575,7 @@ export default function App() {
               disabled={!canGoNext()}
               onClick={goNext}
             >
-              {currentStep === 1 ? '분석 시작' : currentStep === 5 ? '완료' : '다음'}
+              {t(currentStep === 1 ? '분석 시작' : currentStep === 5 ? '완료' : '다음')}
             </Button>
           </Stack>
         </Paper>

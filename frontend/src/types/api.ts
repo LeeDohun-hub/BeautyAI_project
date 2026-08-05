@@ -111,6 +111,9 @@ export type PersonalColorResponse = {
   decision_note?: string | null;
   confidence: number;
   skin_summary: string;
+  /** 서버가 조립한 문장의 일본어판. 타입명은 `{label}` / `{alt}` 자리표시자로 온다. */
+  skin_summary_ja?: string | null;
+  decision_note_ja?: string | null;
   palette: string[];
   makeup: PersonalColorMakeup;
   advice: string[];
