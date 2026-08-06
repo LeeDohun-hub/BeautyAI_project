@@ -286,6 +286,7 @@ export type RecommendationResponse = {
   ingredients: Ingredient[];
   products: Product[];
   explanation: string;
+  explanation_ja?: string | null;
   product_columns?: ProductColumn[];
 };
 

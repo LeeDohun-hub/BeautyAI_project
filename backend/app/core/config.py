@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     nail_retrieval_color_weight: float = 0.5
     problem_skin_knowledge_path: str = "./data/rag/problem_skin_knowledge.jsonl"
     skincare_ingredient_knowledge_path: str = "./data/rag/skincare_ingredient_knowledge.jsonl"
+    # 위 코퍼스의 일본어 번역본(id 로 1:1 대응). 없으면 일본어 모드에서 성분 근거 문단을
+    # 생략한다 — 한국어를 대신 내보내지 않는다.
+    skincare_ingredient_knowledge_path_ja: str = "./data/rag/skincare_ingredient_knowledge.ja.jsonl"
     # 병별 OTC 의약품 예시(OpenFDA OTC 라벨 기반). build_otc_drug_knowledge.py로 생성.
     otc_drug_knowledge_path: str = "./data/rag/otc_drug_knowledge.jsonl"
     naver_client_id: str | None = None

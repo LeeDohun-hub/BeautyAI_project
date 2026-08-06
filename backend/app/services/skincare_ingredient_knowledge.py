@@ -177,11 +177,55 @@ def build_skincare_answer(matches: list[SkincareKnowledgeMatch]) -> tuple[str, l
     return " ".join(sections), sources
 
 
-def build_skincare_recommendation_hint(message: str, context: dict | None = None) -> str:
+@lru_cache(maxsize=1)
+def _ja_answers() -> dict[str, dict[str, str]]:
+    """한국어 코퍼스와 **id 로 1:1 대응**하는 일본어 번역본.
+
+    본문(answer)은 개인화된 산문이라 사전으로 못 옮긴다(8,341건 · 약 300만 자).
+    별도 파일로 두고 id 로 붙인다 — 원본을 건드리지 않으므로 한국어 쪽 재생성과
+    번역 작업이 서로를 막지 않는다. 파일이 없으면 빈 dict 다(기능은 그대로 돈다).
+    """
+    configured = get_settings().skincare_ingredient_knowledge_path_ja
+    path = Path(configured)
+    if not path.is_absolute():
+        path = get_settings().project_root / path
+    if not path.is_file():
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    with path.open(encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            key = str(row.get("id", "")).strip()
+            if key:
+                out[key] = row
+    return out
+
+
+def build_skincare_recommendation_hint(
+    message: str, context: dict | None = None, lang: str = "ko"
+) -> str:
     matches = get_skincare_ingredient_knowledge().search(message, context, limit=1)
     if not matches or matches[0].score < 2:
         return ""
     best = matches[0].record
+
+    if lang == "ja":
+        # ⚠ 번역이 없으면 **한국어를 대신 보여주지 않고 문단을 생략한다.**
+        #   일본 사용자에게 한국어 의학 안내가 나가는 것이 정보가 하나 없는 것보다 나쁘다
+        #   (이 문단이 한국어로 나간 것이 이번 제보의 핵심이었다).
+        translated = _ja_answers().get(str(best.get("id", "")).strip())
+        if not translated:
+            return ""
+        concern = str(translated.get("target_concern") or "肌悩み")
+        answer = str(translated.get("answer", "")).strip()
+        if not answer:
+            return ""
+        if len(answer) > 360:
+            answer = answer[:357].rstrip() + "..."
+        return f"成分の根拠: {concern}には{answer}"
+
     concern = str(best.get("target_concern", "피부 고민"))
     answer = str(best.get("answer", "")).strip()
     if len(answer) > 360:

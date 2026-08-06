@@ -1285,6 +1285,7 @@ def recommend_products(
     platform: str = "all",
     analysis_mode: str = "face",
     body_conditions: list[BodyConditionScore] | None = None,
+    lang: str = "ko",
 ) -> RecommendationResponse:
     platform = normalize_platform(platform)
     body_conditions = body_conditions or []
@@ -1476,6 +1477,13 @@ def recommend_products(
         if analysis_mode == "body"
         else build_explanation(scores, survey, ingredient_names, product_names)
     )
+    # 일본어판은 얼굴 모드만 있다. 바디는 아직 한국어뿐이라 None 으로 두고, 프론트가
+    # 한국어 원문으로 폴백한다(없는 번역을 있는 척하지 않는다).
+    explanation_ja = (
+        None
+        if analysis_mode == "body"
+        else build_explanation_ja(scores, survey, ingredient_names, product_names)
+    )
     if analysis_mode != "body":
         context = {
             "survey": survey.model_dump(),
@@ -1484,6 +1492,14 @@ def recommend_products(
         hint = build_skincare_recommendation_hint(" ".join(ingredient_targets), context)
         if hint:
             explanation = f"{explanation} {hint}"
+        # 일본어판에는 일본어 근거만 붙인다. 번역이 없으면 문단 자체가 빠진다
+        # (한국어를 섞지 않는다 — 이번 제보의 핵심이 그것이었다).
+        if explanation_ja:
+            hint_ja = build_skincare_recommendation_hint(
+                " ".join(ingredient_targets), context, lang="ja"
+            )
+            if hint_ja:
+                explanation_ja = f"{explanation_ja} {hint_ja}"
 
     return RecommendationResponse(
         history_id=history.id,
@@ -1496,6 +1512,7 @@ def recommend_products(
             for score, _platform_score, product, reason_tags, evidence_note in top_products
         ],
         explanation=explanation,
+        explanation_ja=explanation_ja,
         product_columns=product_columns,
     )
 
@@ -1800,17 +1817,60 @@ def build_body_explanation(
     )
 
 
+# 일본어 표기. 한국어 라벨과 **키가 같아야** 한 쪽만 늘어나는 사고를 막는다.
+TARGET_LABELS_JA = {
+    "acne": "トラブル",
+    "pore": "毛穴",
+    "wrinkle": "シワ",
+    "redness": "赤み",
+    "pigmentation": "色素沈着",
+    "oiliness": "皮脂",
+}
+
+SKIN_TYPE_LABELS_JA = {
+    "dry": "乾燥肌",
+    "oily": "脂性肌",
+    "combination": "混合肌",
+    "normal": "普通肌",
+    "sensitive": "敏感肌",
+}
+
+AGE_LABELS = {"10s": "10대", "20s": "20대", "30s": "30대", "40s": "40대", "50s": "50대 이상"}
+AGE_LABELS_JA = {"10s": "10代", "20s": "20代", "30s": "30代", "40s": "40代", "50s": "50代以上"}
+
+
 def build_explanation(scores: SkinScores, survey: SurveyInput, ingredients: list[str], products: list[str]) -> str:
     score_map = scores.model_dump()
     top_scores = sorted(score_map.items(), key=lambda item: item[1], reverse=True)[:3]
     priorities = ", ".join(f"{TARGET_LABELS[name]} {value:.0f}" for name, value in top_scores)
     skin_type = SKIN_TYPE_LABELS.get(survey.skin_type, survey.skin_type)
-    age_label = {"10s": "10대", "20s": "20대", "30s": "30대", "40s": "40대", "50s": "50대 이상"}.get(survey.age_group, "")
+    age_label = AGE_LABELS.get(survey.age_group, "")
     gender_label = "여성" if survey.gender == "female" else "남성"
     context = f"{age_label} {gender_label}, {skin_type} 피부" if age_label else f"{gender_label}, {skin_type} 피부"
     return (
         f"가장 두드러진 피부 신호는 {priorities}입니다. {context}와 선택한 고민을 기준으로 "
         f"{', '.join(ingredients[:3])} 성분을 우선 추천했습니다. 추천 제품은 {', '.join(products[:3])} 등입니다."
+    )
+
+
+def build_explanation_ja(scores: SkinScores, survey: SurveyInput, ingredients: list[str], products: list[str]) -> str:
+    """build_explanation 의 일본어판.
+
+    수치·성분명·상품명이 끼는 조립형 문장이라 프론트 사전으로는 못 옮긴다. 그래서
+    퍼스널컬러의 skin_summary_ja 와 같은 방식으로 **서버가 두 벌을 만들어 내려준다**.
+    성분명·상품명은 원문 그대로 둔다(고유명사라 옮기면 오히려 못 찾는다).
+    """
+    score_map = scores.model_dump()
+    top_scores = sorted(score_map.items(), key=lambda item: item[1], reverse=True)[:3]
+    priorities = "、".join(f"{TARGET_LABELS_JA[name]} {value:.0f}" for name, value in top_scores)
+    skin_type = SKIN_TYPE_LABELS_JA.get(survey.skin_type, survey.skin_type)
+    age_label = AGE_LABELS_JA.get(survey.age_group, "")
+    gender_label = "女性" if survey.gender == "female" else "男性"
+    context = f"{age_label}{gender_label}・{skin_type}" if age_label else f"{gender_label}・{skin_type}"
+    return (
+        f"最も目立つ肌のサインは {priorities} です。{context}と選択されたお悩みを基準に、"
+        f"{'、'.join(ingredients[:3])} の成分を優先しました。"
+        f"おすすめ商品は {'、'.join(products[:3])} などです。"
     )
 
 

@@ -4155,7 +4155,9 @@ export default function App() {
             {loading === 'recommend' && <LinearProgress sx={{ mt: 2 }} />}
             {recommendation ? (
               <Stack spacing={2} sx={{ mt: 2 }}>
-                <Alert severity={analysis?.urgent ? 'error' : analysis?.analysis_mode === 'body' && !recommendation.products.length ? 'warning' : 'success'}>{tScreeningSummary(recommendation.explanation)}</Alert>
+                <Alert severity={analysis?.urgent ? 'error' : analysis?.analysis_mode === 'body' && !recommendation.products.length ? 'warning' : 'success'}>{recommendation.explanation_ja
+                        ? localizedSentence(recommendation.explanation, recommendation.explanation_ja)
+                        : tScreeningSummary(recommendation.explanation)}</Alert>
                 {recommendation.ingredients.length > 0 && (
                   <Box>
                     <Typography variant="subtitle2" gutterBottom>{t('추천 성분')}</Typography>
