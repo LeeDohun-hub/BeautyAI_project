@@ -128,12 +128,27 @@ class SkincareIngredientKnowledge:
         )
         return record, concern, question, query_terms(f"{concern} {question} {metadata}")
 
-    def search(self, message: str, context: dict | None = None, limit: int = 3) -> list[SkincareKnowledgeMatch]:
+    def search(
+        self,
+        message: str,
+        context: dict | None = None,
+        limit: int = 3,
+        allowed_ids: set[str] | None = None,
+    ) -> list[SkincareKnowledgeMatch]:
+        """allowed_ids 를 주면 그 안에서만 고른다.
+
+        일본어는 번역된 레코드만 쓸 수 있다. 전체에서 1등을 뽑고 나서 '번역이 없네'
+        하고 버리면, 번역이 있는 차선책이 있어도 문단이 통째로 빠진다 —
+        코퍼스 68% 번역이 사용자에겐 68% 노출로 그대로 내려앉는다.
+        후보 집합을 먼저 좁히면 같은 번역량으로 노출이 거의 100% 가 된다.
+        """
         query = f"{message} {context_text(context)}"
         terms = query_terms(query)
         normalized_query = normalize(query)
         matches: list[SkincareKnowledgeMatch] = []
         for record, concern, question, record_terms in self._indexed:
+            if allowed_ids is not None and str(record.get("id", "")) not in allowed_ids:
+                continue
             overlap = terms.intersection(record_terms)
             score = float(len(overlap))
             if concern and concern in normalized_query:
@@ -206,16 +221,21 @@ def _ja_answers() -> dict[str, dict[str, str]]:
 def build_skincare_recommendation_hint(
     message: str, context: dict | None = None, lang: str = "ko"
 ) -> str:
-    matches = get_skincare_ingredient_knowledge().search(message, context, limit=1)
-    if not matches or matches[0].score < 2:
-        return ""
-    best = matches[0].record
+    knowledge = get_skincare_ingredient_knowledge()
 
     if lang == "ja":
-        # ⚠ 번역이 없으면 **한국어를 대신 보여주지 않고 문단을 생략한다.**
-        #   일본 사용자에게 한국어 의학 안내가 나가는 것이 정보가 하나 없는 것보다 나쁘다
-        #   (이 문단이 한국어로 나간 것이 이번 제보의 핵심이었다).
-        translated = _ja_answers().get(str(best.get("id", "")).strip())
+        # 번역된 레코드 안에서만 고른다. 전체 1등을 뽑고 번역 유무를 나중에 보면,
+        # 번역이 있는 차선책을 두고도 문단이 빠진다(코퍼스 커버리지가 그대로 노출
+        # 커버리지가 된다). 후보를 먼저 좁혀 같은 번역량으로 노출을 끌어올린다.
+        available = _ja_answers()
+        if not available:
+            return ""
+        matches = knowledge.search(message, context, limit=1, allowed_ids=set(available))
+        if not matches or matches[0].score < 2:
+            return ""
+        # ⚠ 그래도 못 찾으면 **한국어를 대신 보여주지 않고 문단을 생략한다.**
+        #   일본 사용자에게 한국어 의학 안내가 나가는 것이 정보가 하나 없는 것보다 나쁘다.
+        translated = available.get(str(matches[0].record.get("id", "")).strip())
         if not translated:
             return ""
         concern = str(translated.get("target_concern") or "肌悩み")
@@ -226,6 +246,10 @@ def build_skincare_recommendation_hint(
             answer = answer[:357].rstrip() + "..."
         return f"成分の根拠: {concern}には{answer}"
 
+    matches = knowledge.search(message, context, limit=1)
+    if not matches or matches[0].score < 2:
+        return ""
+    best = matches[0].record
     concern = str(best.get("target_concern", "피부 고민"))
     answer = str(best.get("answer", "")).strip()
     if len(answer) > 360:

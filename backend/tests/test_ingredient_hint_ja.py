@@ -79,3 +79,40 @@ def test_translation_file_is_keyed_by_id(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "skincare_ingredient_knowledge_path_ja", str(path))
     knowledge._ja_answers.cache_clear()
     assert knowledge._ja_answers()["abc"]["answer"] == "テスト"
+
+
+def test_japanese_search_is_restricted_to_translated_records(monkeypatch):
+    """일본어는 **번역된 것 중에서** 최적 매칭을 고른다.
+
+    전체 1등을 뽑고 나서 번역 유무를 보면, 번역이 있는 차선책을 두고도 문단이 빠진다.
+    여기서는 전체 1등이 아닌 레코드 하나만 번역해 두고, 그게 선택되는지 본다.
+    """
+    kn = knowledge.get_skincare_ingredient_knowledge()
+    top = kn.search("모공 피지", None, limit=5)
+    if len(top) < 2:
+        pytest.skip("후보가 부족해 스킵")
+
+    runner_up = top[1].record  # 1등이 아닌 것
+    assert str(runner_up.get("id")) != str(top[0].record.get("id"))
+
+    monkeypatch.setattr(knowledge, "_ja_answers", lambda: {
+        str(runner_up.get("id")): {
+            "id": runner_up.get("id"),
+            "target_concern": "毛穴",
+            "answer": "皮脂ケアを中心に整えます。",
+        }
+    })
+    hint = knowledge.build_skincare_recommendation_hint("모공 피지", None, lang="ja")
+    assert hint.startswith("成分の根拠:"), "번역된 차선책이 있는데 문단이 빠졌습니다"
+    assert "皮脂ケアを中心に整えます。" in hint
+
+
+def test_korean_still_picks_the_overall_best(monkeypatch):
+    """한국어는 번역 여부와 무관하게 전체 1등을 그대로 쓴다."""
+    kn = knowledge.get_skincare_ingredient_knowledge()
+    top = kn.search("모공 피지", None, limit=1)
+    if not top or top[0].score < 2:
+        pytest.skip("코퍼스가 없어 스킵")
+    monkeypatch.setattr(knowledge, "_ja_answers", lambda: {})
+    hint = knowledge.build_skincare_recommendation_hint("모공 피지", None, lang="ko")
+    assert str(top[0].record.get("target_concern", "")) in hint
