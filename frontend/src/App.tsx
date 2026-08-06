@@ -244,7 +244,11 @@ function CartHandoffQr({
     setError('');
     createCartHandoff(items)
       .then((response) => {
-        if (!cancelled) setUrl(response.url);
+        if (cancelled) return;
+        // 200 인데 url 이 비어 오면 setUrl('') 이 되어 영원히 로딩으로 남는다.
+        // 실패로 취급해야 화면에 이유가 뜬다.
+        if (response.url) setUrl(response.url);
+        else setError('장바구니 QR 을 만들지 못했습니다.');
       })
       .catch(() => {
         if (!cancelled) setError('장바구니 QR 을 만들지 못했습니다.');
@@ -255,33 +259,42 @@ function CartHandoffQr({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, linked]);
 
+  // 부모는 74×74 고정 박스다. 예전엔 maxWidth:132 로 안내문을 뿜어 박스를 넘겼고,
+  // 일본어처럼 문장이 길어지면 옆 QR 캡션과 겹쳐 읽을 수 없었다(2026-08-05 실측).
+  // 박스 안에 맞춰 접고, 넘치면 말줄임으로 끊는다 — 결과지는 고정 크기 인쇄면이라
+  // 넘친 만큼 그대로 잘려 나간다.
+  const note = (message: string, color: 'text.secondary' | 'error') => (
+    <Typography
+      variant="caption"
+      color={color}
+      sx={{
+        display: '-webkit-box',
+        WebkitBoxOrient: 'vertical',
+        WebkitLineClamp: 4,
+        overflow: 'hidden',
+        width: '100%',
+        height: '100%',
+        fontSize: '0.5rem',
+        lineHeight: 1.25,
+        textAlign: 'center',
+      }}
+    >
+      {t(message)}
+    </Typography>
+  );
+
   if (!linked) {
-    // 부모는 74×74 고정 박스다. 예전엔 여기서 maxWidth:132 로 안내문을 뿜어 박스를 넘겼고,
-    // 일본어처럼 문장이 길어지면 옆 QR 캡션과 겹쳐 읽을 수 없었다(2026-08-05 실측).
-    // 박스 안에 맞춰 접고, 넘치면 말줄임으로 끊는다 — 결과지는 고정 크기 인쇄면이라
-    // 넘친 만큼 그대로 잘려 나간다.
-    return (
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{
-          display: '-webkit-box',
-          WebkitBoxOrient: 'vertical',
-          WebkitLineClamp: 4,
-          overflow: 'hidden',
-          width: '100%',
-          height: '100%',
-          fontSize: '0.5rem',
-          lineHeight: 1.25,
-          textAlign: 'center',
-        }}
-      >
-        {t('웹 계정으로 로그인하면 QR 로 장바구니에 담을 수 있습니다.')}
-      </Typography>
-    );
+    return note('웹 계정으로 로그인하면 QR 로 장바구니에 담을 수 있습니다.', 'text.secondary');
+  }
+  // ⚠ 담은 상품이 0개면 위 useEffect 가 요청을 보내지 않고 url 을 빈 값으로 둔다.
+  //    그런데 아래 `!url` 분기가 그걸 '로딩 중'으로 보고 LinearProgress 를 계속 그렸다.
+  //    화면엔 설명 없는 빈 박스에 멈춘 진행바만 남는다(실측 2026-08-06).
+  //    '아직 못 만들었다'와 '만들 게 없다'는 다르다 — 먼저 갈라낸다.
+  if (items.length === 0) {
+    return note('결과지에 담은 상품이 없어요. 상품을 담으면 QR 이 만들어집니다.', 'text.secondary');
   }
   if (error) {
-    return <Typography variant="caption" color="error">{t(error)}</Typography>;
+    return note(error, 'error');
   }
   if (!url) {
     return <Box sx={{ width: size, height: size }}><LinearProgress /></Box>;
