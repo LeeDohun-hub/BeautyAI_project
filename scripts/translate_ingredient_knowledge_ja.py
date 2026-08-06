@@ -24,8 +24,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +65,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0, help="이번 실행에서 번역할 최대 건수(0=전체)")
     parser.add_argument("--dry-run", action="store_true", help="호출 없이 남은 분량만 계산")
     parser.add_argument("--model", default="", help="비우면 백엔드 설정의 openai_model")
+    parser.add_argument("--workers", type=int, default=8, help="동시 요청 수(레이트리밋에 맞춰 조절)")
     args = parser.parse_args()
 
     rows = _load(SOURCE)
@@ -102,15 +106,13 @@ def main() -> int:
     batch = todo[: args.limit] if args.limit > 0 else todo
     print(f"모델 {model} · 이번 실행 {len(batch)}건")
 
-    # 한 건씩 append 로 쓴다 — 중간에 끊겨도 그때까지가 남고 다음 실행이 이어받는다.
-    TARGET.parent.mkdir(parents=True, exist_ok=True)
-    written = 0
-    with TARGET.open("a", encoding="utf-8") as out:
-        for index, row in enumerate(batch, 1):
-            answer = str(row.get("answer", "")).strip()
-            concern = str(row.get("target_concern", "")).strip()
-            if not answer:
-                continue
+    def translate(row: dict) -> dict | None:
+        """한 건 번역. 레이트리밋·일시 오류는 백오프 후 재시도한다."""
+        answer = str(row.get("answer", "")).strip()
+        concern = str(row.get("target_concern", "")).strip()
+        if not answer:
+            return None
+        for attempt in range(4):
             try:
                 completion = client.chat.completions.create(
                     model=model,
@@ -122,23 +124,55 @@ def main() -> int:
                     ],
                 )
                 translated = (completion.choices[0].message.content or "").strip()
-            except Exception as exc:  # 네트워크·레이트리밋 등 — 건너뛰고 다음 실행에서 재시도
-                print(f"  [{index}/{len(batch)}] id={row.get('id')} 실패: {exc}", file=sys.stderr)
-                time.sleep(2)
-                continue
-            if not translated:
-                continue
-            out.write(json.dumps({
-                "id": row.get("id"),
-                "target_concern": _CONCERN_JA.get(concern, concern),
-                "answer": translated,
-            }, ensure_ascii=False) + "\n")
-            out.flush()
-            written += 1
-            if index % 25 == 0:
-                print(f"  {index}/{len(batch)} 진행")
+                if not translated:
+                    return None
+                return {
+                    "id": row.get("id"),
+                    "target_concern": _CONCERN_JA.get(concern, concern),
+                    "answer": translated,
+                }
+            except Exception as exc:
+                last = attempt == 3
+                if last:
+                    # 남겨두면 다음 실행이 이어받는다(이 id 는 파일에 안 써지므로 미완료로 남는다).
+                    print(f"  id={row.get('id')} 포기: {exc}", file=sys.stderr)
+                    return None
+                # 지수 백오프 + 지터. 동시 요청이 한꺼번에 재시도해 다시 429 를 맞는 걸 막는다.
+                time.sleep((2 ** attempt) + random.uniform(0, 1))
+        return None
 
-    print(f"완료: {written}건 추가 → {TARGET}")
+    # 한 건씩 append 로 쓴다 — 중간에 끊겨도 그때까지가 남고 다음 실행이 이어받는다.
+    # 쓰기는 락으로 직렬화한다(여러 스레드가 같은 파일에 쓰면 줄이 섞인다).
+    TARGET.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    done_count = 0
+    lock = threading.Lock()
+    started = time.time()
+
+    with TARGET.open("a", encoding="utf-8") as out:
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            futures = {pool.submit(translate, row): row for row in batch}
+            for future in as_completed(futures):
+                record = future.result()
+                with lock:
+                    done_count += 1
+                    if record:
+                        out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        out.flush()
+                        written += 1
+                    if done_count % 100 == 0 or done_count == len(batch):
+                        rate = done_count / max(1e-9, time.time() - started)
+                        left = (len(batch) - done_count) / rate if rate else 0
+                        print(
+                            f"  {done_count}/{len(batch)} 완료 (성공 {written}) "
+                            f"· {rate:.1f}건/초 · 남은 시간 약 {left / 60:.0f}분",
+                            flush=True,
+                        )
+
+    elapsed = time.time() - started
+    print(f"완료: {written}건 추가 ({elapsed / 60:.1f}분) → {TARGET}")
+    if written < len(batch):
+        print(f"실패 {len(batch) - written}건은 파일에 없으므로 다시 실행하면 이어서 시도한다.")
     return 0
 
 
