@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 import threading
 import time
@@ -47,6 +48,37 @@ SYSTEM = """あなたは化粧品・皮膚科学の専門翻訳者です。韓�
 - 「〜します」「〜です」の丁寧体で、簡潔に。
 - 医療行為を勧める表現にしない。原文が「相談を検討」ならその強さを保つ。
 - 出力は翻訳文のみ。前置き・後書き・引用符を付けない。"""
+
+
+_HANGUL = re.compile(r"[가-힣]")
+# 한국어만 든 괄호(성분명 병기). 프롬프트가 금지했는데도 드물게 나온다(실측 5,672건 중 1건).
+_KOREAN_PAREN = re.compile(r"\s*[（(][^）)]*[가-힣][^）)]*[）)]")
+
+
+# 기다려도 안 풀리는 오류. 429 라고 다 같은 429 가 아니다 — 레이트리밋은 재시도할 값이지만
+# 크레딧 소진·인증 실패는 재시도할수록 로그만 더럽고 시간만 버린다.
+_FATAL_MARKERS = (
+    "insufficient_quota",
+    "credit_balance_exhausted",
+    "no credits remaining",
+    "invalid_api_key",
+    "authentication",
+)
+
+
+def _is_fatal(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _FATAL_MARKERS)
+
+
+def sanitize(text: str) -> str:
+    """일본어 본문에 섞여 나온 한국어 괄호 병기를 떼어낸다.
+
+    괄호 밖에 한국어가 남으면 번역이 실패한 것이므로 그대로 두고 호출부가 버린다 —
+    반쯤 한국어인 문장을 일본 사용자에게 내보내지 않는다.
+    """
+    cleaned = _KOREAN_PAREN.sub("", text)
+    return "" if _HANGUL.search(cleaned) else cleaned
 
 
 def _load(path: Path) -> list[dict]:
@@ -106,8 +138,12 @@ def main() -> int:
     batch = todo[: args.limit] if args.limit > 0 else todo
     print(f"모델 {model} · 이번 실행 {len(batch)}건")
 
+    _abort = threading.Event()
+
     def translate(row: dict) -> dict | None:
-        """한 건 번역. 레이트리밋·일시 오류는 백오프 후 재시도한다."""
+        """한 건 번역. 일시 오류는 백오프 후 재시도, 회복 불가 오류는 전체 중단."""
+        if _abort.is_set():
+            return None
         answer = str(row.get("answer", "")).strip()
         concern = str(row.get("target_concern", "")).strip()
         if not answer:
@@ -123,7 +159,7 @@ def main() -> int:
                         {"role": "user", "content": f"肌悩みの分類: {concern}\n\n本文:\n{answer}"},
                     ],
                 )
-                translated = (completion.choices[0].message.content or "").strip()
+                translated = sanitize((completion.choices[0].message.content or "").strip())
                 if not translated:
                     return None
                 return {
@@ -132,8 +168,16 @@ def main() -> int:
                     "answer": translated,
                 }
             except Exception as exc:
-                last = attempt == 3
-                if last:
+                # ⚠ 크레딧 소진·인증 오류는 **기다려도 안 풀린다.** 429 라는 이유로 재시도하면
+                #   남은 수천 건이 각각 4번씩 헛돌고(실측 450+회) 진짜 원인이 로그에 묻힌다.
+                #   이런 건 즉시 전체를 멈춘다 — 크레딧을 채우고 다시 실행하면 이어받는다.
+                if _is_fatal(exc):
+                    _abort.set()
+                    print(f"\n중단: {exc}", file=sys.stderr)
+                    return None
+                if _abort.is_set():
+                    return None
+                if attempt == 3:
                     # 남겨두면 다음 실행이 이어받는다(이 id 는 파일에 안 써지므로 미완료로 남는다).
                     print(f"  id={row.get('id')} 포기: {exc}", file=sys.stderr)
                     return None
