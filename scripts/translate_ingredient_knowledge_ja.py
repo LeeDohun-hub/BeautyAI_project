@@ -10,7 +10,8 @@
   한 번에 다 돌리지 않아도 되게 **재개 가능**하게 만들었다 — 이미 번역된 id 는 건너뛴다.
 
 사용
-  export ANTHROPIC_API_KEY=...
+  # 키·모델은 백엔드 설정(.env 의 OPENAI_API_KEY / OPENAI_MODEL)을 그대로 쓴다 —
+  # 이 저장소의 다른 LLM 호출(llm_consult)과 같은 자격증명·모델을 보게 하기 위해서다.
   python scripts/translate_ingredient_knowledge_ja.py --limit 50      # 맛보기
   python scripts/translate_ingredient_knowledge_ja.py                 # 전체(재개)
   python scripts/translate_ingredient_knowledge_ja.py --dry-run       # 비용만 추정
@@ -37,7 +38,9 @@ SYSTEM = """あなたは化粧品・皮膚科学の専門翻訳者です。韓�
 
 規則:
 - 意味を変えない。断定を強めたり、効能を誇張しない。
-- 成分名は日本の化粧品表示で一般的な表記にする。確信が持てない場合は日本語表記の後に韓国語原文を括弧で併記する。
+- 成分名は日本の化粧品表示で一般的な表記にする。確信が持てない場合のみ、日本語表記の後に
+  英語（INCI）名を括弧で併記する。例: ゴボウ根エキス（Arctium Lappa Root Extract）
+- 韓国語は一文字も残さない。括弧の中にも韓国語を書かない。
 - 「〜します」「〜です」の丁寧体で、簡潔に。
 - 医療行為を勧める表現にしない。原文が「相談を検討」ならその強さを保つ。
 - 出力は翻訳文のみ。前置き・後書き・引用符を付けない。"""
@@ -58,7 +61,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=0, help="이번 실행에서 번역할 최대 건수(0=전체)")
     parser.add_argument("--dry-run", action="store_true", help="호출 없이 남은 분량만 계산")
-    parser.add_argument("--model", default="claude-haiku-4-5-20251001")
+    parser.add_argument("--model", default="", help="비우면 백엔드 설정의 openai_model")
     args = parser.parse_args()
 
     rows = _load(SOURCE)
@@ -79,19 +82,25 @@ def main() -> int:
         print("남은 작업이 없습니다.")
         return 0
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    sys.path.insert(0, str(ROOT / "backend"))
+    from app.core.config import get_settings  # noqa: E402
+
+    settings = get_settings()
+    api_key = settings.openai_api_key or os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        print("ANTHROPIC_API_KEY 가 없습니다.")
+        print("OPENAI_API_KEY 가 없습니다(.env 확인).")
         return 1
+    model = args.model or settings.openai_model
 
     try:
-        from anthropic import Anthropic
+        from openai import OpenAI
     except ImportError:
-        print("pip install anthropic 이 필요합니다.")
+        print("pip install openai 가 필요합니다.")
         return 1
 
-    client = Anthropic(api_key=api_key)
+    client = OpenAI(api_key=api_key)
     batch = todo[: args.limit] if args.limit > 0 else todo
+    print(f"모델 {model} · 이번 실행 {len(batch)}건")
 
     # 한 건씩 append 로 쓴다 — 중간에 끊겨도 그때까지가 남고 다음 실행이 이어받는다.
     TARGET.parent.mkdir(parents=True, exist_ok=True)
@@ -103,18 +112,16 @@ def main() -> int:
             if not answer:
                 continue
             try:
-                message = client.messages.create(
-                    model=args.model,
+                completion = client.chat.completions.create(
+                    model=model,
                     max_tokens=1500,
-                    system=SYSTEM,
-                    messages=[{
-                        "role": "user",
-                        "content": f"肌悩みの分類: {concern}\n\n本文:\n{answer}",
-                    }],
+                    temperature=0.2,  # 번역이라 창의성이 필요 없다. 표기 흔들림을 줄인다.
+                    messages=[
+                        {"role": "system", "content": SYSTEM},
+                        {"role": "user", "content": f"肌悩みの分類: {concern}\n\n本文:\n{answer}"},
+                    ],
                 )
-                translated = "".join(
-                    block.text for block in message.content if getattr(block, "type", "") == "text"
-                ).strip()
+                translated = (completion.choices[0].message.content or "").strip()
             except Exception as exc:  # 네트워크·레이트리밋 등 — 건너뛰고 다음 실행에서 재시도
                 print(f"  [{index}/{len(batch)}] id={row.get('id')} 실패: {exc}", file=sys.stderr)
                 time.sleep(2)

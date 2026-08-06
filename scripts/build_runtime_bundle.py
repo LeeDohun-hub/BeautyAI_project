@@ -95,8 +95,14 @@ def collect() -> list[Path]:
     # RAG·지식 파일은 상대경로 그대로라 project_root 기준으로 푼다.
     # settings.chroma_path 는 제외한다 — 앱 어디서도 chromadb 를 import 하지 않는 죽은 설정이고
     # 가리키는 디렉터리도 존재하지 않는다(RAG 는 아래 jsonl 파일로 동작한다).
+    # ⚠ 새 데이터 파일은 반드시 여기에도 넣는다. 안 넣으면 로컬에선 멀쩡하고
+    #   **프로덕션에서만 조용히 죽는다**(이 저장소에서 반복된 사고다).
+    #   일본어 성분 코퍼스는 없어도 앱은 돌지만(문단이 빠질 뿐) 번들에서 빠지면
+    #   일본 사용자에게 성분 근거가 영원히 안 나온다.
     for rel in (s.problem_skin_knowledge_path,
-                s.skincare_ingredient_knowledge_path, s.otc_drug_knowledge_path):
+                s.skincare_ingredient_knowledge_path,
+                s.skincare_ingredient_knowledge_path_ja,
+                s.otc_drug_knowledge_path):
         p = Path(rel)
         paths.append(str(p if p.is_absolute() else PROJECT_ROOT / p))
 
