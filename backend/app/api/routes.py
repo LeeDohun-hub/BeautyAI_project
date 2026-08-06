@@ -125,17 +125,24 @@ _ITEM_CATEGORY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # ⚠ '아이'는 단독 부분문자열로 두면 **'아이보리'(ivory)·'아이스'(ice)** 가 걸린다 —
     #   '바비브라운 … 파운데이션 SPF20 W026 웜 아이보리'(파운데이션)가 아이 컬럼에 꽂혔다(실측).
     #   nail/스네일과 같은 부류의 부분문자열 오탐이라 같은 방식(부정 탐색)으로 막는다.
+    # 한글 카테고리어(팔레트/마스카라/라이너)를 빠뜨리면 한국어명 상품이 통째로 미분류가 된다.
+    # KR 은 네이버 API 종료 뒤 **한국어명 카탈로그**가 사실상 유일한 후보라 그대로 빈 컬럼이 된다.
+    # 실측(글로벌 카탈로그): 팔레트 24 · 마스카라 24 · 라이너 23건이 어느 컬럼에도 못 들어갔다.
     ("eye", re.compile(
         r"eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ"
-        r"|아이(?!보리|스크림|스크|스티|솔레|허브)|섀도|쉐도", re.I)),
-    ("base", re.compile(r"base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스", re.I)),
+        r"|아이(?!보리|스크림|스크|스티|솔레|허브)|섀도|쉐도|팔레트|마스카라|라이너", re.I)),
+    # 같은 이유의 한글 보강: 파우더 47 · 프라이머 23 · 쉐딩 17 · 컨실러 17 · 하이라이터 16건.
+    ("base", re.compile(
+        r"base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー"
+        r"|파운데이션|쿠션|베이스|파우더|프라이머|컨실러|하이라이터|쉐딩|섀딩", re.I)),
     # ⚠ '립'/'リップ' 도 부분문자열 오탐 계열이다(nail⊂snail, 아이⊂아이보리 와 같은 부류).
     #   '튤립'/'チューリップ'(tulip)이 걸려, 라쿠텐이 '로즈 핑크 립' 검색에 물어온
     #   **캔들홀더**(キャンドルホルダー … チューリップ型 … 燭台)가 립 컬럼에 카드로 떴다(실측 2026-08-04).
     #   'lip' 영문은 tulip 이 (?<![a-z]) 로 이미 막힌다.
     ("lip", re.compile(
         r"(?<![a-z])lip|lipstick|tint|rouge|gloss|balm|(?<!チュー)リップ|ルージュ|ティント"
-        r"|(?<!튤)립|틴트", re.I)),
+        # '글로스'는 '립' 없이 쓰이기도 한다('에뛰드 글레이즈 플럼프 글로스', 실측 13건).
+        r"|(?<!튤)립|틴트|글로스", re.I)),
 ]
 
 # 남성(Level 2): 베이스/브로우/컨실러/립밤 4개. 색조(블러셔/아이/네일) 대신 그루밍 중심.
@@ -156,8 +163,17 @@ def _item_category_patterns(gender: str) -> list[tuple[str, re.Pattern[str]]]:
 # 비화장품 배제: '남자 쿠션' 검색이 쿠션 신발/양말/방석 같은 잡화를 물어와 base로 오분류되는
 # 문제를 막는다(사용자 지적). 상품명에 이 토큰이 있으면 어느 카테고리도 아님(제외)으로 본다.
 _NON_COSMETIC_RE = re.compile(
-    r"운동화|신발|슬리퍼|샌들|부츠|구두|로퍼|스니커|깔창|양말|방석|베개|매트|의자|소파|침대|러그"
+    # ⚠ '러그'는 뺐다 — 브랜드명 '컬러그램' 안에 들어 있어 실측 43건이 전부 오탐이었다
+    #   ('컬러그램 음영 창조 라이너' 등). 잡화 러그는 이 카탈로그에 0건이다.
+    #   짧은 한글 토큰은 브랜드·제품명의 부분문자열이 되기 쉽다(이 저장소에서 반복된 부류다:
+    #   nail⊂snail, 아이⊂아이보리, anua⊂manual).
+    r"운동화|신발|슬리퍼|샌들|부츠|구두|로퍼|스니커|깔창|양말|방석|베개|의자|소파|침대"
     r"|쿠션커버|커버지|스카프|장갑|모자|가방|지갑|벨트|시계|이어폰|충전|케이블|거치"
+    # ⚠ '매트'를 맨몸으로 두면 안 된다 — matte 화장품이 통째로 걸린다.
+    #   실측(글로벌 카탈로그 3,374건): '매트' 매칭 35건이 **전부 화장품**이고 잡화 매트는 0건이었다
+    #   (라네즈 네오 쿠션 매트 / 아누아 매트 프라이머 / 다슈 아쿠아 매트 비비 쿠션 …).
+    #   바닥·요가 매트만 잡도록 복합어로 좁힌다.
+    r"|요가매트|바닥매트|현관매트|욕실매트|매트리스"
     # 일본어 잡화(‘メンズ クッション’이 쿠션 양말/신발을 물어옴): 양말/신발/방석/베개/의자 등.
     r"|ソックス|靴下|スニーカー|サンダル|スリッパ|ブーツ|クッションカバー|座布団|まくら|枕|マット|椅子|ソファ|寝具"
     # 화장 '도구'·헤어 액세서리. 라쿠텐 색상 검색이 물어온 실측 오탐:
@@ -170,6 +186,12 @@ _NON_COSMETIC_RE = re.compile(
     r"|メイクブラシ|化粧筆|ブラシ\s*\d*\s*本セット|筆\s*\d*\s*本セット|메이크업\s*브러시\s*세트|화장붓"
     r"|ピンセット|毛抜き|付け爪切|ネイルチップケース|収納ケース|コスメポーチ|化粧ポーチ"
     r"|핀셋|족집게|화장품\s*케이스|화장\s*파우치"
+    # 남성 그루밍 '기구'. 남성 카탈로그 주입을 켜면서 필요해졌다 — 실측으로 '아이디얼포맨
+    # 투인원 눈썹칼'이 brow 컬럼에, '올인원 바디 쉐이버'·'다리털 트리머'가 카드로 잡혔다.
+    # ⚠ '면봉'은 넣지 않는다 — '닥터자르트 …수딩스팟 15ml 기획 (+면봉)'처럼 면봉이 **사은품**인
+    #   화장품이 통째로 사라진다(실측). 같은 이유로 '면도'가 아니라 '면도기/면도날'만 막는다
+    #   (면도크림·쉐이빙폼은 화장품이다).
+    r"|눈썹칼|눈썹가위|눈썹정리기|쉐이버|트리머|면도기|면도날|眉毛シェーバー|カミソリ"
     # 인테리어 잡화. 라쿠텐 색상 검색이 '로즈 핑크 립'에 캔들홀더를 물어왔다(실측 2026-08-04):
     # 'キャンドルホルダー 北欧 陶器 … 燭台 インテリア 雑貨 チューリップ型 …'
     r"|キャンドルホルダー|燭台|キャンドルスタンド|花瓶|置物|インテリア雑貨|캔들홀더|촛대|화병",
@@ -189,12 +211,25 @@ _CATEGORY_NAME_ANTI_PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 
+# 사은품 표기. '(+미니 이어폰)' '(＋멜론동전지갑)' 처럼 괄호 안에 덤이 적힌다.
+# 덤은 잡화일 수 있어도 **본품은 화장품**이다 — 판정 전에 떼어내지 않으면 본품이 통째로
+# 사라진다. 실측: '퓌 글로이 스무디 틴티드 립밤 (+멜론동전지갑)'이 '지갑'으로,
+# '에뛰드 마이 쁘띠 팔레트 (+미니 이어폰)'이 '이어폰'으로 제외됐다.
+_FREEBIE_RE = re.compile(r"\(\s*[+＋][^)）]*[)）]?")
+
+
+def _strip_freebies(text: str) -> str:
+    return _FREEBIE_RE.sub(" ", text)
+
+
 def _item_match_category(product, gender: str = "female") -> str | None:
-    text = f"{product.keyword or ''} {product.name or ''}"
+    text = _strip_freebies(f"{product.keyword or ''} {product.name or ''}")
     if _NON_COSMETIC_RE.search(text):
         return None  # 신발/양말·화장도구 등 잡화 → 화장품 컬럼에서 제외
     patterns = _item_category_patterns(gender)
-    name = (product.name or "").lower()
+    # 카테고리 판정에서도 사은품은 뗀다 — 스킨케어 본품에 '(+미니 립밤)'이 붙었다고
+    # 립 컬럼에 들어가면 안 된다. 카테고리를 정하는 건 본품 이름이다.
+    name = _strip_freebies(product.name or "").lower()
     by_name = next((c for c, pattern in patterns if pattern.search(name)), None)
     by_keyword = next((c for c, pattern in patterns if pattern.search((product.keyword or "").lower())), None)
     # 상품명이 카테고리를 분명히 말하면 상품명을 따른다. 키워드는 '무엇을 검색했나'일 뿐이고
@@ -313,6 +348,12 @@ def _balance_item_categories(items: list, limit: int = 10, per_category: int = 2
 # 이후 올리브영 글로벌 직링크 버튼을 붙인다(카탈로그 매칭). 색조 아닌 4개 카테고리만 노출.
 _MALE_CAT_KEYWORD = {"base": "쿠션", "brow": "아이브로우", "concealer": "컨실러", "lipbalm": "립밤"}
 _USD_TO_JPY = 150  # 글로벌몰 USD → JP 카드 표시가 근사(정밀 환율 아님).
+_USD_TO_KRW = 1370  # 같은 용도의 KR 표시가. KR 카드에 엔화 환산가를 쓰면 값이 9배 작게 나온다.
+
+
+def _catalog_price(price_usd: float, region: str) -> int:
+    """글로벌몰 USD 가격을 지역 표시 통화로 옮긴다(근사)."""
+    return int(round(price_usd * (_USD_TO_JPY if region == "jp" else _USD_TO_KRW)))
 
 
 def _inject_male_global_products(products: list, region: str = "jp", limit_per_cat: int = 6) -> None:
@@ -336,7 +377,7 @@ def _inject_male_global_products(products: list, region: str = "jp", limit_per_c
                 id=f"oyg-{m.prdt_no}",
                 brand=brand,
                 name=name,
-                price=int(round(m.price_usd * _USD_TO_JPY)),
+                price=_catalog_price(m.price_usd, region),
                 image_url=m.image_url or None,
                 product_url=url,
                 keyword=_MALE_CAT_KEYWORD[cat],
@@ -372,10 +413,21 @@ def _thin_item_categories(products: list, gender: str, minimum: int = 2) -> set[
 
     무조건 주입하면 가산점 때문에 카탈로그 상품이 모든 컬럼을 차지해, 색상 매칭이 잘 된
     라이브 상품이 밀려난다. '비어 있는 칸만' 메우는 게 목적이다.
+
+    ⚠ DB 폴백(source="database")은 채운 것으로 세지 않는다.
+      DB 폴백은 이 파일 곳곳의 주석대로 '영문명·색상 미매칭' 카드다. 그런데 개수만 세면
+      그 카드 2장이 컬럼을 '채워진' 것으로 만들어 주입이 아예 안 돈다 — 실측(KR 여성,
+      2026-08-06): 블러셔 컬럼이 'Dandelion Baby-Pink Blush'·'Mini Dandelion Baby-Pink
+      Blush'(Benefit, 영문명·이미지 없음) 2장으로 차서, 한국어명 올리브영 블러셔가 있는데도
+      주입이 건너뛰어졌다. KR 은 네이버 API 종료(2026-07-31) 뒤 라이브 후보가 0이라
+      대부분의 컬럼이 이 상태다.
+      '살 만한 후보가 있나'를 세는 자리이므로, 폴백만 있는 컬럼은 비어 있는 것으로 본다.
     """
     categories = _ITEM_CATEGORIES_MALE if (gender or "").lower() == "male" else _ITEM_CATEGORIES_FEMALE
     counts: dict[str, int] = {}
     for product in products:
+        if (getattr(product, "source", "") or "") == "database":
+            continue
         category = _item_match_category(product, gender)
         if category:
             counts[category] = counts.get(category, 0) + 1
@@ -383,7 +435,8 @@ def _thin_item_categories(products: list, gender: str, minimum: int = 2) -> set[
 
 
 def _inject_kr_oliveyoung_catalog(
-    products: list, keywords: list[str], wanted: set[str], per_category: int = 3
+    products: list, keywords: list[str], wanted: set[str], per_category: int = 3,
+    gender: str = "female",
 ) -> None:
     """KR 올리브영 탭에서 **비어 있는 컬럼**을 카탈로그 상품으로 채운다(사용자 결정 2026-07-29).
 
@@ -407,7 +460,9 @@ def _inject_kr_oliveyoung_catalog(
         if (item.brand, item.name) in seen or _CATALOG_JUNK.search(item.name):
             continue
         # 카탈로그 상품의 카테고리는 상품명으로 판정한다(스네일 오분류는 패턴에서 차단됨).
-        category = _item_match_category(SimpleNamespace(keyword="", name=item.name), "female")
+        # ⚠ gender 를 "female" 로 굳혀 두면 남성 컬럼(brow/concealer/lipbalm)이 절대 안 나온다
+        #   — wanted 에 남성 카테고리가 들어와도 여기서 여성 패턴으로만 분류해 전부 탈락한다.
+        category = _item_match_category(SimpleNamespace(keyword="", name=item.name), gender)
         if category not in wanted:
             continue
         scored.append((
@@ -1458,9 +1513,15 @@ def personal_color_item_match(
             for item in naver_products
         )
 
-    # JP 남성: 라쿠텐엔 한국 남성 브랜드가 안 떠서 올리브영 남성 상품을 글로벌몰 카탈로그에서
-    # 직접 주입한다(올리브영 JP 남성 고객 확보). catalog_available일 때만.
-    if region == "jp" and gender == "male" and catalog_available():
+    # 남성: 라이브 검색만으로는 남성 그루밍 컬럼이 채워지지 않아 올리브영 남성 상품을
+    # 글로벌몰 카탈로그에서 직접 주입한다. catalog_available일 때만.
+    #
+    # ⚠ 예전엔 region == "jp" 조건이 붙어 **KR 남성은 주입이 통째로 없었다**. KR 의 라이브
+    #   소스는 네이버인데 2026-07-31 에 API 가 종료돼 0건이고(200 OK + 빈 결과), 아래 카탈로그
+    #   주입 블록도 `gender != "male"` 로 막혀 있었다 — 남는 건 DB 폴백(영문명 아마존 상품)뿐이라
+    #   아이브로우·컨실러 컬럼이 그냥 비었다(사용자 리포트 2026-08-06).
+    #   카탈로그엔 남성 330건이 한국어명으로 있다(컨실러 2·브로우 4·립밤 10·베이스 20).
+    if gender == "male" and catalog_available():
         _inject_male_global_products(products, region)
 
     # 같은 상품(브랜드+라인명)으로 흩어진 소스별 카드를 하나로 병합한다(product-centric).
@@ -1547,28 +1608,33 @@ def personal_color_item_match(
     #   원래 KR 네일 후보를 만들던 네이버 색상검색이 2026-07-31 종료돼 후보 소스가 사라졌는데,
     #   채워줄 주입까지 탭에 막혀 있어 **이중 공백**이었다. 카탈로그엔 네일이 96건 있었다.
     #   플랫폼 탭은 '어디서 살 수 있나'를 고르는 필터지, 컬럼을 비우는 장치가 아니다.
-    if gender != "male":
-        normalized_platform = normalize_platform(platform)
-        thin = _thin_item_categories(products, gender)
-        if thin:
-            before = len(products)
-            if normalized_platform in {"amazon_us", "amazon_jp"}:
+    # ⚠ 예전엔 이 블록 전체가 `if gender != "male"` 로 막혀 있었다. 남성 컬럼이 비어도 채울
+    #   길이 없었다는 뜻이다. 막아둔 이유는 아래 주입기들이 카테고리를 여성 패턴으로만
+    #   분류했기 때문인데, 이제 gender 를 넘긴다 — 게이트 대신 분류를 고친다.
+    #   아마존 주입만 남성에서 건너뛴다: 영문명·색상 미매칭 카드라 남성 그루밍 컬럼에
+    #   넣으면 지금 문제(영문 카드만 뜨는 것)를 그대로 재현한다.
+    normalized_platform = normalize_platform(platform)
+    thin = _thin_item_categories(products, gender)
+    if thin:
+        before = len(products)
+        if normalized_platform in {"amazon_us", "amazon_jp"}:
+            if gender != "male":
                 _inject_amazon_catalog(products, keywords, region, thin)
-            elif region == "kr":
-                # 지역별 카탈로그가 다르다: KR=국내몰(goodsNo), JP=글로벌몰(prdtNo).
-                _inject_kr_oliveyoung_catalog(products, keywords, thin)
-            elif catalog_available():
-                _inject_jp_oliveyoung_catalog(products, keywords, thin)
-            # 주입은 append 라 뒤쪽이 새 상품이다. 주입 상품은 자기 카탈로그 링크 하나만 들고
-            # 오므로, 나머지 플랫폼 링크를 붙인 뒤 **선택한 탭 기준으로 한 번 걸러**야 한다
-            # (본 목록의 _filter_by_requested_platform 은 이 지점보다 앞에서 이미 끝났다).
-            injected = products[before:]
-            if injected:
-                del products[before:]
-                for item in injected:
-                    _attach_links_keeping_direct(item, region)
-                products.extend(_filter_by_requested_platform(injected, platform))
-        products.sort(key=lambda item: (item.score or 0, item.review_count or 0), reverse=True)
+        elif region == "kr":
+            # 지역별 카탈로그가 다르다: KR=국내몰(goodsNo), JP=글로벌몰(prdtNo).
+            _inject_kr_oliveyoung_catalog(products, keywords, thin, gender=gender)
+        elif catalog_available():
+            _inject_jp_oliveyoung_catalog(products, keywords, thin)
+        # 주입은 append 라 뒤쪽이 새 상품이다. 주입 상품은 자기 카탈로그 링크 하나만 들고
+        # 오므로, 나머지 플랫폼 링크를 붙인 뒤 **선택한 탭 기준으로 한 번 걸러**야 한다
+        # (본 목록의 _filter_by_requested_platform 은 이 지점보다 앞에서 이미 끝났다).
+        injected = products[before:]
+        if injected:
+            del products[before:]
+            for item in injected:
+                _attach_links_keeping_direct(item, region)
+            products.extend(_filter_by_requested_platform(injected, platform))
+    products.sort(key=lambda item: (item.score or 0, item.review_count or 0), reverse=True)
 
     # 넉넉히 뽑았으면 검증에서 살아남은 것들로 컬럼을 다시 균등 배분한다(위 overselect 참고).
     # 즉답 모드도 주입으로 개수가 늘어나므로(실측 17건) 같이 다시 배분한다.
