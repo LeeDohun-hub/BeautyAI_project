@@ -163,16 +163,27 @@ def test_face_line_and_jaw_balance_are_independent():
 
 
 def test_card_presets_are_distinct():
-    """카드 프리셋이 서로 충분히 달라야 미리보기가 구분된다."""
+    """카드 프리셋이 서로 충분히 달라야 미리보기가 구분된다.
+
+    ⚠ 예전엔 (face_line, jaw_balance) 두 축만 봤다. 그래서 **코 중심 카드**를 막았다 —
+      'defined'(코 라인 정리)는 얼굴선을 oval 과 비슷하게 두고 코만 크게 좁히는 카드인데
+      (nose_contour 28 → 95, 네 축 중 가장 큰 차이), 얼굴선이 겹친다는 이유로 실패했다.
+      실제로 미리보기는 코에서 확연히 갈린다.
+
+    지키려는 건 '두 카드가 같아 보이면 안 된다'이지 '얼굴선이 달라야 한다'가 아니다.
+    판정 방식(10 단위 버킷)은 그대로 두고 보는 축만 넓힌다 — 단일 축 임계값으로 바꿨더니
+    oval↔soft(축별 최대 차 17)처럼 두 축이 함께 조금씩 움직여 구분되는 조합이 걸렸다.
+    """
     from app.services.virtual_surgery_simulator import CARD_PRESETS
 
-    seen = set()
+    axes = ("face_line", "jaw_balance", "nose_contour", "blemish_care")
+    seen: dict[tuple[int, ...], str] = {}
     for preset in CARD_PRESETS:
-        tuning = preset["tuning"]
-        # (양, 위치) 쌍이 겹치면 얼굴선 결과가 사실상 같아진다.
-        key = (tuning["face_line"] // 10, tuning["jaw_balance"] // 10)
-        assert key not in seen, f"{preset['id']} 의 얼굴선 프리셋이 다른 카드와 겹친다"
-        seen.add(key)
+        key = tuple(preset["tuning"][a] // 10 for a in axes)
+        assert key not in seen, (
+            f"{preset['id']} 의 프리셋이 {seen[key]} 와 겹친다 — 미리보기가 같아 보인다"
+        )
+        seen[key] = preset["id"]
 
 
 # ── 질환 선별 게이트 (설계 검토 §4, 2026-08-03) ────────────────────────────────
