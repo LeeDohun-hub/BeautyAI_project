@@ -1333,6 +1333,20 @@ export default function App() {
     if (counted) return `${counted[1]}${t('개')} ${t(counted[2])}`;
     return tPhrase(tag);
   };
+  /** 추천 컬럼 부제. 서버가 `모공/피지 · 톤/색소 케어` 처럼 **태그를 조립해** 내려주므로
+   *  완성형은 사전에 못 넣는다 — 태그별로 옮기고 접미사만 붙인다.
+   *  예전엔 이 값을 t() 없이 그대로 렌더해 일본몰에 한국어로 나갔다(제보 2026-08-06). */
+  const tColumnReason = (reason: string | undefined): string => {
+    if (!reason) return '';
+    const dict = t(reason);
+    if (dict !== reason) return dict;
+    const composed = reason.match(/^(.+?)\s*케어$/);
+    if (composed) {
+      const parts = composed[1].split('·').map((p) => tReasonTag(p.trim()));
+      return `${parts.join(' · ')} ${t('케어')}`;
+    }
+    return tReasonTag(reason);
+  };
   /** 피부질환 선별 요약. 한 갈래만 분류명이 끼는 조합형이라 자리표시자로 처리한다. */
   const tScreeningSummary = (text: string | null | undefined): string => {
     if (!text) return '';
@@ -4168,7 +4182,7 @@ export default function App() {
                             <Box className="kiosk-match-card compact" sx={{ minHeight: 66 }}>
                               <Typography fontWeight={900}>{t(col.label)}</Typography>
                               <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>
-                                {col.reason || t(SKIN_COLUMN_HINT[col.key] ?? '')}
+                                {tColumnReason(col.reason) || t(SKIN_COLUMN_HINT[col.key] ?? '')}
                               </Typography>
                             </Box>
                             <Stack spacing={2} className="item-match-product-stack">
