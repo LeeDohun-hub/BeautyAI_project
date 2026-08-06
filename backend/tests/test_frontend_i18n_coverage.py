@@ -116,3 +116,76 @@ def test_column_reason_is_translated_before_render() -> None:
     assert "{col.reason ||" not in _app(), (
         "col.reason 을 번역 없이 그대로 렌더하고 있습니다 — tColumnReason() 을 거치게 하세요"
     )
+
+
+# ── 가상성형: 서버가 만들어 내려주는 문자열 (2026-08-06 사용자 제보) ─────────────
+#
+# 4·5단계에 한국어가 섞여 나갔다 — 카드 제목/요약, 변화 설명, 흐름 단계명.
+# 카드 제목·요약은 t() 를 거치는데 **사전이 없었고**, 변화 설명은 수치가 끼는 조립형이라
+# 완성형을 사전에 넣을 수 없어 프론트가 자리표시자로 되돌려 옮긴다(tSurgeryDetail).
+
+SURGERY = Path(__file__).resolve().parents[1] / "app" / "services" / "virtual_surgery_simulator.py"
+
+
+def _surgery_card_strings() -> set[str]:
+    """추천 카드의 title/summary — t() 로 그대로 나가는 값이다.
+
+    ⚠ 값 뒤에 `",` 가 바로 오는 것만 본다. 조립형은 조각으로 검사하면 안 된다 —
+      `"1단계에서 고른 " + " · ".join(...) + " 를 …"` 의 앞 조각은 런타임에 단독으로
+      존재하지 않으므로 사전에 넣을 대상이 아니다(합쳐진 형태를 템플릿으로 옮긴다.
+      아래 test_surgery_detail_templates_exist 가 그쪽을 지킨다).
+    """
+    source = SURGERY.read_text(encoding="utf-8")
+    found: set[str] = set()
+    for key in ("title", "summary"):
+        found |= set(re.findall(rf'"{key}":\s*"([^"]*[가-힣][^"]*)",', source))
+    return found
+
+
+def test_surgery_card_strings_have_japanese() -> None:
+    i18n = _i18n()
+    missing = sorted(
+        s for s in _surgery_card_strings()
+        if f"'{s}'" not in i18n and f'"{s}"' not in i18n
+    )
+    assert not missing, (
+        f"가상성형 카드 문자열 {len(missing)}건에 일본어가 없습니다:\n"
+        + "\n".join(f"  {s[:70]}" for s in missing)
+    )
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "'{where} 폭을 약 {n}% 정리했습니다.'",
+        "'콧방울 폭을 약 {n}% 좁히고 콧대에 하이라이트를 얹었습니다.'",
+        "'사진에서 자동 후보 {n}개를 찾았습니다.",
+        "'턱끝 쪽에서'",
+        "'중안부까지 넓게'",
+        "'하관을 중심으로'",
+        # 문자열 연결로 만들어지는 목표 요약(`"1단계에서 고른 " + … + " 를 …"`).
+        "'1단계에서 고른 {targets} 를 반영한 미리보기입니다.'",
+    ],
+)
+def test_surgery_detail_templates_exist(template: str) -> None:
+    """수치가 끼는 문장은 자리표시자 템플릿으로 사전에 둔다."""
+    assert template in _i18n(), f"{template} 템플릿이 없습니다 — 일본어 모드에서 한국어가 나갑니다"
+
+
+def test_surgery_effect_detail_goes_through_translator() -> None:
+    """effect.detail 을 그대로 렌더하면 사전이 있어도 한국어가 나간다."""
+    app = _app()
+    assert "{effect.detail}" not in app, (
+        "effect.detail 을 번역 없이 렌더하고 있습니다 — tSurgeryDetail() 을 거치게 하세요"
+    )
+
+
+def test_flow_steps_all_translated() -> None:
+    """가상성형 흐름 단계명. 하나만 빠져도 그 단계에서 한국어가 튄다(실제로 4단계가 그랬다)."""
+    app = _app()
+    match = re.search(r"const flowSteps = \[(.*?)\]", app, re.S)
+    assert match, "flowSteps 를 찾지 못했습니다"
+    steps = re.findall(r"'([^']+)'", match.group(1))
+    i18n = _i18n()
+    missing = [s for s in steps if HANGUL.search(s) and f"'{s}'" not in i18n]
+    assert not missing, f"흐름 단계명에 번역이 없습니다: {missing}"

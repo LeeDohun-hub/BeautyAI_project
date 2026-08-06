@@ -1347,6 +1347,39 @@ export default function App() {
     }
     return tReasonTag(reason);
   };
+  /** 가상성형 변화 설명. 서버가 수치를 끼워 완성형으로 내려주므로 사전에 못 넣는다 —
+   *  자리표시자 템플릿으로 되돌려 옮긴다(tScreeningSummary 와 같은 방식).
+   *  번역이 없으면 한국어 원문을 그대로 둔다(빈 칸보다 낫다 — 여긴 의학 안내가 아니라
+   *  '무엇이 바뀌었나' 설명이라 정보가 사라지는 쪽이 더 나쁘다). */
+  const tSurgeryDetail = (detail: string | undefined): string => {
+    if (!detail) return '';
+    const dict = t(detail);
+    if (dict !== detail) return dict;
+
+    const face = detail.match(/^(.+?)\s*폭을 약 (\d+)% 정리했습니다\.$/);
+    if (face) {
+      return t('{where} 폭을 약 {n}% 정리했습니다.')
+        .replace('{where}', t(face[1]))
+        .replace('{n}', face[2]);
+    }
+    const nose = detail.match(/^콧방울 폭을 약 (\d+)% 좁히고 콧대에 하이라이트를 얹었습니다\.$/);
+    if (nose) {
+      return t('콧방울 폭을 약 {n}% 좁히고 콧대에 하이라이트를 얹었습니다.').replace('{n}', nose[1]);
+    }
+    const blemish = detail.match(/^사진에서 자동 후보 (\d+)개를 찾았습니다\.(.*)$/);
+    if (blemish) {
+      return t(
+        '사진에서 자동 후보 {n}개를 찾았습니다. 사용자가 직접 누른 위치만 제거하는 방식으로 신뢰도를 높일 수 있습니다.',
+      ).replace('{n}', blemish[1]);
+    }
+    const applied = detail.match(/^1단계에서 고른 (.+?)\s*를 반영한 미리보기입니다\.$/);
+    if (applied) {
+      // 목표 이름들은 ' · ' 로 이어져 온다. 각각 옮긴다.
+      const targets = applied[1].split('·').map((part) => t(part.trim())).join(' · ');
+      return t('1단계에서 고른 {targets} 를 반영한 미리보기입니다.').replace('{targets}', targets);
+    }
+    return detail;
+  };
   /** 피부질환 선별 요약. 한 갈래만 분류명이 끼는 조합형이라 자리표시자로 처리한다. */
   const tScreeningSummary = (text: string | null | undefined): string => {
     if (!text) return '';
@@ -4910,7 +4943,7 @@ export default function App() {
                           {surgeryGoalCard.effects.map((effect) => (
                             <Stack key={effect.label} direction="row" spacing={1} alignItems="flex-start">
                               <Chip size="small" label={t(effect.label)} variant="outlined" sx={{ flexShrink: 0 }} />
-                              <Typography variant="body2" color="text.secondary">{effect.detail}</Typography>
+                              <Typography variant="body2" color="text.secondary">{tSurgeryDetail(effect.detail)}</Typography>
                             </Stack>
                           ))}
                         </Stack>
@@ -5029,14 +5062,14 @@ export default function App() {
                       <Typography color="text.secondary">
                         {selectedTarget
                           ? t(selectedTarget.copy)
-                          : (surgeryGoalCard?.summary
-                            ?? t('1단계에서 고른 목표를 그대로 적용했습니다.'))}
+                          : (tSurgeryDetail(surgeryGoalCard?.summary)
+                            || t('1단계에서 고른 목표를 그대로 적용했습니다.'))}
                       </Typography>
                       {!selectedTarget && !!surgeryGoalCard?.effects?.length && (
                         <Stack spacing={0.4} sx={{ mt: 1 }}>
                           {surgeryGoalCard.effects.map((effect) => (
                             <Typography key={effect.label} variant="body2" color="text.secondary">
-                              ・<b>{t(effect.label)}</b> {effect.detail}
+                              ・<b>{t(effect.label)}</b> {tSurgeryDetail(effect.detail)}
                             </Typography>
                           ))}
                         </Stack>
