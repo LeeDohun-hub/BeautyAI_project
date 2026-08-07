@@ -1412,6 +1412,20 @@ export default function App() {
       return t('양성으로 보이며 {label} 계열 가능성이 있습니다. 케어·상담 안내용이며 확정 진단은 아닙니다.')
         .replace('{label}', t(m[1]));
     }
+    // 얼굴 피부분석 요약: "우선 관리가 필요한 항목은 모공 89, 색소침착 58입니다."
+    // 항목명 + 점수 조합이라 완성형은 사전에 못 넣는다 — 항목명만 옮기고 숫자는 그대로 둔다.
+    // (실측 2026-08-07: 일본어 모드 피부분석 결과 첫 줄이 한국어였다.)
+    const focus = text.match(/^우선 관리가 필요한 항목은 (.+)입니다\.$/);
+    if (focus) {
+      const items = focus[1]
+        .split(',')
+        .map((part) => {
+          const scored = part.trim().match(/^(.+?)\s+(\d+(?:\.\d+)?)$/);
+          return scored ? `${t(scored[1])} ${scored[2]}` : t(part.trim());
+        })
+        .join(appLang === 'ja' ? '、' : ', ');
+      return t('우선 관리가 필요한 항목은 {items}입니다.').replace('{items}', items);
+    }
     // 네일: "사진 속 컬러는 '여름 쿨 뮤트'에 가장 가깝습니다(말린 장미)."
     const nail = text.match(/^사진 속 컬러는 '(.+?)'에 가장 가깝습니다\((.+?)\)\.$/);
     if (nail) {
