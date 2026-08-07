@@ -17,6 +17,25 @@ TARGET_LABELS = {
     "oiliness": "유분",
 }
 
+# 촬영 품질 안내 조각 — (한국어, 일본어) 쌍. 조건에 따라 골라 이어 붙인다.
+# 쌍으로 두는 이유는 _confidence_notes 주석 참조(따로 두면 한쪽만 늘어난다).
+_NOTE_BASE = (
+    "피부 점수는 사진 기반 참고용 추정치입니다.",
+    "肌スコアは写真をもとにした参考値です。",
+)
+_NOTE_REDNESS = (
+    "홍조는 피부 색상(LAB)에서 직접 측정했습니다.",
+    "赤みは肌の色（LAB）から直接測定しました。",
+)
+_NOTE_NO_FACE = (
+    "얼굴이 뚜렷하게 검출되지 않아 정확도가 낮을 수 있어요. 밝은 곳에서 정면 사진을 권장합니다.",
+    "顔がはっきり検出できず、精度が低くなる場合があります。明るい場所で正面からの写真をおすすめします。",
+)
+_NOTE_SMALL_SKIN = (
+    "피부 영역이 좁게 잡혀 정확도가 낮을 수 있어요. 얼굴이 크게 나온 정면 사진을 권장합니다.",
+    "肌の範囲が狭く捉えられ、精度が低くなる場合があります。顔が大きく写った正面の写真をおすすめします。",
+)
+
 # Singleton model — loaded once at first use, reused across all requests
 _regressor: EfficientNetSkinRegressor | None = None
 
@@ -29,7 +48,7 @@ def _get_regressor() -> EfficientNetSkinRegressor:
 
 
 class SkinAnalyzer:
-    def analyze(self, image_bytes: bytes) -> tuple[SkinScores, str]:
+    def analyze(self, image_bytes: bytes) -> tuple[SkinScores, str, str]:
         # A: 얼굴을 검출해 크롭(배경·머리카락 제거) + C용 피부영역/홍조 측정.
         pre = get_face_skin_preprocessor().process(image_bytes)
         image = pre.model_image.convert("RGB").resize((224, 224))
@@ -47,8 +66,10 @@ class SkinAnalyzer:
             scores_map = {**scores_map, "redness": float(pre.redness)}
 
         scores = SkinScores(**scores_map)
-        note = self._confidence_note(pre.face_detected, pre.skin_ratio, redness_from_color)
-        return scores, note
+        note, note_ja = self._confidence_notes(
+            pre.face_detected, pre.skin_ratio, redness_from_color
+        )
+        return scores, note, note_ja
 
     def _heuristic_scores(self, image) -> dict[str, float]:
         # NumPy-based fallback: all pixel math vectorized (모델 미탑재 환경 대비)
@@ -76,15 +97,26 @@ class SkinAnalyzer:
         }
 
     @staticmethod
-    def _confidence_note(face_detected: bool, skin_ratio: float, redness_from_color: bool) -> str:
-        parts = ["피부 점수는 사진 기반 참고용 추정치입니다."]
+    def _confidence_notes(
+        face_detected: bool, skin_ratio: float, redness_from_color: bool
+    ) -> tuple[str, str]:
+        """(한국어, 일본어) 안내문.
+
+        ⚠ 조각을 **쌍으로 묶어** 함께 고른다. 한국어 목록과 일본어 목록을 따로 만들면
+          조건이 갈려 한쪽만 늘어난다.
+
+        ⚠ 완성된 문장을 프론트 사전으로 옮길 수 없다 — 조각 조합이 8가지라 같은 문장이
+          매번 달라지기 때문이다. 실제로 `t(confidence_note)` 가 조회에 실패해 일본어 모드에
+          한국어로 그대로 나갔다(제보 2026-08-07). 그래서 서버가 두 벌을 만든다.
+        """
+        parts = [_NOTE_BASE]
         if redness_from_color:
-            parts.append("홍조는 피부 색상(LAB)에서 직접 측정했습니다.")
+            parts.append(_NOTE_REDNESS)
         if not face_detected:
-            parts.append("얼굴이 뚜렷하게 검출되지 않아 정확도가 낮을 수 있어요. 밝은 곳에서 정면 사진을 권장합니다.")
+            parts.append(_NOTE_NO_FACE)
         elif skin_ratio < 0.15:
-            parts.append("피부 영역이 좁게 잡혀 정확도가 낮을 수 있어요. 얼굴이 크게 나온 정면 사진을 권장합니다.")
-        return " ".join(parts)
+            parts.append(_NOTE_SMALL_SKIN)
+        return " ".join(ko for ko, _ in parts), " ".join(ja for _, ja in parts)
 
     @staticmethod
     def _clamp(value: float) -> float:

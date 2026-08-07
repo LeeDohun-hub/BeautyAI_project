@@ -44,6 +44,10 @@ class AnalyzeSkinResponse(BaseModel):
     summary: str
     # 점수 신뢰도 안내(참고용 추정치·홍조 색상측정·얼굴 미검출 등). 프론트에서 노출.
     confidence_note: str = ""
+    # 일본어판. 조각을 조건에 따라 이어 붙여 만들기 때문에(조합 8가지) 완성형을 프론트 사전으로
+    # 옮길 수 없다 — 서버가 두 벌을 만든다. 바디 선별(SCREENING_NOTE)처럼 **고정 문장**인
+    # 경로는 빈 문자열이고, 그때는 프론트가 사전으로 옮긴다.
+    confidence_note_ja: str = ""
     # body(피부질환 선별) 결과: Tier1 게이트 라벨·확신도·악성의심 플래그.
     tier1_label: str = ""            # normal | benign_concern | urgent_referral
     tier1_confidence: float = 0.0

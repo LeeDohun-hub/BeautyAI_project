@@ -4178,8 +4178,14 @@ export default function App() {
             <Alert severity={analysis.urgent ? 'error' : analysis.model_available ? 'info' : 'warning'}>
               {tScreeningSummary(analysis.summary)}
             </Alert>
+            {/* 서버가 일본어판을 주면 그걸 쓰고(조각 조합이라 사전으로 못 옮긴다),
+                고정 문장인 바디 선별 안내는 종전대로 사전으로 옮긴다. */}
             {analysis.confidence_note && (
-              <Typography variant="caption" color="text.secondary">{t(analysis.confidence_note)}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                {analysis.confidence_note_ja
+                  ? localizedSentence(analysis.confidence_note, analysis.confidence_note_ja)
+                  : t(analysis.confidence_note)}
+              </Typography>
             )}
           </Stack>
         ) : !loading ? (

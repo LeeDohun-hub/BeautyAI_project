@@ -88,6 +88,9 @@ export type AnalyzeSkinResponse = {
   model_available: boolean;
   summary: string;
   confidence_note?: string;
+  /** 촬영 품질 안내의 일본어판. 조각 조합이라 사전으로 못 옮겨 서버가 두 벌을 만든다.
+   *  고정 문장인 경로(바디 선별 안내)는 비어 있고, 그때는 프론트 사전이 옮긴다. */
+  confidence_note_ja?: string;
   tier1_label?: string;
   tier1_confidence?: number;
   urgent?: boolean;

@@ -1084,7 +1084,7 @@ async def analyze_skin(
     if analysis_mode != "face":
         raise HTTPException(status_code=400, detail="analysis_mode must be 'auto', 'face', or 'body'.")
 
-    scores, confidence_note = SkinAnalyzer().analyze(image_bytes)
+    scores, confidence_note, confidence_note_ja = SkinAnalyzer().analyze(image_bytes)
     # ⚠ 원본 파일명은 저장하지 않는다(2026-08-03). 업로드 파일명에는 이름·날짜·기기·장소가
     #   들어가는 일이 흔한데(예: "2026-08-03 김OO 병원상담.jpg"), 이 값은 **어디서도 읽지
     #   않으면서** user_id 와 묶여 무기한 남아 있었다. 쓰는 곳이 없으니 안 남기는 게 맞다.
@@ -1100,6 +1100,7 @@ async def analyze_skin(
         scores=scores,
         summary=summarize_scores(scores),
         confidence_note=confidence_note,
+        confidence_note_ja=confidence_note_ja,
     )
 
 

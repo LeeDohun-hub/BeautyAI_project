@@ -167,6 +167,81 @@ def test_no_unclassified_assembled_korean_sentence() -> None:
     )
 
 
+# ── 이어 붙여 만드는 문장 ───────────────────────────────────────────────────
+# 위 검사는 f-string 만 본다. 그런데 `parts.append("...")` 를 모아 `" ".join(parts)` 하는
+# 방식은 **각 조각이 평범한 문자열 리터럴**이라 거기에 안 걸린다.
+# 값이 안 끼어도 결과 문장은 조건 조합마다 달라지므로, 사전으로는 똑같이 못 옮긴다 —
+# 실제로 촬영 품질 안내(조합 8가지)가 일본어 모드에 한국어로 나갔다(제보 2026-08-07).
+
+# 촬영 품질 안내(skin_analyzer._confidence_notes)는 여기 없다 — 조각을 (한국어, 일본어)
+# **쌍**으로 모듈 상수에 두어 함수 안에 한국어 리터럴이 남지 않기 때문이다.
+# 그 구조가 유지되는지는 test_chat_ja 쪽의 전용 검사가 본다(쌍이 깨지면 거기서 실패한다).
+JOIN_HANDLED: dict[tuple[str, str], str] = {
+    ("services/recommender.py", "build_product_columns"):
+        "이어 붙이는 건 추천 사유 배지(태그)다. 태그별로 사전에 있고 프론트가 하나씩 옮긴다"
+        "(tColumnReason → tReasonTag).",
+    ("services/recommender.py", "recommend_products"):
+        "위와 같음(배지 태그).",
+}
+
+
+def _join_inventory() -> set[tuple[str, str]]:
+    """한국어 조각을 2개 이상 모아 join 하는 함수."""
+    found: set[tuple[str, str]] = set()
+    for path in sorted(BACKEND_APP.rglob("*.py")):
+        rel = str(path.relative_to(BACKEND_APP)).replace("\\", "/")
+        if any(rel.startswith(prefix) for prefix in SKIPPED_DIRS):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            has_join = any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "join"
+                for n in ast.walk(func)
+            )
+            if not has_join:
+                continue
+            pieces = 0
+            for node in ast.walk(func):
+                targets = []
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "append":
+                    targets = node.args
+                elif isinstance(node, (ast.List, ast.Tuple)):
+                    targets = node.elts
+                for element in targets:
+                    if (
+                        isinstance(element, ast.Constant)
+                        and isinstance(element.value, str)
+                        and HANGUL.search(element.value)
+                        and len(element.value.strip()) >= 6
+                    ):
+                        pieces += 1
+            if pieces >= 2:
+                found.add((rel, func.name))
+    return found
+
+
+def test_no_unclassified_joined_korean_sentence() -> None:
+    new = sorted(_join_inventory() - set(JOIN_HANDLED))
+    assert not new, (
+        f"분류되지 않은 '이어 붙이는' 한국어 문장 {len(new)}건 —\n"
+        "조각을 조건에 따라 이어 붙이면 결과가 조합마다 달라져 사전으로 못 옮깁니다.\n"
+        "화면에 나간다면 서버가 두 벌을 만들거나(예: confidence_note_ja),\n"
+        "조각 단위로 옮길 수 있게 내려보낸 뒤 JOIN_HANDLED 에 이유와 함께 등록하세요.\n"
+        + "\n".join(f"  {f}  {fn}()" for f, fn in new)
+    )
+
+
+def test_join_handled_list_has_no_stale_entries() -> None:
+    stale = sorted(set(JOIN_HANDLED) - _join_inventory())
+    assert not stale, "코드에 더 이상 없는 항목이 JOIN_HANDLED 에 남아 있습니다:\n" + "\n".join(
+        f"  {f}  {fn}()" for f, fn in stale
+    )
+
+
 def test_handled_list_has_no_stale_entries() -> None:
     """고쳐서 사라진 문장이 목록에 남아 있으면 지운다(목록이 사실과 어긋나면 신뢰를 잃는다)."""
     stale = sorted(set(HANDLED) - _inventory())

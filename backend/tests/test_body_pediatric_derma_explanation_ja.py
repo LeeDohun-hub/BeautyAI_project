@@ -199,6 +199,41 @@ def test_recommendation_explanation_ja_is_present_and_japanese(client, age_group
     assert body["explanation"] and HANGUL.search(body["explanation"])
 
 
+# ── 촬영 품질 안내(2026-08-07 제보) ─────────────────────────────────────────
+# 조각을 조건에 따라 이어 붙여 만들기 때문에(조합 8가지) 완성형을 프론트 사전으로 못 옮긴다.
+# `t(confidence_note)` 가 조회에 실패해 일본어 모드에 한국어로 그대로 나갔다.
+
+@pytest.mark.parametrize(
+    "face_detected,skin_ratio,redness_from_color",
+    [
+        (True, 0.5, True),    # 기본 + 홍조 측정
+        (True, 0.5, False),   # 기본만
+        (False, 0.5, True),   # 얼굴 미검출
+        (True, 0.05, True),   # 피부 영역 좁음
+        (False, 0.05, False), # 얼굴 미검출(피부 영역 조건보다 우선)
+    ],
+)
+def test_confidence_note_has_a_japanese_twin(face_detected, skin_ratio, redness_from_color):
+    from app.services.skin_analyzer import SkinAnalyzer
+
+    ko, ja = SkinAnalyzer._confidence_notes(face_detected, skin_ratio, redness_from_color)
+    assert ko and ja
+    assert not HANGUL.search(ja), f"일본어판에 한국어가 남아 있습니다: {ja}"
+    # 조각 수가 같아야 한다 — 한쪽만 늘면 안내가 통째로 빠지거나 남는다.
+    assert ko.count(".") == ja.count("。"), f"조각 수가 다릅니다:\n  {ko}\n  {ja}"
+
+
+def test_confidence_note_pairs_are_complete():
+    """조각은 (한국어, 일본어) 쌍이어야 한다 — 따로 두면 조건이 갈려 한쪽만 늘어난다."""
+    from app.services import skin_analyzer
+
+    pairs = [v for k, v in vars(skin_analyzer).items() if k.startswith("_NOTE_")]
+    assert pairs, "안내 조각 상수를 찾지 못했습니다(_NOTE_* 이름이 바뀌었나요?)"
+    for ko, ja in pairs:
+        assert HANGUL.search(ko), ko
+        assert not HANGUL.search(ja), f"일본어 조각에 한국어: {ja}"
+
+
 # ── 모든 응답 경로가 일본어판을 싣는지 ──────────────────────────────────────
 
 def test_every_recommendation_response_carries_explanation_ja():
