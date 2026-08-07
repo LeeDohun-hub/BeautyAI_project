@@ -18,6 +18,7 @@ playwright 미설치/브라우저 없음 환경에서도 앱이 죽지 않게 la
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import quote_plus
 
 from app.services.oliveyoung_kr_search import KRSearch, _parse
@@ -29,6 +30,16 @@ _GOODS_DETAIL = "https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?good
 _GOODS_IMAGE_HOST = "https://image.oliveyoung.co.kr/"
 # 내려간 상품 페이지의 제목(상품명 대신 몰 이름이 그대로 남는다).
 _GENERIC_TITLE = "올리브영 온라인몰"
+# Cloudflare 챌린지 페이지의 제목. '내려감'과 절대 섞지 말 것(멀쩡한 상품이 사라진다).
+_CHALLENGE_TITLE = "잠시만 기다려"
+_TITLE_RE = re.compile(r"<title>(.*?)</title>", re.S | re.I)
+# 워밍된 세션 안에서 HTML 만 받아온다(페이지 이동 없이 ~0.25초).
+_FETCH_HTML_JS = """
+async (url) => {
+  const r = await fetch(url, {credentials: 'include'});
+  return await r.text();
+}
+"""
 # og:image 가 채워졌는지 — 상품 썸네일이든 기본 자리표시자든, 값이 있으면 판정할 수 있다.
 _DETAIL_READY_JS = """
 () => {
@@ -218,6 +229,43 @@ class KRBrowserSession:
         if "img_oy_default" in src and (info.get("title") or "").strip() == _GENERIC_TITLE:
             return None, False
         return None, None
+
+    def goods_alive(self, goods_no: str) -> bool | None:
+        """상품이 아직 팔리는지 — 상세 페이지 **HTML 의 <title>** 로만 판정한다.
+
+        goods_detail 은 페이지를 실제로 열어(navigation) og:image 가 렌더될 때까지 기다린다.
+        확실하지만 건당 3초라 카탈로그 전체(6,332건)를 훑기엔 5시간이 넘는다. 여기서는
+        워밍된 세션 안에서 **fetch 로 HTML 만 받아** 제목을 본다(건당 ~0.25초).
+
+        서버가 내려주는 HTML 에 제목은 이미 들어 있다:
+            살아있음 → '[모공탄력] 셀리맥스 더 비타 A … | 올리브영'
+            내려감   → '올리브영 온라인몰'  (상품명이 없다)
+        ⚠ og:image 나 썸네일 URL 로는 판정하면 안 된다 — 살아 있는 상품도 HTML 에 없을 때가
+          있다(실측: 20건 중 15건이 없었다). 제목은 20/20 정확했다.
+
+        ⚠ 빠르게 몰아치면 Cloudflare 챌린지가 끼어들어 제목이 '잠시만 기다려 주세요 - 올리브영'
+          이 된다. 그걸 '내려감'으로 세면 **멀쩡한 상품이 카탈로그에서 사라진다** — 반드시
+          None(모름)으로 돌리고, 호출부가 재워밍 후 다시 시도하게 한다.
+
+        반환: True=판매중 · False=내려감 · None=모름(챌린지·네트워크·파싱 실패)
+        """
+        goods_no = (goods_no or "").strip()
+        if not goods_no or self._page is None:
+            return None
+        if not self._warm and not self._warm_up():
+            return None
+        try:
+            html = self._page.evaluate(_FETCH_HTML_JS, _GOODS_DETAIL + quote_plus(goods_no))
+        except Exception:
+            return None
+        match = _TITLE_RE.search(html or "")
+        if not match:
+            return None
+        title = match.group(1).strip()
+        if not title or _CHALLENGE_TITLE in title:
+            self._warm = False  # 챌린지가 걸렸다 — 다음 호출에서 재워밍한다.
+            return None
+        return title != _GENERIC_TITLE
 
     def close(self) -> None:
         for closer in (self._browser, self._pw):

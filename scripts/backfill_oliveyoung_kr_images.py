@@ -58,6 +58,61 @@ def _save(path: Path, rows: list[dict]) -> None:
     tmp.replace(path)
 
 
+def _audit_dead(path: Path, rows: list[dict], targets: list[dict], args) -> int:
+    """카탈로그에서 '이미 내려간 상품'을 찾아 soldOut=Y 로 내린다.
+
+    ⚠ 모름(챌린지·네트워크 실패)은 절대 '내려감'으로 세지 않는다. 실패를 죽음으로 뭉뚱그리면
+      멀쩡한 상품이 카탈로그에서 통째로 사라진다 — 이 스크립트가 낼 수 있는 가장 나쁜 결과다.
+
+    속도에 대해(실측 2026-08-07):
+      · fetch 로 HTML 만 받는 빠른 길(goods_alive)은 **볼륨에서 무너진다.** 60건에 10.6분,
+        그중 54건이 '모름'이었다 — 요청마다 Cloudflare 챌린지가 끼어든다. 판정은 하나도
+        틀리지 않았지만(3-상태 설계가 버텼다) 쓸 수 있는 처리량이 아니다.
+      · 페이지를 실제로 여는 길(goods_detail)은 3초 지연에서 판정 불가 0 으로 안정적이다.
+        대신 분당 12건 — 판매중 5,937건 전수는 **8시간짜리 야간 작업**이다.
+      그래서 기본은 확실한 쪽(navigation)으로 둔다. 느린 건 스케줄로 풀 문제고,
+      틀린 판정은 스케줄로 못 푼다.
+    """
+    session = KRBrowserSession()
+    if not session.start():
+        print("ERROR: 브라우저 기동/챌린지 워밍 실패(playwright + 시스템 Chrome 필요). 중단.")
+        return 1
+
+    checked = dead = unknown = 0
+    started = time.time()
+    try:
+        for row in targets:
+            if args.max_queries and checked >= args.max_queries:
+                print(f"--max-queries {args.max_queries} 도달 — 여기까지 저장하고 멈춘다.")
+                break
+            checked += 1
+            if args.fast:
+                alive = session.goods_alive(row["goodsNo"])
+            else:
+                _image, alive = session.goods_detail(row["goodsNo"])
+            if alive is False:
+                row["soldOut"] = "Y"
+                dead += 1
+            elif alive is None:
+                unknown += 1
+            if checked % 100 == 0:
+                rate = checked / max(1e-9, time.time() - started)
+                left = (len(targets) - checked) / rate if rate else 0
+                print(f"  {checked}/{len(targets)} · 내려감 {dead} · 모름 {unknown}"
+                      f" · {rate:.1f}건/초 · 남은 시간 약 {left / 60:.0f}분", flush=True)
+            if checked % args.save_every == 0:
+                _save(path, rows)
+            time.sleep(args.delay + random.uniform(0, args.delay))
+    finally:
+        session.close()
+        _save(path, rows)
+
+    print(f"\n완료: {checked}건 점검 · 내려간 상품 {dead}건(soldOut=Y) · 모름 {unknown}건"
+          f" ({(time.time() - started) / 60:.1f}분)")
+    print(f"저장: {path}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--csv", default=str(DEFAULT_CSV))
@@ -69,6 +124,15 @@ def main() -> int:
     # 검색보다 느리다(페이지 이동) — 그래서 잔여분 전용이다.
     ap.add_argument("--detail", action="store_true",
                     help="검색 대신 goodsNo 상세 페이지에서 대표 이미지를 읽는다(잔여분용)")
+    # 카탈로그 전체를 훑어 '이미 내려간 상품'을 찾아 내린다(정기 점검용).
+    ap.add_argument("--audit-dead", action="store_true",
+                    help="카탈로그 전체에서 판매 종료된 상품을 찾아 soldOut=Y 로 내린다")
+    # 기본은 확실한 쪽(페이지를 실제로 연다). --fast 는 fetch 만 하는 빠른 길인데
+    # 볼륨에서 Cloudflare 챌린지에 막혀 대부분 '모름'이 된다(실측: 60건 중 54건).
+    ap.add_argument("--fast", action="store_true",
+                    help="[비권장] HTML fetch 로만 판정(빠르지만 챌린지에 막혀 대부분 모름)")
+    ap.add_argument("--only-male", action="store_true",
+                    help="남성 카탈로그만 점검(실제 카드로 나가는 좁은 표면)")
     args = ap.parse_args()
 
     path = Path(args.csv)
@@ -76,6 +140,22 @@ def main() -> int:
     by_goods = {r["goodsNo"]: r for r in rows if r["goodsNo"]}
     gaps = [r for r in rows if not r["imageUrl"].strip()]
     print(f"전체 {len(rows)}건 · 이미지 결손 {len(gaps)}건 ({len(gaps) / max(1, len(rows)) * 100:.1f}%)")
+
+    if args.audit_dead:
+        # 이미 내려간 상품은 이미지 결손과 무관하게 존재한다 — 카탈로그에 남아 있으면
+        # 카드로 나가고, 직링크가 '상품을 찾을 수 없어요' 로 간다. 판매중으로 표시된 전 상품을 훑는다.
+        targets = [r for r in rows if r["soldOut"] != "Y"]
+        if args.only_male:
+            from app.services.oliveyoung_catalog import is_male_product
+
+            targets = [r for r in targets if is_male_product(r["brandName"], r["goodsName"])]
+        print(f"판매중으로 표시된 {len(targets)}건을 점검한다(--audit-dead"
+              f"{' --only-male' if args.only_male else ''}"
+              f"{' --fast' if args.fast else ''})")
+        if args.dry_run:
+            return 0
+        return _audit_dead(path, rows, targets, args)
+
     if args.dry_run or not gaps:
         return 0
 
