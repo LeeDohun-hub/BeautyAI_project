@@ -1033,8 +1033,15 @@ function itemMatchColumnFor(product: RakutenProduct, isMale = false): ItemMatchC
   if (NON_COSMETIC_RE.test(text)) return null;  // 신발/양말 등 잡화 제외
 
   const isBlush = (t: string) => /(blush|blusher|cheek|チーク|블러셔|치크|볼터치)/i.test(t);
-  const isEye = (t: string) => /(eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ|아이|섀도|쉐도)/i.test(t);
-  const isBase = (t: string) => /(base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스)/i.test(t);
+  // ⚠ '아이'를 맨몸으로 두면 브랜드명(아이디얼포맨·아이오페·아이코닉)과 눈가 스킨케어
+  //   (아이크림·아이패치)가 통째로 아이섀도우 칸에 들어온다 — 실측 376건 중 진짜 아이메이크업은
+  //   90건뿐이었다. 백엔드 _ITEM_CATEGORY_PATTERNS 와 같은 규칙으로, '아이' 뒤에 색조 어휘가
+  //   올 때만 eye 로 본다.
+  const isEye = (t: string) => /(eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ|섀도|쉐도|팔레트|마스카라|라이너|아이\s*(브로|즈(?![가-힣])|섀|쉐|라이|팔레|래쉬|래시|글리|펜슬|디자이너|컬러|틴트|메탈|스팽|스틱|프렙|프라이머|메이커|스위치|블렌딩|그립|코어|오프닝|프로즌|팟))/i.test(t);
+  const isBase = (t: string) => /(base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー|파운데이션|쿠션|베이스|파우더|프라이머|컨실러|하이라이터|쉐딩|섀딩)/i.test(t);
+  // 컨실러는 base 다. '컨실러 팔레트'는 isEye 의 'palette/팔레트'가 먼저 잡으므로 eye 앞에서 확정한다
+  // (백엔드와 동일 규칙 — 어긋나면 배분과 표시가 갈린다).
+  const isConcealerBase = (t: string) => /(concealer|コンシーラー|컨실러)/i.test(t);
   // ⚠ '립'/'リップ' 도 부분문자열 오탐 계열이다(nail⊂snail, 아이⊂아이보리 와 같은 부류).
   //   '튤립'/'チューリップ'(tulip)이 걸려 캔들홀더가 립 컬럼에 떴다. 백엔드 _ITEM_CATEGORY_PATTERNS 와 동일 규칙.
   const isLip = (t: string) => /((?<![a-z])lip|lipstick|tint|rouge|gloss|balm|(?<!チュー)リップ|ルージュ|ティント|(?<!튤)립|틴트)/i.test(t);
@@ -1074,6 +1081,7 @@ function itemMatchColumnFor(product: RakutenProduct, isMale = false): ItemMatchC
   const pick = (t: string): ItemMatchColumnKey | null => {
     if (isNail(t)) return 'nail';
     if (isBlush(t)) return 'blush';
+    if (isConcealerBase(t)) return 'base';
     if (isEye(t)) return 'eye';
     if (isBase(t)) return 'base';
     if (isLip(t)) return 'lip';

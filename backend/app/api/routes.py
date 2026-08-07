@@ -58,7 +58,12 @@ from app.services.naver_client import NaverClient
 from app.services.naver_kr_enricher import enrich_products_with_naver_kr
 from app.services.oliveyoung_availability import prune_global_oliveyoung
 from app.services.oliveyoung_catalog import catalog_available, catalog_items, male_catalog_items
-from app.services.oliveyoung_kr_search import kr_catalog_items, kr_goods_url, prune_kr_oliveyoung
+from app.services.oliveyoung_kr_search import (
+    kr_catalog_items,
+    kr_goods_url,
+    kr_male_catalog_items,
+    prune_kr_oliveyoung,
+)
 from app.services.personal_color_analyzer import (
     PersonalColorAnalyzer,
     UnusablePhotoError,
@@ -122,15 +127,33 @@ _ITEM_CATEGORY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"|(?<![a-z])manicure|(?<!ス)ネイル|ペディ|マニキュア|(?<!스)네일|페디|매니큐어",
         re.I)),
     ("blush", re.compile(r"blush|blusher|cheek|チーク|블러셔|치크|볼터치", re.I)),
+    # ⚠ 컨실러는 base 인데, '컨실러 팔레트'는 아래 eye 의 '팔레트'가 **먼저** 잡아간다.
+    #   실측(2026-08-07): 어뮤즈/데이지크/정샘물/디어에이/TIRTIR 등 국내몰 7 · 글로벌 3 ·
+    #   아마존JP 6건의 컨실러가 아이 컬럼에 꽂혔다. 파일 상단 주석이 말하는 '컨실러를 먼저 본다'
+    #   규칙이 남성 목록(_ITEM_CATEGORY_PATTERNS_MALE)에만 적용돼 있었다.
+    #   ⚠ 여기서는 _CONCEALER_PAT(잡티·다크서클 포함)를 쓰지 않는다 — '잡티 앰플' 같은
+    #     스킨케어까지 base 로 끌어와 색조 컬럼을 오염시킨다. 제형어만 본다.
+    ("base", re.compile(r"concealer|コンシーラー|컨실러", re.I)),
     # ⚠ '아이'는 단독 부분문자열로 두면 **'아이보리'(ivory)·'아이스'(ice)** 가 걸린다 —
     #   '바비브라운 … 파운데이션 SPF20 W026 웜 아이보리'(파운데이션)가 아이 컬럼에 꽂혔다(실측).
-    #   nail/스네일과 같은 부류의 부분문자열 오탐이라 같은 방식(부정 탐색)으로 막는다.
+    #   nail/스네일과 같은 부류의 부분문자열 오탐이라 같은 방식(부정 탐색)으로 막았는데,
+    #   **부정 목록으로는 못 따라간다**는 게 실측으로 드러났다(2026-08-07, 글로벌+국내몰 9,706건):
+    #   '아이'만으로 eye 가 된 376건 중 진짜 아이메이크업은 90건뿐이고, 나머지는 브랜드명
+    #   (아이디얼포맨 76 · 아이코닉 23 · 아이오페 20 · 아이젠틀맨 11 · 아이소이 6)과
+    #   눈가 **스킨케어**(아이크림 30 · 아이패치 20 · 아이세럼)였다. 남성 스킨케어 로션이
+    #   아이섀도우 칸에 뜨던 원인이다.
+    #   그래서 부정 목록을 **긍정 목록으로 뒤집는다** — '아이' 뒤에 색조 아이메이크업 어휘가
+    #   올 때만 eye 로 본다. 287건이 빠지고 새로 들어오는 건 0건, 잃는 진짜 아이메이크업은
+    #   4건(모던팟·컬러완드 등 멀티 제품)이다.
     # 한글 카테고리어(팔레트/마스카라/라이너)를 빠뜨리면 한국어명 상품이 통째로 미분류가 된다.
     # KR 은 네이버 API 종료 뒤 **한국어명 카탈로그**가 사실상 유일한 후보라 그대로 빈 컬럼이 된다.
     # 실측(글로벌 카탈로그): 팔레트 24 · 마스카라 24 · 라이너 23건이 어느 컬럼에도 못 들어갔다.
     ("eye", re.compile(
         r"eye|eyeshadow|shadow|palette|mascara|liner|kajal|アイシャドウ|アイライナー|マスカラ"
-        r"|아이(?!보리|스크림|스크|스티|솔레|허브)|섀도|쉐도|팔레트|마스카라|라이너", re.I)),
+        r"|섀도|쉐도|팔레트|마스카라|라이너"
+        # '아이 + 색조 어휘'만 eye. 뒤 어휘가 없으면(아이크림·아이오페·아이코닉…) eye 가 아니다.
+        r"|아이\s*(?:브로|즈(?![가-힣])|섀|쉐|라이|팔레|래쉬|래시|글리|펜슬|디자이너|컬러|틴트"
+        r"|메탈|스팽|스틱|프렙|프라이머|메이커|스위치|블렌딩|그립|코어|오프닝|프로즌|팟)", re.I)),
     # 같은 이유의 한글 보강: 파우더 47 · 프라이머 23 · 쉐딩 17 · 컨실러 17 · 하이라이터 16건.
     ("base", re.compile(
         r"base|foundation|cushion|concealer|primer|powder|shading|ファンデーション|コンシーラー|パウダー"
@@ -191,7 +214,10 @@ _NON_COSMETIC_RE = re.compile(
     # ⚠ '면봉'은 넣지 않는다 — '닥터자르트 …수딩스팟 15ml 기획 (+면봉)'처럼 면봉이 **사은품**인
     #   화장품이 통째로 사라진다(실측). 같은 이유로 '면도'가 아니라 '면도기/면도날'만 막는다
     #   (면도크림·쉐이빙폼은 화장품이다).
-    r"|눈썹칼|눈썹가위|눈썹정리기|쉐이버|트리머|면도기|면도날|眉毛シェーバー|カミソリ"
+    # ⚠ '눈썹정리기'만으로는 '갸스비 남자 눈썹 정리 키트'(띄어쓰기)가 새어 brow 컬럼에 뜬다.
+    #   '인솔'은 국내몰 남성 주입을 켜면서 필요해졌다 — '닥터숄 발뒤꿈치 쿠션 기능성 인솔
+    #   남자용'이 '쿠션'+'남자'로 잡혀 베이스 컬럼에 카드로 떴다(실측 2026-08-07).
+    r"|눈썹칼|눈썹가위|눈썹\s*정리|쉐이버|트리머|면도기|면도날|眉毛シェーバー|カミソリ|인솔|중창"
     # 인테리어 잡화. 라쿠텐 색상 검색이 '로즈 핑크 립'에 캔들홀더를 물어왔다(실측 2026-08-04):
     # 'キャンドルホルダー 北欧 陶器 … 燭台 インテリア 雑貨 チューリップ型 …'
     r"|キャンドルホルダー|燭台|キャンドルスタンド|花瓶|置物|インテリア雑貨|캔들홀더|촛대|화병",
@@ -384,6 +410,48 @@ def _inject_male_global_products(products: list, region: str = "jp", limit_per_c
                 source="oliveyoung_global",
                 # 큐레이션된 OY 남성상품이 컬럼을 우선 차지하도록 라쿠텐(여성/잡화 노이즈 포함)보다
                 # 확실히 높게. JP 남성 목표는 OY 남성고객 확보라, 라쿠텐은 OY가 모자랄 때만 채운다.
+                score=100.0,
+                platform_links={"oliveyoung": url},
+                matched_platforms=["oliveyoung"],
+            )
+        )
+
+
+def _inject_male_kr_products(products: list, limit_per_cat: int = 6) -> None:
+    """KR 남성 아이템매칭: **국내몰**(oliveyoung.co.kr) 남성 상품을 카드로 주입한다.
+
+    예전엔 KR 도 _inject_male_global_products 를 그대로 탔다. 그런데 그건 글로벌몰
+    카탈로그(prdtNo)라 카드 버튼이 global.oliveyoung.com 으로 나갔다 — 한국 사용자를
+    해외몰로 보내는 셈이라 결제·배송이 전부 어긋난다(사용자 리포트 2026-08-07).
+
+    국내몰 카탈로그에도 남성 상품이 충분하다(실측: base 19 · lipbalm 15 · concealer 3 ·
+    brow 2. 글로벌몰은 15/10/2/3이었다). 링크는 goodsNo 직링크라 검증도 필요 없다.
+    """
+    seen = {(p.brand, p.name) for p in products}
+    counts: dict[str, int] = {}
+    for item in kr_male_catalog_items():
+        cat = _item_match_category(SimpleNamespace(keyword="", name=item.name), "male")
+        if cat not in _MALE_CAT_KEYWORD or (item.brand, item.name) in seen:
+            continue
+        if counts.get(cat, 0) >= limit_per_cat:
+            continue
+        seen.add((item.brand, item.name))
+        counts[cat] = counts.get(cat, 0) + 1
+        url = kr_goods_url(item.goods_no)
+        products.append(
+            RakutenProductOut(
+                id=f"oykr-{item.goods_no}",
+                brand=item.brand,
+                name=item.name,
+                # 국내몰 카탈로그엔 가격 컬럼이 없다 — 프론트가 '가격 정보 없음'으로 표시한다
+                # (_inject_kr_oliveyoung_catalog 와 동일).
+                price=0,
+                image_url=item.image_url or None,
+                product_url=url,
+                keyword=_MALE_CAT_KEYWORD[cat],
+                source="oliveyoung_kr",
+                # JP 남성 주입과 같은 이유의 고정 가산점: 큐레이션된 남성 상품이 컬럼을 먼저
+                # 차지해야 한다(KR 라이브 후보는 네이버 종료 뒤 0건이라 사실상 이게 유일한 소스다).
                 score=100.0,
                 platform_links={"oliveyoung": url},
                 matched_platforms=["oliveyoung"],
@@ -1521,8 +1589,15 @@ def personal_color_item_match(
     #   주입 블록도 `gender != "male"` 로 막혀 있었다 — 남는 건 DB 폴백(영문명 아마존 상품)뿐이라
     #   아이브로우·컨실러 컬럼이 그냥 비었다(사용자 리포트 2026-08-06).
     #   카탈로그엔 남성 330건이 한국어명으로 있다(컨실러 2·브로우 4·립밤 10·베이스 20).
-    if gender == "male" and catalog_available():
-        _inject_male_global_products(products, region)
+    #
+    # ⚠ 지역별로 **카탈로그가 다르다**: KR=국내몰(goodsNo·oliveyoung.co.kr),
+    #   JP=글로벌몰(prdtNo·global.oliveyoung.com). 예전엔 KR 도 글로벌몰 주입을 그대로 타서
+    #   한국 사용자 카드 버튼이 해외몰로 나갔다(사용자 리포트 2026-08-07).
+    if gender == "male":
+        if region == "kr":
+            _inject_male_kr_products(products)
+        elif catalog_available():
+            _inject_male_global_products(products, region)
 
     # 같은 상품(브랜드+라인명)으로 흩어진 소스별 카드를 하나로 병합한다(product-centric).
     products = dedup_by_line(products)

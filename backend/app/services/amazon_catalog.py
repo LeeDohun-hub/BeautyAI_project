@@ -555,6 +555,10 @@ _FORM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("lip", re.compile(
         r"\blip\b|\blipstick\b|\blip\s*(?:tint|gloss|balm|oil|mask)\b|\btint\b|\brouge\b"
         r"|リップ|ルージュ|ティント|口紅|립|틴트", re.I)),
+    # ⚠ 컨실러를 eye 앞에서 base 로 확정한다. 'Concealer Palette'/'컨실러 팔레트'는 아래 eye 의
+    #   palette/パレット/팔레트 가 먼저 잡아가는데, 그러면 상대 아마존 후보(form=base)와 제형이
+    #   어긋나 매칭이 통째로 막힌다(아마존 버튼이 안 붙는다). routes._ITEM_CATEGORY_PATTERNS 와 동일 규칙.
+    ("base", re.compile(r"\bconcealer\b|コンシーラー|컨실러", re.I)),
     ("eye", re.compile(
         r"\beye\s*shadow\b|\beyeshadow\b|\bpalette\b|\bmascara\b|\beye\s*liner\b|\beyeliner\b"
         r"|\beyebrow\b|\bbrow\b|\bkajal\b"
