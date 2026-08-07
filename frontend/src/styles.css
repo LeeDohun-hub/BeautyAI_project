@@ -1009,6 +1009,17 @@ body {
   background: #9aa5b1;
 }
 
+/* 이미지가 없는 실제 상품의 자리표시자. 위의 `.report-product-image span` 규칙이
+   빨간 번호 배지를 그리므로, 그걸 지우고 옅은 사각으로만 남긴다 — 번호는 옆 info 줄이
+   이미 그린다(국내몰 카탈로그의 24.9% 가 imageUrl 이 없어 자주 보인다). */
+.report-product-image .report-product-noimage {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+  background: repeating-linear-gradient(45deg, #e4e9ee 0 4px, #eef2f5 4px 8px);
+}
+
 .report-product-info .MuiTypography-root {
   display: -webkit-box;
   overflow: hidden;

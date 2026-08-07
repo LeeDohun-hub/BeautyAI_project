@@ -3753,15 +3753,23 @@ export default function App() {
                   {reportItems.length ? reportItems.map((product, index) => (
                     <Box className="report-product" key={`${product.id}-${product.keyword}-${index}`}>
                       <Box className="report-product-image">
+                        {/* ⚠ 폴백을 번호로 두면 안 된다. 옆의 info 줄이 이미 같은 번호를 그려서,
+                            이미지가 없는 상품은 '01 01' 처럼 번호가 두 번 찍힌다(실측 2026-08-07
+                            KR 남성 결과지 — 국내몰 카탈로그의 24.9% 가 imageUrl 이 없다).
+                            번호가 자리를 채우는 건 아래 '담은 상품 없음' 자리표시자 몫이다. */}
                         <ProductImage
                           src={product.image_url}
                           alt={product.name}
-                          fallback={<span>{String(index + 1).padStart(2, '0')}</span>}
+                          fallback={<span className="report-product-noimage" aria-hidden />}
                         />
                       </Box>
                       <Box className="report-product-info">
                         <span>{String(index + 1).padStart(2, '0')}</span>
-                        <Typography>{t(product.brand)} {product.name}</Typography>
+                        {/* 카탈로그 상품명은 브랜드로 시작하는 경우가 많다('라끌랑 라끌랑 슈퍼쉴드
+                            옴므쿠션' 처럼 두 번 읽힌다). 이미 들어 있으면 브랜드를 앞에 붙이지 않는다. */}
+                        <Typography>
+                          {product.name.startsWith(product.brand) ? product.name : `${t(product.brand)} ${product.name}`}
+                        </Typography>
                       </Box>
                     </Box>
                   )) : ['립 메이크업 추천템', '블러셔 추천템', '아이 메이크업 추천템', '베이스 추천템'].map((item, index) => (
