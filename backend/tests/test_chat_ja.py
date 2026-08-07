@@ -106,6 +106,56 @@ def test_japanese_never_falls_back_to_korean_problem_skin_corpus(no_llm, monkeyp
     assert called["n"] == 0, "일본어 상담이 한국어 전용 코퍼스를 조회했습니다"
 
 
+# ── 일본어 질문이 근거를 실제로 찾는지 ──────────────────────────────────────
+# 코퍼스 색인이 한국어 토큰이라, 일본어 질문은 **점수가 그냥 0** 이었다(실측 2026-08-07).
+# 답변은 나가지만 '참고 근거'가 통째로 빠진다 — 이 서비스가 신뢰도의 핵심 자산으로 두는 것이
+# 일본 사용자에게만 없었다는 뜻이다.
+
+@pytest.mark.parametrize(
+    "question,expected_concern",
+    [
+        ("毛穴と皮脂が気になります", "毛穴"),
+        ("シワとハリの低下が気になります", "シワ"),
+        ("ニキビが繰り返します", "ニキビ"),
+        ("頬の赤みが気になります", "赤み"),
+        ("シミやくすみを何とかしたい", "美白"),
+        ("乾燥と角質が気になります", "角質"),
+    ],
+)
+def test_japanese_question_retrieves_japanese_evidence(question, expected_concern):
+    from app.services.chatbot import KNOWLEDGE_MIN_SCORE
+    from app.services.skincare_ingredient_knowledge import (
+        build_skincare_answer_ja,
+        get_skincare_ingredient_knowledge,
+    )
+
+    matches = get_skincare_ingredient_knowledge().search(question, None, limit=1)
+    assert matches, f"일본어 질문이 코퍼스에 하나도 안 걸립니다: {question}"
+    assert matches[0].score >= KNOWLEDGE_MIN_SCORE, (
+        f"점수 {matches[0].score:.2f} 가 채택 임계값 미만 — 근거 없이 답하게 됩니다: {question}"
+    )
+    answer, sources = build_skincare_answer_ja(matches)
+    assert answer and not HANGUL.search(answer), answer
+    assert sources and expected_concern in sources[0], sources
+
+
+def test_korean_question_scoring_is_unchanged():
+    """일본어 힌트를 붙이면서 한국어 검색이 흔들리면 안 된다."""
+    from app.services.skincare_ingredient_knowledge import get_skincare_ingredient_knowledge
+
+    knowledge = get_skincare_ingredient_knowledge()
+    for question in ("모공과 피지가 고민이에요", "주름과 탄력 저하"):
+        matches = knowledge.search(question, None, limit=1)
+        assert matches and matches[0].score > 15, question
+
+
+def test_ja_hint_leaves_korean_query_untouched():
+    from app.services.skincare_ingredient_knowledge import SkincareIngredientKnowledge as K
+
+    assert K._with_ja_hints("모공과 피지가 고민이에요") == "모공과 피지가 고민이에요"
+    assert "모공" in K._with_ja_hints("毛穴が気になります")
+
+
 # ── LLM 프롬프트 ────────────────────────────────────────────────────────────
 
 def test_llm_system_prompt_switches_language(monkeypatch):

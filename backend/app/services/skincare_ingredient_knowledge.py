@@ -128,6 +128,35 @@ class SkincareIngredientKnowledge:
         )
         return record, concern, question, query_terms(f"{concern} {question} {metadata}")
 
+    # 일본어 질문 → 한국어 고민어. 코퍼스 색인은 한국어 토큰으로 만들어져 있어서, 일본어
+    # 질문은 **점수가 그냥 0 이다**(실측 2026-08-07: '毛穴と皮脂が気になります' → 매칭 없음,
+    # 같은 뜻의 한국어 질문은 22.25). 그래서 일본어 상담은 근거 없이 LLM 일반지식으로만
+    # 답하고 있었다 — '참고 근거'는 이 서비스가 신뢰도의 핵심 자산으로 두는 것인데(llm_consult
+    # 모듈 주석), 일본 사용자에게만 통째로 빠져 있었다.
+    #
+    # 코퍼스를 일본어로 다시 색인하지 않고, **질문에서 고민어만 한국어로 바꿔 덧붙인다.**
+    # 고민 축은 8개뿐이고(target_concern), 점수의 대부분이 그 축에서 나오기 때문이다.
+    # 원문도 함께 남긴다 — 성분명(레티놀/ナイアシンアミド 등)이 겹치면 그만큼 더 오른다.
+    _JA_CONCERN_HINTS: tuple[tuple[str, str], ...] = (
+        ("毛穴", "모공"),
+        ("皮脂", "피지 유분"), ("テカリ", "피지 유분"), ("オイリー", "피지 유분"),
+        ("しわ", "주름"), ("シワ", "주름"), ("小じわ", "주름"),
+        ("ハリ", "탄력"), ("たるみ", "탄력 피부처짐"), ("弾力", "탄력"),
+        ("ニキビ", "여드름"), ("吹き出物", "여드름"), ("肌荒れ", "여드름 트러블"),
+        ("赤み", "붉어짐 홍조"), ("紅潮", "홍조"), ("敏感", "민감성"),
+        ("シミ", "색소침착 미백"), ("色素沈着", "색소침착"), ("くすみ", "칙칙함 미백"),
+        ("美白", "미백"), ("そばかす", "색소침착"),
+        ("乾燥", "건조"), ("角質", "각질 과각질"), ("カサつき", "건조"),
+        ("保湿", "보습"), ("バリア", "장벽"), ("キメ", "피부결"),
+    )
+
+    @classmethod
+    def _with_ja_hints(cls, message: str) -> str:
+        """일본어 질문에 대응하는 한국어 고민어를 덧붙인다(없으면 원문 그대로)."""
+        text = message or ""
+        hints = [ko for ja, ko in cls._JA_CONCERN_HINTS if ja in text]
+        return f"{text} {' '.join(dict.fromkeys(hints))}".strip() if hints else text
+
     def search(
         self,
         message: str,
@@ -142,7 +171,9 @@ class SkincareIngredientKnowledge:
         코퍼스 68% 번역이 사용자에겐 68% 노출로 그대로 내려앉는다.
         후보 집합을 먼저 좁히면 같은 번역량으로 노출이 거의 100% 가 된다.
         """
-        query = f"{message} {context_text(context)}"
+        # 일본어 질문이면 고민어를 한국어로 덧붙인다(색인이 한국어 토큰이라 그냥은 0점이다).
+        # 한국어 질문에는 아무 영향이 없다 — 일본어 표기가 없으면 원문 그대로다.
+        query = f"{self._with_ja_hints(message)} {context_text(context)}"
         terms = query_terms(query)
         normalized_query = normalize(query)
         matches: list[SkincareKnowledgeMatch] = []
