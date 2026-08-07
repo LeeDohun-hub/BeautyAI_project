@@ -110,6 +110,21 @@ def test_japanese_never_falls_back_to_korean_problem_skin_corpus(no_llm, monkeyp
 # 코퍼스 색인이 한국어 토큰이라, 일본어 질문은 **점수가 그냥 0** 이었다(실측 2026-08-07).
 # 답변은 나가지만 '참고 근거'가 통째로 빠진다 — 이 서비스가 신뢰도의 핵심 자산으로 두는 것이
 # 일본 사용자에게만 없었다는 뜻이다.
+#
+# ⚠ 아래 검사들은 **실제 코퍼스가 있어야** 의미가 있다. data/ 는 git 에 없으므로 CI 에는
+#   파일이 없고, 그때 knowledge.search 는 빈 리스트를 준다. 가드 없이 두면 CI 만 빨개진다
+#   (실제로 그렇게 만들어 배포가 며칠 밀릴 뻔했다 — test_ingredient_hint_ja 와 같은 방식으로 스킵).
+
+
+def _require_corpus():
+    """성분 코퍼스가 없으면 스킵(CI 에는 data/ 가 없다)."""
+    from app.services.skincare_ingredient_knowledge import get_skincare_ingredient_knowledge
+
+    knowledge = get_skincare_ingredient_knowledge()
+    if not knowledge.search("모공 피지", None, limit=1):
+        pytest.skip("성분 지식 코퍼스가 없어 스킵")
+    return knowledge
+
 
 @pytest.mark.parametrize(
     "question,expected_concern",
@@ -124,12 +139,10 @@ def test_japanese_never_falls_back_to_korean_problem_skin_corpus(no_llm, monkeyp
 )
 def test_japanese_question_retrieves_japanese_evidence(question, expected_concern):
     from app.services.chatbot import KNOWLEDGE_MIN_SCORE
-    from app.services.skincare_ingredient_knowledge import (
-        build_skincare_answer_ja,
-        get_skincare_ingredient_knowledge,
-    )
+    from app.services.skincare_ingredient_knowledge import build_skincare_answer_ja
 
-    matches = get_skincare_ingredient_knowledge().search(question, None, limit=1)
+    knowledge = _require_corpus()
+    matches = knowledge.search(question, None, limit=1)
     assert matches, f"일본어 질문이 코퍼스에 하나도 안 걸립니다: {question}"
     assert matches[0].score >= KNOWLEDGE_MIN_SCORE, (
         f"점수 {matches[0].score:.2f} 가 채택 임계값 미만 — 근거 없이 답하게 됩니다: {question}"
@@ -141,9 +154,7 @@ def test_japanese_question_retrieves_japanese_evidence(question, expected_concer
 
 def test_korean_question_scoring_is_unchanged():
     """일본어 힌트를 붙이면서 한국어 검색이 흔들리면 안 된다."""
-    from app.services.skincare_ingredient_knowledge import get_skincare_ingredient_knowledge
-
-    knowledge = get_skincare_ingredient_knowledge()
+    knowledge = _require_corpus()
     for question in ("모공과 피지가 고민이에요", "주름과 탄력 저하"):
         matches = knowledge.search(question, None, limit=1)
         assert matches and matches[0].score > 15, question
