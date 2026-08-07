@@ -24,6 +24,19 @@ from app.services.oliveyoung_kr_search import KRSearch, _parse
 
 _SEARCH_API = "https://www.oliveyoung.co.kr/store/search/NewMainSearchApi.do"
 _SEARCH_MAIN = "https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query="
+_GOODS_DETAIL = "https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo="
+# 상품 이미지 CDN. 삭제된 상품은 cf-static 의 기본 자리표시자를 주므로 호스트로 걸러낸다.
+_GOODS_IMAGE_HOST = "https://image.oliveyoung.co.kr/"
+# 내려간 상품 페이지의 제목(상품명 대신 몰 이름이 그대로 남는다).
+_GENERIC_TITLE = "올리브영 온라인몰"
+# og:image 가 채워졌는지 — 상품 썸네일이든 기본 자리표시자든, 값이 있으면 판정할 수 있다.
+_DETAIL_READY_JS = """
+() => {
+  const m = document.querySelector('meta[property="og:image"]');
+  return !!(m && m.content);
+}
+"""
+_DETAIL_READY_MS = 8000
 _WARM_QUERY = "에스쁘아"  # 챌린지 워밍업용(결과 유무 무관, 아무 인기 쿼리면 됨)
 _NAV_TIMEOUT_MS = 30000
 _CHALLENGE_WAIT_MS = 4500  # CF 챌린지 자동 해제 대기
@@ -148,6 +161,63 @@ class KRBrowserSession:
             return _parse(payload)
         except Exception:
             return None
+
+    def goods_detail(self, goods_no: str) -> tuple[str | None, bool | None]:
+        """상품 상세 페이지에서 (대표 이미지 URL, 판매 중 여부)를 읽는다.
+
+        검색 API 로는 못 채우는 상품이 남는다 — 한정기획·단종처럼 **이름으로 다시 검색해도
+        안 나오는** 것들이다(실측 2026-08-07: 검색 기반 백필 뒤 100건). goodsNo 는 알고 있으니
+        상세 페이지를 직접 연다.
+
+        ⚠ 삭제된 상품도 HTTP 200 을 준다. 구분은 **og:image 의 호스트**로 한다 —
+          살아 있으면 image.oliveyoung.co.kr 의 상품 썸네일, 내려갔으면 cf-static 의
+          기본 자리표시자(img_oy_default)에 제목이 '올리브영 온라인몰'이다.
+
+        ⚠ 본문의 '상품을 찾을 수 없어요' 로는 판정하면 안 된다. 이 문구는 SPA 셸에 숨어 있어서
+          **멀쩡한 상품 페이지에서도 innerText 에 잡힌다**(실측 2026-08-07: 셀리맥스·힌스·
+          마녀공장 등 정상 상품이 전부 '없음'으로 나왔고, 그 판정으로 6건을 잘못 내렸다가
+          되돌렸다). 표시가 아니라 **이미지 출처**가 진짜 신호다.
+
+        반환의 두 번째 값은 **3-상태**다:
+            True  = 상품 썸네일이 있다(판매 중)
+            False = 기본 자리표시자 + 일반 제목(삭제·단종 확정)
+            None  = 모름(네트워크·챌린지 실패, 렌더 지연 등)
+        ⚠ 실패를 False 로 뭉뚱그리면 멀쩡한 상품이 죽은 것으로 표시된다. 호출부가
+          False 일 때만 카탈로그에서 내리도록 셋을 구분한다.
+        """
+        goods_no = (goods_no or "").strip()
+        if not goods_no or self._page is None:
+            return None, None
+        if not self._warm and not self._warm_up():
+            return None, None
+        try:
+            self._page.goto(
+                _GOODS_DETAIL + quote_plus(goods_no),
+                wait_until="domcontentloaded",
+                timeout=_NAV_TIMEOUT_MS,
+            )
+            # ⚠ 상세 페이지는 Next.js SPA 라 domcontentloaded 직후엔 og:image 가 아직 없다.
+            #   그 시점에 읽으면 전부 '모름'이 된다. 메타가 채워질 때까지 기다린다
+            #   (고정 sleep 보다 빠르고, 안 채워지면 타임아웃 뒤 한 번 더 읽어 본다).
+            self._page.wait_for_function(_DETAIL_READY_JS, timeout=_DETAIL_READY_MS)
+        except Exception:
+            pass
+        try:
+            info = self._page.evaluate(
+                "() => ({"
+                "  image: (document.querySelector('meta[property=\"og:image\"]') || {}).content || '',"
+                "  title: document.title || ''"
+                "})"
+            )
+        except Exception:
+            return None, None
+        src = (info.get("image") or "").strip()
+        if src.startswith(_GOODS_IMAGE_HOST) and "img_oy_default" not in src:
+            return src, True
+        # 기본 자리표시자 + 일반 제목이면 내려간 상품이다. 둘 중 하나만이면 판정하지 않는다.
+        if "img_oy_default" in src and (info.get("title") or "").strip() == _GENERIC_TITLE:
+            return None, False
+        return None, None
 
     def close(self) -> None:
         for closer in (self._browser, self._pw):

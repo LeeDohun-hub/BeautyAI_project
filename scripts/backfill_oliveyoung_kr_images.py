@@ -65,6 +65,10 @@ def main() -> int:
     ap.add_argument("--max-queries", type=int, default=0, help="이번 실행 최대 검색 수(0=결손이 없어질 때까지)")
     ap.add_argument("--dry-run", action="store_true", help="검색 없이 결손 규모만 센다")
     ap.add_argument("--save-every", type=int, default=25, help="N 쿼리마다 중간 저장(끊겨도 그때까지 남는다)")
+    # 검색으로 안 걸리는 잔여분(한정기획·단종)을 goodsNo 상세 페이지에서 직접 읽는다.
+    # 검색보다 느리다(페이지 이동) — 그래서 잔여분 전용이다.
+    ap.add_argument("--detail", action="store_true",
+                    help="검색 대신 goodsNo 상세 페이지에서 대표 이미지를 읽는다(잔여분용)")
     args = ap.parse_args()
 
     path = Path(args.csv)
@@ -80,11 +84,53 @@ def main() -> int:
         print("ERROR: 브라우저 기동/챌린지 워밍 실패(playwright + 시스템 Chrome 필요). 중단.")
         return 1
 
+    filled = queries = 0
+    started = time.time()
+
+    if args.detail:
+        # 잔여분: goodsNo 로 상세 페이지를 직접 연다. 곁가지로 채워지는 게 없으므로
+        # 결손 1건당 정확히 1회다(검색 모드보다 느리지만 확실하다).
+        #
+        # 여기서 **죽은 상품이 드러난다.** 검색으로도 안 나오고 상세 페이지도 '상품을 찾을 수
+        # 없어요'인 goodsNo 는 이미 내려간 상품이다. 그대로 두면 카탈로그가 그 상품을 카드로
+        # 내보내고, 사용자는 직링크를 눌러 '상품 없음' 페이지를 만난다 — 이미지 결손보다
+        # 나쁜 문제라, 판매중(soldOut) 표시를 내려 런타임 후보에서 빠지게 한다.
+        # ⚠ '모름'(네트워크·챌린지 실패)은 절대 죽은 것으로 취급하지 않는다.
+        dead = unknown = 0
+        try:
+            for gap in gaps:
+                if args.max_queries and queries >= args.max_queries:
+                    print(f"--max-queries {args.max_queries} 도달 — 여기까지 저장하고 멈춘다.")
+                    break
+                queries += 1
+                image, alive = session.goods_detail(gap["goodsNo"])
+                if image:
+                    gap["imageUrl"] = image
+                    filled += 1
+                elif alive is False:
+                    gap["soldOut"] = "Y"
+                    dead += 1
+                else:
+                    unknown += 1
+                if queries % 10 == 0:
+                    rate = queries / max(1e-9, time.time() - started)
+                    print(f"  {queries}/{len(gaps)} · 채움 {filled} · 내려간 상품 {dead}"
+                          f" · 판정 불가 {unknown} · {rate * 60:.0f}건/분", flush=True)
+                if queries % args.save_every == 0:
+                    _save(path, rows)
+                time.sleep(args.delay + random.uniform(0, args.delay))
+        finally:
+            session.close()
+            _save(path, rows)
+        left = sum(1 for r in rows if not r["imageUrl"].strip())
+        print(f"\n완료: {queries}건 조회 · 이미지 채움 {filled} · 내려간 상품 {dead}(soldOut=Y 로 표시)"
+              f" · 판정 불가 {unknown}")
+        print(f"남은 이미지 결손 {left}건 ({(time.time() - started) / 60:.1f}분) · 저장: {path}")
+        return 0
+
     # 이미 던진 쿼리는 다시 던지지 않는다. 한 쿼리가 ~20건을 채우므로 결손 목록을 매번
     # 다시 훑되, 쿼리 중복만 막으면 자연히 수렴한다.
     tried: set[str] = set()
-    filled = queries = 0
-    started = time.time()
     try:
         for gap in gaps:
             if gap["imageUrl"].strip():
