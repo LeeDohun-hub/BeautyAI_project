@@ -192,6 +192,48 @@ def build_skincare_answer(matches: list[SkincareKnowledgeMatch]) -> tuple[str, l
     return " ".join(sections), sources
 
 
+def build_skincare_answer_ja(matches: list[SkincareKnowledgeMatch]) -> tuple[str, list[str]]:
+    """build_skincare_answer 의 일본어판(상담 답변용).
+
+    코퍼스는 2026-08-07 에 8,341건 전량 번역돼 **한국어와 같은 커버리지**를 갖는다. 그래서
+    build_skincare_recommendation_hint 처럼 후보를 좁힐 필요 없이, 고른 레코드의 번역본을
+    그대로 쓴다. 번역이 없으면 빈 문자열을 돌려 호출부가 다음 경로로 넘어가게 한다 —
+    **한국어를 대신 내보내지 않는다**(일본 사용자에게 한국어 안내가 나가는 것이 더 나쁘다).
+
+    evidence_sources 는 논문 제목이라 원문 그대로 둔다(옮기면 찾을 수 없다).
+    """
+    if not matches:
+        return "", []
+    translated_all = _ja_answers()
+    best = matches[0].record
+    translated = translated_all.get(str(best.get("id", "")).strip())
+    if not translated:
+        return "", []
+    answer = str(translated.get("answer", "")).strip()
+    if not answer:
+        return "", []
+    concern = str(translated.get("target_concern") or "肌悩み")
+    if len(answer) > 900:
+        answer = answer[:897].rstrip() + "..."
+
+    sections = [f"YoPalette 独自モデルの分析によると、{concern} のケースでは {answer}"]
+    evidence = [str(item) for item in best.get("evidence_sources", []) or [] if str(item).strip()]
+    if evidence:
+        sections.append(f"参考根拠: {', '.join(evidence[:3])}。")
+    sections.append("肌が敏感なときや治療中の場合は、新しい成分は少ない頻度でパッチテストから始めると安全です。")
+
+    sources: list[str] = []
+    for match in matches:
+        row = translated_all.get(str(match.record.get("id", "")).strip())
+        concern_ja = str((row or {}).get("target_concern") or "").strip()
+        if not concern_ja:
+            continue
+        label = f"YoPalette 成分・効能分析: {concern_ja}"
+        if label not in sources:
+            sources.append(label)
+    return " ".join(sections), sources
+
+
 @lru_cache(maxsize=1)
 def _ja_answers() -> dict[str, dict[str, str]]:
     """한국어 코퍼스와 **id 로 1:1 대응**하는 일본어 번역본.

@@ -1355,6 +1355,17 @@ export default function App() {
     }
     return tReasonTag(reason);
   };
+  /** 추천 컬럼 제목. 대부분은 사전에 그대로 있지만, **소아(영유아) 경로만** 서버가
+   *  `바디로션 (순한 성분)` 처럼 카테고리 라벨에 접미사를 붙여 조립한다(성인 바디는 슬롯
+   *  라벨 3개를 그대로 쓴다). 완성형은 사전에 없으므로 라벨과 접미사를 나눠 옮긴다. */
+  const tColumnLabel = (label: string | undefined): string => {
+    if (!label) return '';
+    const dict = t(label);
+    if (dict !== label) return dict;
+    const gentle = label.match(/^(.+?)\s*\(순한 성분\)$/);
+    if (gentle) return `${t(gentle[1])}（${t('순한 성분')}）`;
+    return dict;
+  };
   /** 가상성형 변화 설명. 서버가 수치를 끼워 완성형으로 내려주므로 사전에 못 넣는다 —
    *  자리표시자 템플릿으로 되돌려 옮긴다(tScreeningSummary 와 같은 방식).
    *  번역이 없으면 한국어 원문을 그대로 둔다(빈 칸보다 낫다 — 여긴 의학 안내가 아니라
@@ -2563,7 +2574,7 @@ export default function App() {
         tone: personalColorResult?.tone ?? '',
         subtype: personalColorResult?.subtype ?? '',
       };
-      const result = await chat(message, undefined, context as typeof survey);
+      const result = await chat(message, undefined, context as typeof survey, appLang);
       setAnswer(result.answer);
       setAnswerSources(result.sources);
     } catch {
@@ -2577,7 +2588,7 @@ export default function App() {
     setLoading('chat');
     setError('');
     try {
-      const result = await chat(message, analysis?.scores ?? undefined, survey);
+      const result = await chat(message, analysis?.scores ?? undefined, survey, appLang);
       setAnswer(result.answer);
       setAnswerSources(result.sources);
     } catch {
@@ -4234,7 +4245,7 @@ export default function App() {
                         <Grid item xs={12} sm={6} md={12 / recommendation.product_columns!.length} key={col.key}>
                           <Box className="item-match-column">
                             <Box className="kiosk-match-card compact" sx={{ minHeight: 66 }}>
-                              <Typography fontWeight={900}>{t(col.label)}</Typography>
+                              <Typography fontWeight={900}>{tColumnLabel(col.label)}</Typography>
                               <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>
                                 {tColumnReason(col.reason) || t(SKIN_COLUMN_HINT[col.key] ?? '')}
                               </Typography>

@@ -353,6 +353,10 @@ class ChatRequest(BaseModel):
     message: str
     user_id: int | None = None
     context: dict | None = None
+    # 답변 언어. 상담 화면은 일본어 모드에도 열려 있는데 모든 답변 경로가 한국어였다
+    # (LLM 프롬프트가 한국어를 명시했고 폴백 지식베이스도 한국어뿐). 프론트가 화면 언어를
+    # 그대로 보낸다. 없으면 Accept-Language 로 추정하고, 그것도 없으면 한국어.
+    lang: str | None = None
 
 
 class ChatResponse(BaseModel):

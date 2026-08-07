@@ -194,10 +194,21 @@ export async function recommend(
   return data;
 }
 
-export async function chat(message: string, scores?: SkinScores, survey?: SurveyInput): Promise<ChatResponse> {
+/** 상담 질문. `lang` 은 **화면 언어**를 그대로 보낸다.
+ *
+ * 서버의 답변 경로가 전부 한국어라 일본어 모드에서 한국어 답이 돌아왔다(실측 2026-08-07).
+ * 지역(region)과는 다른 축이라 따로 보낸다 — 지역은 '어디서 사나', 언어는 '무엇으로 읽나'다.
+ */
+export async function chat(
+  message: string,
+  scores?: SkinScores,
+  survey?: SurveyInput,
+  lang?: string,
+): Promise<ChatResponse> {
   const { data } = await api.post<ChatResponse>('/api/chat', {
     message,
     context: scores || survey ? { scores, survey } : undefined,
+    lang,
   });
   return data;
 }

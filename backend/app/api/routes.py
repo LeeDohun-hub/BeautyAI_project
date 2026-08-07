@@ -90,6 +90,23 @@ from app.services.skin_analyzer import SkinAnalyzer, summarize_scores
 router = APIRouter(prefix="/api", dependencies=[Depends(enforce_login)])
 
 
+def _resolve_lang(raw_lang: str | None, request: Request) -> str:
+    """답변 언어. 프론트가 화면 언어를 보내면 그대로 쓰고, 없으면 Accept-Language 로 추정한다.
+
+    ⚠ 지역(_resolve_region)과 다른 축이다. 지역은 '어디서 사나'(상품·링크)이고 언어는
+      '무엇으로 읽나'다. 일본에서 한국어로 쓰는 사용자도 있어 지역으로 언어를 정하면 어긋난다.
+    """
+    lang = (raw_lang or "").strip().lower()
+    if lang.startswith("ja"):
+        return "ja"
+    if lang.startswith("ko"):
+        return "ko"
+    accept_language = (request.headers.get("accept-language") or "").lower()
+    if accept_language.startswith("ja") or ",ja" in accept_language:
+        return "ja"
+    return "ko"
+
+
 def _resolve_region(raw_region: str | None, request: Request, fallback: str) -> str:
     region = (raw_region or "auto").strip().lower()
     if region in {"kr", "jp"}:
@@ -1818,11 +1835,12 @@ def style_mood_thumbnails() -> MoodThumbnailsResponse:
 @router.post("/chat", response_model=ChatResponse)
 def chat(
     payload: ChatRequest,
+    request: Request,
     db: Session = Depends(get_db),
     session_user: User | None = Depends(optional_user),
 ) -> ChatResponse:
     user_id = session_user.id if session_user else payload.user_id
-    return answer_skin_question(db, payload.message, user_id, payload.context)
+    return answer_skin_question(db, payload.message, user_id, payload.context, lang=_resolve_lang(payload.lang, request))
 
 
 @router.get("/products", response_model=list[ProductOut])

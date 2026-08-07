@@ -29,6 +29,28 @@ SYSTEM_PROMPT = (
     "6. 데이터셋 이름이나 내부 시스템 명칭은 언급하지 마세요."
 )
 
+# ⚠ 한국어판 프롬프트가 "한국어로 답합니다"를 **명시**하고 있어서, 일본어로 물어도 한국어
+#   답이 돌아왔다(실측 2026-08-07). 상담 화면은 일본어 모드에도 그대로 열려 있다.
+#   참고 자료(passages)는 일본어판 코퍼스에서 오지만, 문장을 쓰는 건 모델이므로
+#   여기서 언어를 지정해야 한다.
+SYSTEM_PROMPT_JA = (
+    "あなたはビューティーサービス「YoPalette」の相談員です。化粧品・スキンケア・"
+    "パーソナルカラー・メイクの範囲でのみ、日本語で答えます。\n"
+    "ルール:\n"
+    "1. 下に「参考資料」がある場合はその内容を優先的な根拠とし、資料にない事実を作らないでください。\n"
+    "2. 病気の診断・治療の判断はせず、必要な場合は皮膚科専門医への相談をすすめてください。\n"
+    "3. 効果を断定せず、「役立つ可能性があります」のように含みを持たせてください。\n"
+    "4. 3〜5文で簡潔に、実行できる順序で答えてください。\n"
+    "5. 新しい製品・成分は少量でのパッチテストをすすめてください。\n"
+    "6. データセット名や内部システムの名称には触れないでください。"
+)
+
+# 사용자 정보·참고 자료·질문 머리말. 모델에게 주는 문맥이라 답변 언어와 맞춘다.
+_LABELS = {
+    "ko": ("사용자 정보: ", "참고 자료:\n", "질문: "),
+    "ja": ("ユーザー情報: ", "参考資料:\n", "質問: "),
+}
+
 _MAX_PASSAGE_CHARS = 1200
 
 
@@ -44,7 +66,9 @@ def _client():
     return OpenAI(api_key=settings.openai_api_key), settings
 
 
-def generate(message: str, passages: list[str], context: dict | None = None) -> str | None:
+def generate(
+    message: str, passages: list[str], context: dict | None = None, lang: str = "ko"
+) -> str | None:
     """근거 문단을 바탕으로 상담 답변을 만든다. 키가 없거나 실패하면 None(폴백 신호).
 
     passages 가 비어 있어도 호출한다 — 퍼스널컬러/메이크업처럼 지식베이스에 문서가 없는
@@ -55,23 +79,26 @@ def generate(message: str, passages: list[str], context: dict | None = None) -> 
     if client is None:
         return None
 
+    ja = (lang or "ko").lower().startswith("ja")
+    user_label, ref_label, question_label = _LABELS["ja" if ja else "ko"]
+
     parts: list[str] = []
     if context:
         hints = {k: v for k, v in context.items() if k in {
             "personal_color", "tone", "subtype", "skin_type", "age_group", "gender",
         } and v}
         if hints:
-            parts.append("사용자 정보: " + ", ".join(f"{k}={v}" for k, v in hints.items()))
+            parts.append(user_label + ", ".join(f"{k}={v}" for k, v in hints.items()))
     if passages:
         joined = "\n---\n".join(p.strip() for p in passages if p and p.strip())
-        parts.append("참고 자료:\n" + joined[:_MAX_PASSAGE_CHARS])
-    parts.append(f"질문: {message}")
+        parts.append(ref_label + joined[:_MAX_PASSAGE_CHARS])
+    parts.append(f"{question_label}{message}")
 
     try:
         response = client.chat.completions.create(
             model=settings.openai_model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": SYSTEM_PROMPT_JA if ja else SYSTEM_PROMPT},
                 {"role": "user", "content": "\n\n".join(parts)},
             ],
             temperature=0.4,
