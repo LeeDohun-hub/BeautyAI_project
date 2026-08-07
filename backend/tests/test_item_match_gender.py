@@ -185,6 +185,45 @@ def test_inject_male_kr_products_uses_domestic_links(monkeypatch, tmp_path):
     assert not any("닥터숄" in p.brand for p in products)   # 인솔(잡화)
 
 
+def test_kr_catalog_injection_survives_male_categories(monkeypatch, tmp_path):
+    """KR 남성에서 빈 컬럼을 메울 때 500 이 나면 안 된다(운영 실측 2026-08-07).
+
+    `_inject_kr_oliveyoung_catalog` 는 gender 로 분류하므로 category 에
+    brow/concealer/lipbalm 이 들어온다. 배지 라벨 표(_INJECT_KEYWORD)에는 여성 5개
+    컬럼만 있어서 `KeyError: 'brow'` 로 **아이템매칭 API 전체가 500** 이었다 —
+    KR 남성 화면에 상품이 통째로 0건이었고, 여성 화면에서는 끝까지 안 드러났다.
+    """
+    from app.api.routes import _inject_kr_oliveyoung_catalog
+
+    path = tmp_path / "oliveyoung_kr_products.csv"
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_KR_CAT_HEADER)
+        w.writerows(_KR_CAT_ROWS)
+    monkeypatch.setattr(oks, "_kr_catalog_path", lambda: path)
+    oks.clear_kr_catalog_cache()
+
+    products: list = []
+    wanted = {"base", "brow", "concealer", "lipbalm"}
+    _inject_kr_oliveyoung_catalog(products, ["남자 쿠션"], wanted, gender="male")
+    oks.clear_kr_catalog_cache()
+
+    assert products, "남성 컬럼이 비어 있는데 주입이 하나도 안 됐습니다"
+    for p in products:
+        assert p.keyword, "배지 라벨이 비면 안 됩니다"
+        assert _item_match_category(p, "male") in wanted
+
+
+def test_inject_badge_covers_every_column():
+    """어떤 컬럼이 와도 배지 조회가 터지지 않아야 한다."""
+    from app.api.routes import _ITEM_CATEGORIES_FEMALE, _ITEM_CATEGORIES_MALE, _inject_badge
+
+    for category in _ITEM_CATEGORIES_FEMALE:
+        assert _inject_badge(category, "female")
+    for category in _ITEM_CATEGORIES_MALE:
+        assert _inject_badge(category, "male")
+
+
 def test_verify_rakuten_adds_direct_link_only_when_found():
     # 라쿠텐 API 검증: 브랜드 일치 리스팅이 있으면 직링크, 없으면 라쿠텐 버튼 안 붙음(오탐 방지).
     from app.api.routes import _verify_rakuten_for_global

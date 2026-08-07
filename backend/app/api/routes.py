@@ -471,6 +471,20 @@ _INJECT_KEYWORD = {
     "lip": "립", "blush": "블러셔", "eye": "아이섀도우", "base": "베이스", "nail": "네일",
 }
 
+
+def _inject_badge(category: str, gender: str = "female") -> str:
+    """주입 카드 배지 라벨. **KeyError 를 내지 않는다.**
+
+    ⚠ 예전엔 `_INJECT_KEYWORD[category]` 로 바로 꺼냈는데, 이 표엔 여성 5개 컬럼만 있다.
+      KR 남성은 _inject_kr_oliveyoung_catalog 가 gender 로 분류하므로 category 에
+      brow/concealer/lipbalm 이 들어오고, 그 순간 `KeyError: 'brow'` 로 **아이템매칭 API 가
+      500** 이 났다(운영 실측 2026-08-07: KR 남성에서 상품이 통째로 0건). 남성 컬럼이 얇을 때만
+      터져서 여성 화면에서는 끝까지 드러나지 않는 부류다.
+    """
+    if (gender or "").lower() == "male":
+        return _MALE_CAT_KEYWORD.get(category) or _INJECT_KEYWORD.get(category) or category
+    return _INJECT_KEYWORD.get(category) or category
+
 # 카탈로그에는 화장품이 아닌 도구·포장재도 섞여 있다. 실측으로 '빈 화장품 용기'(ネイルアート
 # パウダー丸薬コンテナ)가 카드로 나온 적이 있어, 주입 후보에서 먼저 걸러낸다.
 _CATALOG_JUNK = re.compile(
@@ -565,7 +579,7 @@ def _inject_kr_oliveyoung_catalog(
                 price=0,  # 카탈로그에 가격 컬럼이 없다 — 프론트가 '가격 정보 없음'으로 표시.
                 image_url=item.image_url or None,
                 product_url=url,
-                keyword=_INJECT_KEYWORD[category],
+                keyword=_inject_badge(category, gender),
                 source="oliveyoung_kr",
                 # 색상 적합도 순서는 유지하되 가산점으로 네이버 네일 후보(82~84점)보다 위에
                 # 둔다. 안 그러면 balance 에서 네이버 후보가 네일 칸을 먼저 차지하고, 그게
@@ -666,7 +680,7 @@ def _inject_amazon_catalog(
                     image_url=entry.image_url or None,
                     product_url=url,
                     review_count=entry.reviews or None,
-                    keyword=_INJECT_KEYWORD[category],
+                    keyword=_inject_badge(category),
                     source="amazon_catalog",
                     # 올영 주입과 같은 이유의 가산점(주석은 _inject_kr_oliveyoung_catalog 참조).
                     score=score + _OY_KR_NAIL_SCORE_BOOST,
@@ -728,7 +742,7 @@ def _inject_jp_oliveyoung_catalog(
                 price=int(round(item.price_usd * _USD_TO_JPY)),
                 image_url=item.image_url or None,
                 product_url=url,
-                keyword=_INJECT_KEYWORD[category],
+                keyword=_inject_badge(category),
                 source="oliveyoung_global",
                 # KR 주입과 같은 이유의 가산점(주석은 _inject_kr_oliveyoung_catalog 참조).
                 score=score + _OY_KR_NAIL_SCORE_BOOST,
