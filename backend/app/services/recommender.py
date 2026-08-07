@@ -14,15 +14,19 @@ from app.services.derma_condition_care import (
     PRODUCTS,
     REFERRAL,
     care_for,
+    care_ja_for,
     load_otc_examples,
 )
 from app.services.body_categories import ALL_CATEGORIES as NON_FACE_CATEGORIES
+from app.services.body_skin_analyzer import BODY_LABELS_JA
 from app.services.ingredient_aliases import detect_ingredients_ko
 from app.services.kr_ingredient_notice import raw_ingredients_for_url
 from app.services.pediatric_care import (
     PEDIATRIC_GUIDANCE,
     PEDIATRIC_GUIDANCE_INGREDIENTS,
+    PEDIATRIC_GUIDANCE_JA,
     PEDIATRIC_GUIDANCE_NO_PRODUCTS,
+    PEDIATRIC_GUIDANCE_NO_PRODUCTS_JA,
     PEDIATRIC_SAFE_INGREDIENTS,
     is_pediatric,
     is_pediatric_safe,
@@ -1477,10 +1481,8 @@ def recommend_products(
         if analysis_mode == "body"
         else build_explanation(scores, survey, ingredient_names, product_names)
     )
-    # 일본어판은 얼굴 모드만 있다. 바디는 아직 한국어뿐이라 None 으로 두고, 프론트가
-    # 한국어 원문으로 폴백한다(없는 번역을 있는 척하지 않는다).
     explanation_ja = (
-        None
+        build_body_explanation_ja(body_conditions, ingredient_names, product_names)
         if analysis_mode == "body"
         else build_explanation_ja(scores, survey, ingredient_names, product_names)
     )
@@ -1570,6 +1572,9 @@ def _recommend_pediatric(
 
     total = sum(len(t) for _k, _l, _r, t in columns)
     explanation = PEDIATRIC_GUIDANCE if total else PEDIATRIC_GUIDANCE_NO_PRODUCTS
+    # ⚠ 소아 경로는 안내문이 곧 결과다(성인 제품 폴백 없이 성분 우선 안내). 여기가 한국어로
+    #   나가면 일본 사용자는 안전 안내를 아예 못 읽는다 — 반드시 두 벌을 만든다.
+    explanation_ja = PEDIATRIC_GUIDANCE_JA if total else PEDIATRIC_GUIDANCE_NO_PRODUCTS_JA
 
     # 성분 우선 안내: 성인 제품을 억지로 추천하는 대신 '이런 성분을 찾으세요'를 낸다.
     # 상품이 0건이면(카탈로그가 얇은 리전·아토피 등) 이 안내가 유일한 실행 가이드가 된다.
@@ -1601,7 +1606,8 @@ def _recommend_pediatric(
     ]
     return RecommendationResponse(
         history_id=history.id, ingredients=guidance_ingredients, products=[],
-        explanation=explanation, product_columns=product_columns,
+        explanation=explanation, explanation_ja=explanation_ja,
+        product_columns=product_columns,
     )
 
 
@@ -1641,7 +1647,9 @@ def recommend_derma_care(
         db.commit()
         db.refresh(history)
         return RecommendationResponse(
-            history_id=history.id, ingredients=[], products=[], explanation=top_care["guide"]
+            history_id=history.id, ingredients=[], products=[],
+            explanation=top_care["guide"],
+            explanation_ja=care_ja_for(top_condition)["guide"],
         )
 
     # '제품/성분으로 해결 가능한 가장 상위 병'을 고른다. 1순위가 점·지루각화처럼 제품으로
@@ -1731,20 +1739,38 @@ def recommend_derma_care(
         ]
         column_selection = build_body_columns(scored_cols, survey, want, strict)
 
+    # 요약문은 한국어·일본어 두 벌을 나란히 조립한다. 한 벌만 만들고 나중에 옮기려 하면
+    # 라벨·안내문이 문장 한가운데 박혀 있어 옮길 수가 없다(성분·상품명도 함께 낀다).
+    top_care_ja = care_ja_for(top_condition)
+    target_care_ja = care_ja_for(target_condition)
+
     # 1순위가 제품 불가라 하위 병으로 넘어갔으면 그 사실을 먼저 알린다.
     lead = ""
+    lead_ja = ""
     if target_condition != top_condition:
         lead = f"{top_care['label']}은(는) 제품으로 해결하기 어렵습니다. 함께 감지된 {target_care['label']} 기준으로 제품을 추천합니다. "
+        lead_ja = (
+            f"{top_care_ja['label']}は製品では対応が難しいため、"
+            f"併せて検出された{target_care_ja['label']}を基準に製品をおすすめします。"
+        )
 
     if target_care["kind"] == PRODUCTS:
         ing_text = ", ".join(ing.name for ing in ingredients[:3])
         prod_text = ", ".join(product.name for _s, product, _r in top[:3])
         body = f"{target_care['label']}에 적합한 {ing_text} 성분 중심으로 골랐습니다. {target_care['guide']}"
+        # 성분명·상품명은 고유명사라 원문 그대로 둔다(옮기면 상품에서 못 찾는다).
+        body_ja = (
+            f"{target_care_ja['label']}に適した {'、'.join(ing.name for ing in ingredients[:3])} "
+            f"の成分を中心に選びました。{target_care_ja['guide']}"
+        )
         if prod_text:
             body += f" 추천 제품: {prod_text}."
+            body_ja += f" おすすめ商品: {'、'.join(product.name for _s, product, _r in top[:3])}。"
     else:
         body = target_care["guide"]
+        body_ja = target_care_ja["guide"]
     explanation = lead + body
+    explanation_ja = lead_ja + body_ja
 
     # OTC 의약품 예시(무좀·사마귀 등 약이 필요한 병). 지식파일 없으면 라이브 OpenFDA로 폴백.
     otc_examples = load_otc_examples(target_condition)
@@ -1754,6 +1780,10 @@ def recommend_derma_care(
     )
     if shown:
         explanation += f" 약국 OTC 예시(미국 FDA 기준): {shown}. 사용 전 약사와 상담하세요."
+        # 브랜드·성분명(제네릭명)은 원문 그대로 — 약국에서 그 이름으로 찾아야 한다.
+        explanation_ja += (
+            f" 薬局のOTC例（米国FDA基準）: {shown}。ご使用前に薬剤師にご相談ください。"
+        )
 
     history = RecommendationHistory(
         user_id=user_id,
@@ -1795,6 +1825,7 @@ def recommend_derma_care(
         ],
         products=products_out,
         explanation=explanation,
+        explanation_ja=explanation_ja,
         product_columns=product_columns,
     )
 
@@ -1814,6 +1845,31 @@ def build_body_explanation(
         f"{', '.join(ingredients[:3])}을 우선했습니다. "
         "자극 가능성이 있는 레티놀과 AHA/BHA 성분 제품은 제외했습니다. "
         f"추천 제품은 {', '.join(products[:3])}입니다."
+    )
+
+
+def build_body_explanation_ja(
+    body_conditions: list[BodyConditionScore],
+    ingredients: list[str],
+    products: list[str],
+) -> str:
+    """build_body_explanation 의 일본어판.
+
+    라벨은 BODY_LABELS_JA 로 다시 붙인다 — body_conditions[].label 은 분석기가 한국어로
+    채워 보낸 값이라 그대로 쓰면 문장 한가운데에 한국어가 남는다(이번 제보의 핵심 유형).
+    성분명·상품명은 고유명사라 원문 그대로 둔다.
+    """
+    if body_conditions:
+        top = body_conditions[0]
+        label_ja = BODY_LABELS_JA.get(top.condition, top.label)
+        result = f"{label_ja}の可能性 {top.probability:.1f}%"
+    else:
+        result = "からだの肌アンケート情報"
+    return (
+        f"{result}を基準に、肌バリアと保湿を中心とした成分 "
+        f"{'、'.join(ingredients[:3])} を優先しました。"
+        "刺激の可能性があるレチノールとAHA/BHA配合の製品は除外しています。"
+        f"おすすめ商品は {'、'.join(products[:3])} です。"
     )
 
 

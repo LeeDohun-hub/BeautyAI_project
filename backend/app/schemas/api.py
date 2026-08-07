@@ -342,7 +342,8 @@ class RecommendationResponse(BaseModel):
     explanation: str
     # 일본어판. 수치·성분명이 끼는 조립형 문장이라 프론트 사전으로 못 옮긴다 —
     # 퍼스널컬러의 skin_summary_ja 와 같은 방식으로 서버가 두 벌을 만들어 보낸다.
-    # 번역이 없는 경로(바디·소아·더모)는 None 이고, 프론트가 한국어 원문으로 폴백한다.
+    # 얼굴·바디·소아·더모 네 경로 모두 채운다(2026-08-07). None 이면 프론트가 한국어
+    # 원문으로 폴백하는데, 그건 새 경로가 추가됐을 때의 안전망이지 정상 상태가 아니다.
     explanation_ja: str | None = None
     # 카테고리별 추천 상품 컬럼(클렌저/토너/세럼/보습/선크림). face 모드에서만 채워진다.
     product_columns: list[ProductColumn] = Field(default_factory=list)

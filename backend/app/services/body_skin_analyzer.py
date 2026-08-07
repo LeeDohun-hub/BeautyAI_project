@@ -18,6 +18,19 @@ BODY_LABELS = {
     "tinea_corporis": "체부백선",
 }
 
+# 요약문 조립에 라벨이 그대로 끼므로 서버가 두 벌을 만든다(프론트 사전으로 못 옮긴다).
+# ⚠ BODY_LABELS 와 키가 같아야 한다 — 한쪽만 늘면 그 항목이 일본어 모드에서 한국어로 샌다.
+BODY_LABELS_JA = {
+    "atopic_dermatitis": "アトピー性皮膚炎",
+    "contact_dermatitis": "接触性皮膚炎",
+    "eczema": "湿疹",
+    "scabies": "疥癬",
+    "seborrheic_dermatitis": "脂漏性皮膚炎",
+    "tinea_corporis": "体部白癬",
+}
+
+assert set(BODY_LABELS) == set(BODY_LABELS_JA)
+
 _classifier: BodySkinClassifier | None = None
 
 
