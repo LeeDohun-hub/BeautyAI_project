@@ -345,14 +345,27 @@ def match_oliveyoung(brand: str, name: str, min_score: float = 0.5) -> OYMatch |
     return best
 
 
-# ── JP 남성 아이템매칭 소스 ─────────────────────────────────────────────────
+# ── 남성 아이템매칭 소스 ────────────────────────────────────────────────────
 # JP 남성은 상품 소스가 라쿠텐(일본 브랜드)뿐이라 올리브영 글로벌 버튼이 안 붙는다(J뷰티 제외 +
 # 라쿠텐이 한국 남성 브랜드를 안 줌). 그래서 글로벌몰 카탈로그에서 '남성' 상품을 직접 뽑아
 # 상품 카드로 노출한다(올리브영 JP 남성 고객 확보). 남성 판별: 전량 남성 브랜드 + 상품명 남성 신호.
+#
+# 판별 규칙은 국내몰 카탈로그(oliveyoung_kr_search.kr_male_catalog_items)도 그대로 쓴다 —
+# 두 카탈로그가 '남성'을 다르게 세면 지역에 따라 카드가 들쭉날쭉해진다.
 _MEN_CATALOG_BRAND_KEYS = {
     normalize_key(b) for b in ("dashu", "grafen", "ideal for men", "briall homme")
 }
 _MEN_NAME_RE = re.compile(r"homme|맨즈|옴므|포\s?맨|for\s?men|\bmen'?s?\b|남성|남자", re.I)
+
+
+def is_male_product(brand: str, *names: str) -> bool:
+    """상품이 남성용인지 — 전량 남성 브랜드이거나 이름에 남성 표기가 있으면 True.
+
+    `names` 는 같은 상품의 표기 변형(한글명/영문명/일본어명)을 그대로 넘기면 된다.
+    """
+    if normalize_key(brand) in _MEN_CATALOG_BRAND_KEYS:
+        return True
+    return bool(_MEN_NAME_RE.search(" ".join([brand or "", *(n or "" for n in names)])))
 
 
 def _parse_usd(raw: str) -> float:
@@ -374,13 +387,16 @@ def _as_catalog_item(item: _OYItem) -> OYCatalogItem:
 
 
 def male_catalog_items() -> list[OYCatalogItem]:
-    """글로벌몰 카탈로그의 '남성' 상품 목록(JP 남성 소스). 카탈로그 없으면 빈 리스트."""
-    out: list[OYCatalogItem] = []
-    for item in _load_items():
-        blob = f"{item.brand} {item.name_en} {item.name_kr}"
-        if item.brand_key in _MEN_CATALOG_BRAND_KEYS or _MEN_NAME_RE.search(blob):
-            out.append(_as_catalog_item(item))
-    return out
+    """글로벌몰 카탈로그의 '남성' 상품 목록(JP 남성 소스). 카탈로그 없으면 빈 리스트.
+
+    ⚠ 이건 **글로벌몰**(prdtNo) 상품이라 링크도 글로벌몰로 나간다. KR 사용자에게는
+      국내몰 쪽(oliveyoung_kr_search.kr_male_catalog_items)을 써야 한다.
+    """
+    return [
+        _as_catalog_item(item)
+        for item in _load_items()
+        if is_male_product(item.brand, item.name_en, item.name_kr)
+    ]
 
 
 def catalog_items() -> list[OYCatalogItem]:

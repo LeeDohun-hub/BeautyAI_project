@@ -74,6 +74,25 @@ def test_jp_existing_oliveyoung_direct_link_survives_resolve() -> None:
     assert product.platform_links.get("oliveyoung") == direct
 
 
+def test_kr_existing_goodsno_direct_link_survives_resolve() -> None:
+    """국내몰 goodsNo 직링크는 검색 링크로 격하되면 안 된다(2026-08-07).
+
+    JP 쪽 prdtNo 직링크는 이미 보존하고 있었는데 KR 만 빠져 있어서, 국내몰 카탈로그에서
+    주입한 남성 카드가 resolve 를 지나며 검색 링크가 됐다.
+    """
+    direct = "https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=A000000251335"
+    product = SimpleNamespace(
+        brand="다슈",
+        name="다슈 맨즈 퍼펙트 커버 컨실러",
+        product_url=direct,
+        source="oliveyoung_kr",
+        platform_links={"oliveyoung": direct},
+        matched_platforms=["oliveyoung"],
+    )
+    resolve_product_platforms(product, "kr")
+    assert product.platform_links.get("oliveyoung") == direct
+
+
 def test_naver_junk_brand_is_excluded_from_oliveyoung_query() -> None:
     assert oliveyoung_kr_query("네이버쇼핑", "하우스랩스 페어 파운데이션") == "하우스랩스 페어 파운데이션"
     assert "네이버쇼핑" not in build_search_query("네이버쇼핑", "하우스랩스 페어 파운데이션")

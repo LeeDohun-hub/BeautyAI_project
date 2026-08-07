@@ -32,7 +32,13 @@ except Exception:  # pragma: no cover
 
 from app.core.config import get_settings
 from app.services.matsukiyo_matcher import normalize_key, tokens_for
-from app.services.oliveyoung_catalog import _brands_match, _form_families, line_match_score, score_line
+from app.services.oliveyoung_catalog import (
+    _brands_match,
+    _form_families,
+    is_male_product,
+    line_match_score,
+    score_line,
+)
 from app.services.platform_resolver import build_search_query, oliveyoung_kr_query
 
 _KR_CATALOG_FILENAME = "oliveyoung_kr_products.csv"
@@ -163,6 +169,23 @@ def kr_catalog_items() -> tuple[KRResult, ...]:
     그런 경우 호출부가 카탈로그를 **후보 소스**로도 쓸 수 있게 열어준다.
     """
     return tuple(item.result for item in _load_kr_catalog() if not item.result.sold_out)
+
+
+def kr_male_catalog_items() -> tuple[KRResult, ...]:
+    """국내몰 카탈로그의 '남성' 상품(품절 제외).
+
+    왜 따로 필요한가: KR 남성 아이템매칭은 글로벌몰 카탈로그(male_catalog_items)로 채워지고
+    있었는데, 그건 **글로벌몰 링크**(global.oliveyoung.com/prdtNo)라 한국 사용자를 해외몰로
+    보낸다(사용자 리포트 2026-08-07). 국내몰 카탈로그에도 남성 상품이 충분히 있다 —
+    실측: base 19 · lipbalm 15 · concealer 3 · brow 2(글로벌몰은 15/10/2/3).
+
+    남성 판별은 글로벌몰과 **같은 규칙**(oliveyoung_catalog.is_male_product)을 쓴다.
+    """
+    return tuple(
+        item.result
+        for item in _load_kr_catalog()
+        if not item.result.sold_out and is_male_product(item.result.brand, item.result.name)
+    )
 
 
 # 용량/수량 노이즈.

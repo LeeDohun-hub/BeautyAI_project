@@ -138,6 +138,52 @@ def test_inject_male_global_products(monkeypatch, tmp_path):
     assert base.price > 1000
 
 
+# ── KR 남성: 국내몰 남성 상품 주입 (2026-08-07 사용자 리포트) ─────────────────
+# KR 남성 카드 버튼이 **글로벌몰**(global.oliveyoung.com)로 나갔다. 한국 사용자를 해외몰로
+# 보내는 셈이라, 지역별로 카탈로그를 갈라 KR 은 국내몰 goodsNo 직링크를 쓴다.
+
+import app.services.oliveyoung_kr_search as oks  # noqa: E402
+from app.api.routes import _inject_male_kr_products  # noqa: E402
+
+_KR_CAT_HEADER = ["goodsNo", "brandName", "goodsName", "soldOut", "imageUrl"]
+_KR_CAT_ROWS = [
+    ("A0001", "다슈", "다슈 맨즈 퍼펙트 커버 컨실러", "N", "https://img/1.jpg"),
+    ("A0002", "다슈", "다슈 맨즈 굿 룩스 아이브로우 펜슬 블랙", "N", "https://img/2.jpg"),
+    ("A0003", "비레디", "[맨즈 1위 쿠션] 비레디 임수빈 PICK 블루 쿠션", "N", "https://img/3.jpg"),
+    ("A0004", "포맨트", "포맨트 히든 립밤 3.6g 포맨", "N", "https://img/4.jpg"),
+    ("A0005", "롬앤", "롬앤 쥬시 래스팅 틴트", "N", ""),          # 여성 → 제외
+    ("A0006", "다슈", "다슈 맨즈 커버 쿠션", "Y", ""),             # 품절 → 제외
+    # 잡화: '쿠션'+'남자'로 잡히지만 화장품이 아니다(실측으로 베이스 컬럼에 떴다).
+    ("A0007", "닥터숄", "닥터숄 발뒤꿈치 쿠션 기능성 인솔 남자용 / 여자용", "N", ""),
+]
+
+
+def test_inject_male_kr_products_uses_domestic_links(monkeypatch, tmp_path):
+    path = tmp_path / "oliveyoung_kr_products.csv"
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_KR_CAT_HEADER)
+        w.writerows(_KR_CAT_ROWS)
+    monkeypatch.setattr(oks, "_kr_catalog_path", lambda: path)
+    oks.clear_kr_catalog_cache()
+
+    products: list = []
+    _inject_male_kr_products(products)
+    oks.clear_kr_catalog_cache()
+
+    cats = {_item_match_category(p, "male") for p in products}
+    assert cats == {"base", "brow", "concealer", "lipbalm"}
+    # 핵심: 국내몰 goodsNo 직링크여야 한다(글로벌몰이면 한국 사용자가 해외몰로 간다).
+    for p in products:
+        link = (p.platform_links or {})["oliveyoung"]
+        assert "oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=" in link
+        assert "global.oliveyoung.com" not in link
+    assert all(p.source == "oliveyoung_kr" for p in products)
+    assert not any("롬앤" in p.name for p in products)      # 여성 상품
+    assert not any("A0006" in p.id for p in products)       # 품절
+    assert not any("닥터숄" in p.brand for p in products)   # 인솔(잡화)
+
+
 def test_verify_rakuten_adds_direct_link_only_when_found():
     # 라쿠텐 API 검증: 브랜드 일치 리스팅이 있으면 직링크, 없으면 라쿠텐 버튼 안 붙음(오탐 방지).
     from app.api.routes import _verify_rakuten_for_global

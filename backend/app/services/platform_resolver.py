@@ -414,9 +414,17 @@ def resolve_product_platforms(product, region: str, *, hide_oliveyoung: bool = F
         # 조회를 KR 입점 대리 신호로 써서(routes에서 보강 전 영문 정체성으로 판정) 조회되는
         # 상품만 '한글 우선 쿼리' 검색 링크로 노출한다(한국 플랫폼은 한글 검색이 안전).
         if not hide_oliveyoung:
-            oy = _oliveyoung_kr_link(brand, name)
-            if oy:
-                links["oliveyoung"] = oy
+            existing_oy = existing_links.get("oliveyoung", "")
+            if "goodsNo=" in existing_oy:
+                # 이미 붙은 goodsNo 직링크는 국내몰 카탈로그가 확정해 준 것이라 권위있다.
+                # 그대로 두지 않으면 아래 검색 링크로 **격하**된다 — JP 쪽 prdtNo 직링크는
+                # 이미 같은 이유로 보존하고 있었는데 KR 만 빠져 있었다(비대칭).
+                # 실제로 KR 남성 주입 카드(국내몰 goodsNo)가 이 자리에서 검색 링크가 됐다.
+                links["oliveyoung"] = existing_oy
+            else:
+                oy = _oliveyoung_kr_link(brand, name)
+                if oy:
+                    links["oliveyoung"] = oy
 
     _sync_platform_buttons(product, links)
 
