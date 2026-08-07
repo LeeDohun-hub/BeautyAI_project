@@ -1382,8 +1382,11 @@ export default function App() {
     }
     const applied = detail.match(/^1단계에서 고른 (.+?)\s*를 반영한 미리보기입니다\.$/);
     if (applied) {
-      // 목표 이름들은 ' · ' 로 이어져 온다. 각각 옮긴다.
-      const targets = applied[1].split('·').map((part) => t(part.trim())).join(' · ');
+      // 목표 이름들은 ' · '(공백 포함) 로 이어져 온다. 각각 옮긴다.
+      // ⚠ '·' 로 자르면 안 된다 — 목표 이름 **안에도** 가운뎃점이 있다('윤곽·얼굴형',
+      //   '턱끝·하관'). 실측(2026-08-07 일본어 모드 5단계): 이름이 쪼개져 사전에 없는
+      //   조각('윤곽','얼굴형','턱끝','하관')이 되면서 한국어로 그대로 나갔다.
+      const targets = applied[1].split(' · ').map((part) => t(part.trim())).join(' · ');
       return t('1단계에서 고른 {targets} 를 반영한 미리보기입니다.').replace('{targets}', targets);
     }
     return detail;
@@ -5108,7 +5111,11 @@ export default function App() {
                         <Chip label={t('선택하신 부위')} size="small" color="secondary" sx={{ mb: 1, ml: 0.5 }} />
                       )}
                       <Typography variant="h6" fontWeight={900}>{t(card.title)}</Typography>
-                      <Typography color="text.secondary">{t(card.summary)}</Typography>
+                      {/* ⚠ t() 만으로는 부족하다. 점·잡티 카드의 summary 는 서버가 개수를 끼워
+                          조립한다('사진에서 자동 후보 0개를 찾았습니다…') — 완성형이라 사전에
+                          없고, 일본어 결과지에 한국어로 그대로 나갔다(실측 2026-08-07 5단계).
+                          tSurgeryDetail 이 그런 조합형을 자리표시자로 되돌려 옮긴다. */}
+                      <Typography color="text.secondary">{tSurgeryDetail(card.summary)}</Typography>
                     </Paper>
                   </Grid>
                 ))}
