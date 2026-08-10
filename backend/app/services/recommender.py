@@ -1486,22 +1486,22 @@ def recommend_products(
         if analysis_mode == "body"
         else build_explanation_ja(scores, survey, ingredient_names, product_names)
     )
+    # 성분 근거는 요약 뒤에 이어 붙이지 않고 별도 필드로 내린다 — 붙여 놓으면 요약이
+    # 400자 넘는 한 덩어리가 되어 웹에서도 폰에서도 안 읽힌다(제보 2026-08-10).
+    evidence: str | None = None
+    evidence_ja: str | None = None
     if analysis_mode != "body":
         context = {
             "survey": survey.model_dump(),
             "scores": scores.model_dump(),
         }
-        hint = build_skincare_recommendation_hint(" ".join(ingredient_targets), context)
-        if hint:
-            explanation = f"{explanation} {hint}"
-        # 일본어판에는 일본어 근거만 붙인다. 번역이 없으면 문단 자체가 빠진다
+        evidence = build_skincare_recommendation_hint(" ".join(ingredient_targets), context) or None
+        # 일본어판에는 일본어 근거만 넣는다. 번역이 없으면 문단 자체가 빠진다
         # (한국어를 섞지 않는다 — 이번 제보의 핵심이 그것이었다).
         if explanation_ja:
-            hint_ja = build_skincare_recommendation_hint(
+            evidence_ja = build_skincare_recommendation_hint(
                 " ".join(ingredient_targets), context, lang="ja"
-            )
-            if hint_ja:
-                explanation_ja = f"{explanation_ja} {hint_ja}"
+            ) or None
 
     return RecommendationResponse(
         history_id=history.id,
@@ -1515,6 +1515,8 @@ def recommend_products(
         ],
         explanation=explanation,
         explanation_ja=explanation_ja,
+        evidence=evidence,
+        evidence_ja=evidence_ja,
         product_columns=product_columns,
     )
 
@@ -1747,25 +1749,27 @@ def recommend_derma_care(
     # 1순위가 제품 불가라 하위 병으로 넘어갔으면 그 사실을 먼저 알린다.
     lead = ""
     lead_ja = ""
+    # ⚠ 이 경로의 요약문도 줄바꿈으로 나눈다(제보 2026-08-10) — 안내 + 성분 + 상품 + OTC 가
+    #   한 줄로 이어지면 폰에서 열 줄 넘는 벽이 된다. 프론트는 white-space: pre-line 으로 그린다.
     if target_condition != top_condition:
-        lead = f"{top_care['label']}은(는) 제품으로 해결하기 어렵습니다. 함께 감지된 {target_care['label']} 기준으로 제품을 추천합니다. "
+        lead = f"{top_care['label']}은(는) 제품으로 해결하기 어렵습니다. 함께 감지된 {target_care['label']} 기준으로 제품을 추천합니다.\n"
         lead_ja = (
             f"{top_care_ja['label']}は製品では対応が難しいため、"
-            f"併せて検出された{target_care_ja['label']}を基準に製品をおすすめします。"
+            f"併せて検出された{target_care_ja['label']}を基準に製品をおすすめします。\n"
         )
 
     if target_care["kind"] == PRODUCTS:
         ing_text = ", ".join(ing.name for ing in ingredients[:3])
-        prod_text = ", ".join(product.name for _s, product, _r in top[:3])
-        body = f"{target_care['label']}에 적합한 {ing_text} 성분 중심으로 골랐습니다. {target_care['guide']}"
+        prod_text = _short_product_names([product.name for _s, product, _r in top])
+        body = f"{target_care['label']}에 적합한 {ing_text} 성분 중심으로 골랐습니다.\n{target_care['guide']}"
         # 성분명·상품명은 고유명사라 원문 그대로 둔다(옮기면 상품에서 못 찾는다).
         body_ja = (
             f"{target_care_ja['label']}に適した {'、'.join(ing.name for ing in ingredients[:3])} "
-            f"の成分を中心に選びました。{target_care_ja['guide']}"
+            f"の成分を中心に選びました。\n{target_care_ja['guide']}"
         )
         if prod_text:
-            body += f" 추천 제품: {prod_text}."
-            body_ja += f" おすすめ商品: {'、'.join(product.name for _s, product, _r in top[:3])}。"
+            body += f"\n추천 제품: {prod_text}."
+            body_ja += f"\nおすすめ商品: {prod_text}。"
     else:
         body = target_care["guide"]
         body_ja = target_care_ja["guide"]
@@ -1779,10 +1783,10 @@ def recommend_derma_care(
         for item in otc_examples if item.get("brand")
     )
     if shown:
-        explanation += f" 약국 OTC 예시(미국 FDA 기준): {shown}. 사용 전 약사와 상담하세요."
+        explanation += f"\n약국 OTC 예시(미국 FDA 기준): {shown}. 사용 전 약사와 상담하세요."
         # 브랜드·성분명(제네릭명)은 원문 그대로 — 약국에서 그 이름으로 찾아야 한다.
         explanation_ja += (
-            f" 薬局のOTC例（米国FDA基準）: {shown}。ご使用前に薬剤師にご相談ください。"
+            f"\n薬局のOTC例（米国FDA基準）: {shown}。ご使用前に薬剤師にご相談ください。"
         )
 
     history = RecommendationHistory(
@@ -1842,9 +1846,9 @@ def build_body_explanation(
         result = "몸 피부 설문 정보"
     return (
         f"{result}를 기준으로 피부 장벽과 보습 중심의 성분 "
-        f"{', '.join(ingredients[:3])}을 우선했습니다. "
-        "자극 가능성이 있는 레티놀과 AHA/BHA 성분 제품은 제외했습니다. "
-        f"추천 제품은 {', '.join(products[:3])}입니다."
+        f"{', '.join(ingredients[:3])}을 우선했습니다.\n"
+        "자극 가능성이 있는 레티놀과 AHA/BHA 성분 제품은 제외했습니다.\n"
+        f"추천 제품은 {_short_product_names(products)}입니다."
     )
 
 
@@ -1867,9 +1871,9 @@ def build_body_explanation_ja(
         result = "からだの肌アンケート情報"
     return (
         f"{result}を基準に、肌バリアと保湿を中心とした成分 "
-        f"{'、'.join(ingredients[:3])} を優先しました。"
-        "刺激の可能性があるレチノールとAHA/BHA配合の製品は除外しています。"
-        f"おすすめ商品は {'、'.join(products[:3])} です。"
+        f"{'、'.join(ingredients[:3])} を優先しました。\n"
+        "刺激の可能性があるレチノールとAHA/BHA配合の製品は除外しています。\n"
+        f"おすすめ商品は {_short_product_names(products)} です。"
     )
 
 
@@ -1895,7 +1899,46 @@ AGE_LABELS = {"10s": "10대", "20s": "20대", "30s": "30대", "40s": "40대", "5
 AGE_LABELS_JA = {"10s": "10代", "20s": "20代", "30s": "30代", "40s": "40代", "50s": "50代以上"}
 
 
+#: 요약문에 실을 상품명 한 개의 최대 길이.
+#: 카탈로그 원제목은 100자를 넘고 그 안에 쉼표까지 들어 있어("… Alpha Arbutin, Niacinamide,
+#: Collagen, Vitamin E …"), 쉼표로 이어 붙이면 몇 개가 나열된 건지조차 안 보인다.
+_EXPLANATION_PRODUCT_NAME_MAX = 34
+
+
+def _short_product_names(products: list[str], limit: int = 3) -> str:
+    """상품명을 짧게 잘라 가운뎃점으로 잇는다.
+
+    구분자가 쉼표가 아니라 ' · ' 인 이유: 상품명 자체에 쉼표가 흔해서 쉼표로 이으면
+    항목 경계가 사라진다. 자를 때는 낱말 경계를 우선한다.
+
+    ⚠ 자른 뒤에 중복을 지운다. 같은 라인의 용량·세트 변형은 앞부분이 똑같아서
+      (실측: 'Anua Heartleaf 77 B3Zinc Soothing…' 이 세 번) 자르고 나면 한 이름이
+      세 번 반복된 것처럼 보인다. 중복을 지우고 그만큼 뒤 후보로 채운다.
+    """
+    parts: list[str] = []
+    for raw in products:
+        if len(parts) >= limit:
+            break
+        name = raw.strip()
+        if len(name) > _EXPLANATION_PRODUCT_NAME_MAX:
+            cut = name[:_EXPLANATION_PRODUCT_NAME_MAX]
+            space = cut.rfind(" ")
+            # 낱말 중간에서 끊기면 읽기 어렵다. 단, 너무 앞에서 끊기면 그냥 글자 수로 자른다.
+            if space > _EXPLANATION_PRODUCT_NAME_MAX // 2:
+                cut = cut[:space]
+            name = cut.rstrip(" ,·-") + "…"
+        if name and name not in parts:
+            parts.append(name)
+    return " · ".join(parts)
+
+
 def build_explanation(scores: SkinScores, survey: SurveyInput, ingredients: list[str], products: list[str]) -> str:
+    """추천 요약문.
+
+    줄바꿈이 들어 있다(프론트는 white-space: pre-line 으로 그린다). 예전엔 세 문장을 한 줄로
+    이어 붙였는데, 상품명이 길어 폰에서 열 줄 넘는 벽이 됐다(제보 2026-08-10).
+    '신호 / 기준·성분 / 제품' 은 읽는 목적이 서로 달라 줄을 나누는 편이 훨씬 빨리 읽힌다.
+    """
     score_map = scores.model_dump()
     top_scores = sorted(score_map.items(), key=lambda item: item[1], reverse=True)[:3]
     priorities = ", ".join(f"{TARGET_LABELS[name]} {value:.0f}" for name, value in top_scores)
@@ -1904,8 +1947,9 @@ def build_explanation(scores: SkinScores, survey: SurveyInput, ingredients: list
     gender_label = "여성" if survey.gender == "female" else "남성"
     context = f"{age_label} {gender_label}, {skin_type} 피부" if age_label else f"{gender_label}, {skin_type} 피부"
     return (
-        f"가장 두드러진 피부 신호는 {priorities}입니다. {context}와 선택한 고민을 기준으로 "
-        f"{', '.join(ingredients[:3])} 성분을 우선 추천했습니다. 추천 제품은 {', '.join(products[:3])} 등입니다."
+        f"가장 두드러진 피부 신호는 {priorities}입니다.\n"
+        f"{context}와 선택한 고민을 기준으로 {', '.join(ingredients[:3])} 성분을 우선 추천했습니다.\n"
+        f"추천 제품은 {_short_product_names(products)} 등입니다."
     )
 
 
@@ -1924,9 +1968,9 @@ def build_explanation_ja(scores: SkinScores, survey: SurveyInput, ingredients: l
     gender_label = "女性" if survey.gender == "female" else "男性"
     context = f"{age_label}{gender_label}・{skin_type}" if age_label else f"{gender_label}・{skin_type}"
     return (
-        f"最も目立つ肌のサインは {priorities} です。{context}と選択されたお悩みを基準に、"
-        f"{'、'.join(ingredients[:3])} の成分を優先しました。"
-        f"おすすめ商品は {'、'.join(products[:3])} などです。"
+        f"最も目立つ肌のサインは {priorities} です。\n"
+        f"{context}と選択されたお悩みを基準に、{'、'.join(ingredients[:3])} の成分を優先しました。\n"
+        f"おすすめ商品は {_short_product_names(products)} などです。"
     )
 
 

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.models import ChatHistory
 from app.schemas.api import ChatResponse
 from app.services import llm_consult
+from app.services.chat_catalog_answers import answer_catalog_question
 from app.services.problem_skin_knowledge import build_knowledge_answer, get_problem_skin_knowledge
 from app.services.skincare_ingredient_knowledge import (
     build_skincare_answer,
@@ -120,6 +121,15 @@ def answer_skin_question(
       실측 2026-08-07 — 일본어로 물어도 한국어 답이 돌아왔다.
     """
     ja = _is_ja(lang)
+
+    # ⚠ 카탈로그 질문은 **LLM 보다 먼저** 가로챈다. '이 상품 있나요' / '매장에 없대요, 다른 거'
+    #   두 부류는 우리 DB 를 조회해야 답할 수 있는 사실 질문이라, 모델에 맡기면 없는 상품을
+    #   있다고 지어낸다. 상담 오답은 다시 물으면 되지만 재고 오답은 헛걸음을 만든다.
+    catalog = answer_catalog_question(db, message, context, lang)
+    if catalog is not None:
+        db.add(ChatHistory(user_id=user_id, message=message, answer=catalog.answer))
+        db.commit()
+        return catalog
 
     # LLM 이 켜져 있으면 RAG 로 답한다 — 검색한 근거를 재료로 주고 문장은 LLM 이 쓴다.
     # 이렇게 해야 (1) 퍼스널컬러·메이크업처럼 지식베이스에 없는 주제도 답할 수 있고

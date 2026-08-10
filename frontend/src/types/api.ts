@@ -290,6 +290,9 @@ export type RecommendationResponse = {
   products: Product[];
   explanation: string;
   explanation_ja?: string | null;
+  // 성분 근거 문단. 예전엔 explanation 뒤에 붙어 왔는데 요약이 안 읽혀서 필드를 나눴다.
+  evidence?: string | null;
+  evidence_ja?: string | null;
   product_columns?: ProductColumn[];
 };
 

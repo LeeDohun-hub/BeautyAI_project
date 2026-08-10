@@ -6,6 +6,7 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Collapse,
   Container,
   Dialog,
   DialogActions,
@@ -37,6 +38,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Camera,
+  ChevronDown,
+  ChevronRight,
   History,
   ImagePlus,
   MessageSquare,
@@ -953,6 +956,99 @@ function RakutenProductCard({
         ))}
       </Stack>
     </Box>
+  );
+}
+
+/** 긴 안내문을 문장 단위로 끊는다.
+ *
+ * 성분 근거는 한 문단이 350자를 넘는데, 통으로 그리면 폰에서 열 줄 넘는 회색 벽이 된다.
+ * 한국어는 '…다.', 일본어는 '。' 로 문장이 끝나므로 그 뒤에서 자른다(숫자 소수점 '3.5' 같은
+ * 마침표는 앞이 '다'가 아니라 걸리지 않는다).
+ */
+function splitIntoSentences(text: string): string[] {
+  return text
+    .split(/(?<=다\.)\s+|(?<=。)\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/** 성분 근거 문단. 기본은 접혀 있고 눌러야 펼쳐진다.
+ *
+ * 예전엔 이 350자짜리 설명이 요약문 뒤에 그대로 이어 붙어 있었다. 요약(=뭘 사면 되나)과
+ * 근거(=왜 그런가)는 읽는 목적이 달라서, 한 덩어리로 두면 둘 다 안 읽힌다(제보 2026-08-10).
+ */
+function RecommendationEvidence({ text }: { text?: string | null }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const body = (text ?? '').trim();
+  if (!body) return null;
+  // '성분 근거 참고: 모공에는 …' / '成分の根拠: 毛穴には…' → 콜론 앞 라벨을 떼고 본문만 남긴다.
+  // 라벨은 서버 문구를 그대로 쓰지 않는다 — '성분 근거 참고 · 자세히 보기'처럼 겹쳐 읽힌다.
+  const separator = body.indexOf(':');
+  const heading = t('성분 근거');
+  const detail = separator > 0 ? body.slice(separator + 1).trim() : body;
+  return (
+    <Box className="evidence-panel">
+      <Button
+        className="evidence-toggle"
+        onClick={() => setOpen((prev) => !prev)}
+        size="small"
+        endIcon={open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+      >
+        {heading}{open ? '' : ` · ${t('자세히 보기')}`}
+      </Button>
+      <Collapse in={open} unmountOnExit>
+        <Box className="evidence-body">
+          {splitIntoSentences(detail).map((sentence, index) => (
+            <Typography key={index} variant="body2" color="text.secondary">
+              {sentence}
+            </Typography>
+          ))}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+
+/** 상담 답변 영역(로딩 안내 + 답변 + 참고 근거).
+ *
+ * 퍼스널컬러 상담과 피부 상담 두 곳에서 같이 쓴다. 예전에는 두 화면이 따로 그렸는데,
+ * 피부 상담 쪽에는 로딩 표시가 아예 없어서 질문을 눌러도 아무 반응이 없는 것처럼 보였다
+ * (LLM 응답은 몇 초 걸린다). 진행 중이라는 말을 글자로 준다 — 막대만으로는 '무엇이'
+ * 진행 중인지 알 수 없다.
+ */
+function ConsultAnswer({ loading, answer, sources }: { loading: boolean; answer: string; sources: string[] }) {
+  const t = useT();
+  if (loading) {
+    return (
+      <Stack direction="row" spacing={1.2} alignItems="center" className="consult-pending" sx={{ mt: 2 }}>
+        <CircularProgress size={16} thickness={5} />
+        <Typography variant="body2" color="text.secondary">{t('답변을 작성하는 중이에요…')}</Typography>
+      </Stack>
+    );
+  }
+  if (!answer) return null;
+  return (
+    <Stack spacing={1} sx={{ mt: 2 }}>
+      {/* 카탈로그 조회 답변은 상품 목록이라 줄바꿈이 들어 있다 — pre-line 이어야 줄이 산다. */}
+      <Alert
+        icon={<MessageSquare size={18} />}
+        severity="success"
+        sx={{ '& .MuiAlert-message': { whiteSpace: 'pre-line' } }}
+      >
+        {answer}
+      </Alert>
+      {!!sources.length && (
+        <Box>
+          <Typography variant="caption" color="text.secondary">{t('참고 근거')}</Typography>
+          <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.5 }}>
+            {sources.map((source) => (
+              <Chip key={source} label={source} size="small" variant="outlined" />
+            ))}
+          </Stack>
+        </Box>
+      )}
+    </Stack>
   );
 }
 
@@ -2581,6 +2677,9 @@ export default function App() {
   async function handlePersonalColorChat() {
     setLoading('chat');
     setError('');
+    // 이전 답변을 지우고 시작한다 — 남겨 두면 로딩 중에 옛 답이 새 질문의 답처럼 보인다.
+    setAnswer('');
+    setAnswerSources([]);
     try {
       const context = {
         ...survey,
@@ -2601,6 +2700,8 @@ export default function App() {
   async function handleChat() {
     setLoading('chat');
     setError('');
+    setAnswer('');
+    setAnswerSources([]);
     try {
       const result = await chat(message, analysis?.scores ?? undefined, survey, appLang);
       setAnswer(result.answer);
@@ -3605,15 +3706,18 @@ export default function App() {
               {t('현재')} {reportPicks.length}{t('개 선택됨.')}
             </Alert>
 
+            {/* xs=6: 모바일에서도 PC처럼 컬럼을 나란히 둔다. xs=12 였을 때는 컬럼이 한 개씩
+                세로로 쌓여 카드가 화면 폭을 다 먹었고, 컬럼 헤더가 스크롤 밖으로 사라져
+                지금 보는 상품이 어느 컬럼인지 알 수 없었다(사용자 지적). */}
             <Grid container spacing={1.5} className="item-match-columns" sx={{ mt: 2 }}>
               {itemMatchGroups.map((group) => (
-                <Grid item xs={12} sm={6} md={12 / itemMatchGroups.length} key={group.key}>
+                <Grid item xs={6} sm={6} md={12 / itemMatchGroups.length} key={group.key}>
                   <Box className="item-match-column">
                     <Box className="kiosk-match-card compact">
                       <Typography fontWeight={900}>{t(group.label)}{group.showColor ? ' color' : ''}</Typography>
                       <Typography color="text.secondary" sx={{ mt: 1 }}>{group.values.map(tPhrase).join(', ')}</Typography>
                     </Box>
-                    <Stack spacing={2} className="item-match-product-stack">
+                    <Stack spacing={{ xs: 1.25, sm: 2 }} className="item-match-product-stack">
                       {groupedProducts[group.key].map((product) => (
                         <RakutenProductCard
                           key={`${product.id}-${product.keyword}`}
@@ -3871,22 +3975,7 @@ export default function App() {
                   {t('질문')}
                 </Button>
               </Stack>
-              {loading === 'chat' && <LinearProgress sx={{ mt: 1.5 }} />}
-              {answer && (
-                <Stack spacing={1} sx={{ mt: 2 }}>
-                  <Alert icon={<MessageSquare size={18} />} severity="success">{answer}</Alert>
-                  {!!answerSources.length && (
-                    <Box>
-                      <Typography variant="caption" color="text.secondary">{t('참고 근거')}</Typography>
-                      <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.5 }}>
-                        {answerSources.map((source) => (
-                          <Chip key={source} label={source} size="small" variant="outlined" />
-                        ))}
-                      </Stack>
-                    </Box>
-                  )}
-                </Stack>
-              )}
+              <ConsultAnswer loading={loading === 'chat'} answer={answer} sources={answerSources} />
             </Paper>
           )}
         </Box>
@@ -4238,9 +4327,23 @@ export default function App() {
             {loading === 'recommend' && <LinearProgress sx={{ mt: 2 }} />}
             {recommendation ? (
               <Stack spacing={2} sx={{ mt: 2 }}>
-                <Alert severity={analysis?.urgent ? 'error' : analysis?.analysis_mode === 'body' && !recommendation.products.length ? 'warning' : 'success'}>{recommendation.explanation_ja
-                        ? localizedSentence(recommendation.explanation, recommendation.explanation_ja)
-                        : tScreeningSummary(recommendation.explanation)}</Alert>
+                {/* 요약문은 서버가 줄바꿈까지 넣어 보낸다 — pre-line 으로 그려야 문단이 산다.
+                    한 덩어리로 뭉쳐 보이던 것이 이번 제보('가시성 없음')의 절반이었다. */}
+                <Alert
+                  severity={analysis?.urgent ? 'error' : analysis?.analysis_mode === 'body' && !recommendation.products.length ? 'warning' : 'success'}
+                  sx={{ '& .MuiAlert-message': { whiteSpace: 'pre-line' } }}
+                >
+                  {recommendation.explanation_ja
+                    ? localizedSentence(recommendation.explanation, recommendation.explanation_ja)
+                    : tScreeningSummary(recommendation.explanation)}
+                </Alert>
+                {/* 성분 근거는 400자 가까운 설명이라 기본은 접어 둔다 — 요약을 밀어내지 않으면서
+                    '왜 이 성분인가'가 궁금한 사람만 펼쳐 보게 한다. */}
+                <RecommendationEvidence
+                  text={recommendation.evidence_ja
+                    ? localizedSentence(recommendation.evidence ?? '', recommendation.evidence_ja)
+                    : recommendation.evidence}
+                />
                 {recommendation.ingredients.length > 0 && (
                   <Box>
                     <Typography variant="subtitle2" gutterBottom>{t('추천 성분')}</Typography>
@@ -4260,9 +4363,10 @@ export default function App() {
                       {t('결과지에 담을 상품을 최대 5개까지 체크할 수 있어요.')}{' '}
                       {t('현재')} {skinReportIds.length}{t('개 선택됨.')}
                     </Alert>
+                    {/* xs=6 — 아이템매칭 컬럼과 같은 이유(모바일에서도 컬럼 병렬 유지). */}
                     <Grid container spacing={1.5} className="item-match-columns">
                       {recommendation.product_columns!.map((col) => (
-                        <Grid item xs={12} sm={6} md={12 / recommendation.product_columns!.length} key={col.key}>
+                        <Grid item xs={6} sm={6} md={12 / recommendation.product_columns!.length} key={col.key}>
                           <Box className="item-match-column">
                             <Box className="kiosk-match-card compact" sx={{ minHeight: 66 }}>
                               <Typography fontWeight={900}>{tColumnLabel(col.label)}</Typography>
@@ -4270,7 +4374,7 @@ export default function App() {
                                 {tColumnReason(col.reason) || t(SKIN_COLUMN_HINT[col.key] ?? '')}
                               </Typography>
                             </Box>
-                            <Stack spacing={2} className="item-match-product-stack">
+                            <Stack spacing={{ xs: 1.25, sm: 2 }} className="item-match-product-stack">
                               {col.products.length ? col.products.map((rp) => {
                                 const rlinks = rp.platform_links ?? {};
                                 const rplatforms = (rp.matched_platforms?.length ? rp.matched_platforms : Object.keys(rlinks))
@@ -4365,7 +4469,7 @@ export default function App() {
                       .filter((key) => selectedPlatform === 'all' || key === selectedPlatform)
                       .map((key) => ITEM_PLATFORM_META[key]);
                     return (
-                      <Grid item xs={12} sm={6} key={product.id}>
+                      <Grid item xs={6} sm={6} key={product.id}>
                         <Box className="rakuten-product-card">
                           <Box className="rakuten-product-image">
                             <ProductImage src={product.image_url} alt={product.name} fallback={<Sparkles size={26} />} />
@@ -4472,26 +4576,19 @@ export default function App() {
           {t('분석 점수를 바탕으로 루틴, 성분 사용 순서, 주의점을 질문할 수 있습니다.')}
         </Typography>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 3 }}>
-          <TextField fullWidth size="small" value={message} onChange={(event) => setMessage(event.target.value)} />
+          {/* 예시 질문을 놓아 둔다 — 빈 칸만 있으면 무엇을 물을 수 있는지 알 수 없다. */}
+          <TextField
+            fullWidth
+            size="small"
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            placeholder={t('예: ‘라운드랩 독도토너’ 라는 상품 조회가 되나요?')}
+          />
           <Button variant="contained" startIcon={<Send size={16} />} onClick={handleChat} disabled={loading === 'chat'}>
             {t('질문')}
           </Button>
         </Stack>
-        {answer && (
-          <Stack spacing={1} sx={{ mt: 2 }}>
-            <Alert icon={<MessageSquare size={18} />} severity="success">{answer}</Alert>
-            {!!answerSources.length && (
-              <Box>
-                <Typography variant="caption" color="text.secondary">{t('참고 근거')}</Typography>
-                <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.5 }}>
-                  {answerSources.map((source) => (
-                    <Chip key={source} label={source} size="small" variant="outlined" />
-                  ))}
-                </Stack>
-              </Box>
-            )}
-          </Stack>
-        )}
+        <ConsultAnswer loading={loading === 'chat'} answer={answer} sources={answerSources} />
       </Paper>
     );
   }
@@ -5569,7 +5666,7 @@ export default function App() {
                       {nailProductsLoading && <LinearProgress />}
                       <Grid container spacing={1.5}>
                         {nailProducts.map((product) => (
-                          <Grid item xs={12} sm={6} md={4} key={product.id}>
+                          <Grid item xs={6} sm={6} md={4} key={product.id}>
                             <RakutenProductCard product={product} selectedPlatform={itemPlatform} />
                           </Grid>
                         ))}

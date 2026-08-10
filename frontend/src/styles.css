@@ -1344,6 +1344,150 @@ body {
   line-height: 1.55;
 }
 
+/* ── 모바일 상품추천(갤럭시 등 ≤600px) ──────────────────────────────────
+   지적: 한 화면에 상품 하나가 겨우 들어가고, 스크롤을 내리면 지금 보는 상품이
+   어느 컬럼(립/블러셔/아이…)인지 알 수 없었다.
+   원인은 두 가지였다.
+     1. 컬럼 Grid 가 xs=12 라 **컬럼이 한 개씩 세로로 쌓였다** → App.tsx 에서 xs=6 으로
+        바꿔 PC 화면처럼 컬럼을 나란히 둔다.
+     2. 카드가 전체 폭 + 정사각 이미지라 높이가 380px 을 넘었다 → 아래에서 여백·글자·
+        버튼을 줄여 300px 아래로 낮춘다(한 화면에 1개 → 4개).
+   컬럼 헤더는 sticky 로 붙여, 컬럼 안을 아무리 내려도 카테고리가 계속 보이게 한다. */
+@media (max-width: 600px) {
+  /* 아이템매칭(Step 4)은 .kiosk-flow-panel 안에서 그려지는데, 이 패널의 overflow:hidden 이
+     아래 sticky 헤더를 죽인다 — clip 이 걸리면 가장 가까운 스크롤포트가 이 패널이 되고,
+     패널 자신은 스크롤하지 않으므로 sticky 가 영영 발동하지 않는다.
+     패널의 ::before 장식 테두리는 inset 절대배치라 넘칠 것이 없어 clip 만 풀면 된다. */
+  .kiosk-flow-panel {
+    overflow: visible;
+  }
+
+  .item-match-column {
+    gap: 10px;
+  }
+
+  /* 컬럼 헤더 고정. 원래 배경이 반투명(rgba .78)이라 그대로 띄우면 뒤 카드가 비쳐
+     글자가 안 읽힌다 — 불투명으로 덮고 아래에 경계 그림자를 준다.
+     min-height 는 기본 118px + 피부분석 쪽 인라인 sx(66px)를 함께 눌러야 해서 !important. */
+  /* top 이 0 이면 안 된다 — 폰에서는 .lang-toggle 이 화면 상단을 가로지르는 **불투명 바**로
+     바뀌고(z-index 1200), 고정된 헤더가 그 뒤에 깔려 아예 안 보인다(실측 2026-08-10:
+     elementFromPoint 가 헤더 자리에서 lang-toggle 을 반환).
+     아래 .app-shell 의 padding-top 과 같은 58px 상수를 쓴다 — 둘이 어긋나면 헤더가
+     바에 물리거나 붕 뜬다. */
+  .item-match-columns .kiosk-match-card.compact {
+    position: sticky;
+    top: calc(58px + env(safe-area-inset-top, 0px));
+    z-index: 3;
+    min-height: 0 !important;
+    padding: 8px 10px;
+    background: #ffffff;
+    box-shadow: 0 8px 12px -9px rgba(9, 20, 32, 0.55);
+  }
+
+  .item-match-columns .kiosk-match-card.compact .MuiTypography-root {
+    font-size: 0.84rem;
+    line-height: 1.35;
+  }
+
+  /* 색상 나열은 2줄까지만 — 고정 헤더가 세 줄이 되면 화면 위쪽을 계속 차지한다. */
+  .item-match-columns .kiosk-match-card.compact .MuiTypography-root + .MuiTypography-root {
+    margin-top: 3px !important;
+    font-size: 0.72rem;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .rakuten-product-card {
+    gap: 5px;
+    padding: 10px;
+    border-radius: 10px;
+    box-shadow: 0 8px 18px rgba(9, 20, 32, 0.07);
+  }
+
+  /* 카드 클래스를 함께 걸어 특이도를 올린다 — 단일 클래스로는 MUI Typography 의
+     emotion 규칙(나중에 <head> 에 주입되어 동점이면 이긴다)에 밀려 16px 그대로였다. */
+  .rakuten-product-card .rakuten-product-title {
+    font-size: 0.8rem;
+    line-height: 1.35;
+    min-height: 2.7em;
+  }
+
+  .rakuten-product-card .MuiTypography-body2 {
+    font-size: 0.72rem;
+  }
+
+  .rakuten-product-card .MuiTypography-caption {
+    font-size: 0.68rem;
+  }
+
+  /* 키워드 배지는 **누르는 요소가 아니다**(label 전용 Chip). 이 파일 아래쪽
+     `@media (pointer: coarse)` 의 min-height:44px 는 탭 타깃용 하한이라, 칩까지 걸리면
+     카드마다 24px 를 헛되이 먹는다. 누를 수 없는 칩만 하한에서 뺀다 —
+     버튼·체크박스의 44px 는 손대지 않는다. */
+  .rakuten-product-card .MuiChip-root {
+    min-height: 0;
+    height: 20px;
+    font-size: 0.66rem;
+  }
+
+  .rakuten-product-card .MuiChip-root .MuiChip-label {
+    padding: 0 7px;
+  }
+
+  /* 구매 버튼은 높이를 건드리지 않는다(터치 하한 44px 유지). 대신 카드 안쪽 폭이 120px 뿐이라
+     판매처 두 곳이 두 줄로 쌓이던 것을, 파비콘 아이콘을 빼서 한 줄에 넣는다. 아이콘이 빠져도
+     버튼 글자가 '올리브영'·'아마존'이라 어디로 가는지는 그대로 읽힌다. */
+  .rakuten-product-card .MuiButton-sizeSmall {
+    padding: 1px 7px;
+    font-size: 0.68rem;
+    /* 같은 줄에 놓인 버튼들이 남는 폭을 나눠 갖게 한다 — 글자 수대로 폭이 제각각이면
+       카드마다 버튼 끝이 어긋나 지저분하다. 줄 수(=판매처 수)는 그대로다. */
+    flex: 1 1 auto;
+  }
+
+  .rakuten-product-card .MuiButton-sizeSmall .MuiButton-startIcon {
+    display: none;
+  }
+
+  /* '결과지에 담기'는 라벨 글자만 줄인다 — 체크박스 자체는 탭 타깃이라 크기를 안 건드린다. */
+  .report-pick-control {
+    margin: -6px 0 -6px -6px !important;
+  }
+
+  .report-pick-control .MuiFormControlLabel-label {
+    font-size: 0.68rem;
+    line-height: 1.25;
+  }
+}
+
+/* ── 성분 근거 패널 ────────────────────────────────────────────────────────
+   요약 Alert 바로 아래에 접힌 채로 놓인다. 펼쳤을 때 문장마다 줄이 나뉘도록
+   문단 간격을 준다(한 덩어리 회색 벽이 이번 제보의 원인이었다). */
+.evidence-panel {
+  border: 1px solid var(--yp-line);
+  border-radius: 10px;
+  background: var(--yp-accent-soft);
+}
+
+.evidence-toggle.MuiButton-root {
+  width: 100%;
+  justify-content: space-between;
+  padding: 8px 12px;
+  color: var(--yp-accent-deep);
+  font-weight: 800;
+  text-align: left;
+  line-height: 1.35;
+}
+
+.evidence-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
 .style-consult-screen {
   color: #1a2433;
 }

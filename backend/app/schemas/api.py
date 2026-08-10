@@ -349,6 +349,11 @@ class RecommendationResponse(BaseModel):
     # 얼굴·바디·소아·더모 네 경로 모두 채운다(2026-08-07). None 이면 프론트가 한국어
     # 원문으로 폴백하는데, 그건 새 경로가 추가됐을 때의 안전망이지 정상 상태가 아니다.
     explanation_ja: str | None = None
+    # 성분 근거 문단. 예전엔 explanation 뒤에 그대로 이어 붙여서 요약이 400자 넘는 한 덩어리가
+    # 됐고, 웹·모바일 모두 읽히지 않았다(제보 2026-08-10). 요약과 근거는 읽는 목적이 다르므로
+    # (요약=지금 뭘 사면 되나 / 근거=왜 그런가) 필드를 나눠 프론트가 접어둘 수 있게 한다.
+    evidence: str | None = None
+    evidence_ja: str | None = None
     # 카테고리별 추천 상품 컬럼(클렌저/토너/세럼/보습/선크림). face 모드에서만 채워진다.
     product_columns: list[ProductColumn] = Field(default_factory=list)
 
