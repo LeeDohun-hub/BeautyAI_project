@@ -62,6 +62,55 @@ def query_terms(value: str) -> set[str]:
     return terms
 
 
+# 코퍼스 레코드의 인구통계 표기 ↔ 설문 값. 코퍼스 답변은 사례 원문이라 **첫 문장이
+# 그 사례 본인의 나이·성별·피부타입으로 시작한다**("52세 복합성 피부의…").
+# 그래서 검색이 인구통계에 눈감으면 34세 남성에게 "28세 여성분의…"로 시작하는 근거가 붙는다
+# (실측 2026-08-10). 아래 표로 '이 사람과 같은 사례'를 우선한다.
+_RECORD_GENDER = {"male": "남성", "female": "여성"}
+_RECORD_SKIN_TYPE = {
+    "dry": "건성",
+    "oily": "지성",
+    "combination": "복합성",
+    "normal": "중성",
+    # 민감성은 코퍼스에 별도 타입이 없다 — 맞출 수 없으니 가점도 없다(0점으로 떨어진다).
+}
+
+
+def _age_band(value: object) -> int | None:
+    """'30s' / '34' / 34 → 30. 50대 이상은 한 묶음(코퍼스에 60대까지 있다)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    digits = "".join(char for char in text if char.isdigit())
+    if not digits:
+        return None
+    band = int(digits) // 10 * 10
+    return 50 if band >= 50 else band
+
+
+def demographic_fit(record: dict[str, Any], context: dict | None) -> float:
+    """이 사례가 '지금 이 사람'과 얼마나 같은가(0~3).
+
+    ⚠ 이 값은 score 에 더하지 않는다. 더하면 주제가 다른 사례도 인구통계만으로 임계값
+      (KNOWLEDGE_MIN_SCORE)을 넘어 '확신에 찬 오답'이 나간다 — 임계값을 2.0 에서 6.0 으로
+      올린 이유가 바로 그것이었다. 관련도가 엇비슷한 후보들 사이의 **순서**로만 쓴다.
+    """
+    survey = (context or {}).get("survey")
+    if not isinstance(survey, dict):
+        return 0.0
+    fit = 0.0
+    gender = _RECORD_GENDER.get(str(survey.get("gender") or "").lower())
+    if gender and gender == str(record.get("gender") or "").strip():
+        fit += 1.0
+    band = _age_band(survey.get("age_group") or survey.get("age"))
+    if band is not None and band == _age_band(record.get("age")):
+        fit += 1.0
+    skin = _RECORD_SKIN_TYPE.get(str(survey.get("skin_type") or "").lower())
+    if skin and skin == str(record.get("skin_type") or "").strip():
+        fit += 1.0
+    return fit
+
+
 def context_text(context: dict | None) -> str:
     if not context:
         return ""
@@ -190,7 +239,17 @@ class SkincareIngredientKnowledge:
             score += min(3.0, sum(1 for term in terms if term in question) * 0.25)
             if score > 0:
                 matches.append(SkincareKnowledgeMatch(record=record, score=score))
-        return sorted(matches, key=lambda item: item.score, reverse=True)[:limit]
+        # 1점 버킷으로 묶어 **관련도가 엇비슷한 후보들 안에서만** 인구통계로 순서를 바꾼다.
+        # 주제가 확실히 더 맞는 사례(버킷이 높은 쪽)는 인구통계와 무관하게 그대로 이긴다.
+        return sorted(
+            matches,
+            key=lambda item: (
+                round(item.score),
+                demographic_fit(item.record, context),
+                item.score,
+            ),
+            reverse=True,
+        )[:limit]
 
 
 @lru_cache(maxsize=1)

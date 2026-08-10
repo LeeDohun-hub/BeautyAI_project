@@ -33,6 +33,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Typography,
+  useMediaQuery,
 } from '@mui/material';
 import {
   ArrowLeft,
@@ -73,17 +74,20 @@ const KBEAUTY_BRANDS = [
 
 // 라쿠텐(퍼스널컬러/무드 아이템 추천 전용). 라쿠텐 상품은 실제 상품 URL을 직링크로 제공한다.
 const RAKUTEN_PLATFORM = {
-  key: 'rakuten', label: '라쿠텐', domain: 'rakuten.co.jp', bg: '#BF0000', fg: '#FFFFFF', hover: '#A00000',
+  key: 'rakuten', label: '라쿠텐', short: '라쿠텐', domain: 'rakuten.co.jp', bg: '#BF0000', fg: '#FFFFFF', hover: '#A00000',
 } as const;
 
-const ITEM_PLATFORM_META: Record<ItemPlatform, { key: ItemPlatform; label: string; domain: string; bg: string; fg: string; hover: string }> = {
-  all: { key: 'all', label: 'All', domain: 'google.com', bg: '#111827', fg: '#FFFFFF', hover: '#020617' },
+// short: 폰(2열)에서 쓰는 짧은 이름. 카드 안쪽 폭이 120px 뿐이라 'Olive Young'+'Amazon JP'
+// 조합이 한 줄에 못 들어가 판매처마다 44px 씩 세로로 쌓였다(탭 타깃 하한이라 높이는 못 줄인다).
+// 이름을 줄여 두 개가 한 줄에 들어가게 한다 — 줄 수가 곧 카드 높이다.
+const ITEM_PLATFORM_META: Record<ItemPlatform, { key: ItemPlatform; label: string; short: string; domain: string; bg: string; fg: string; hover: string }> = {
+  all: { key: 'all', label: 'All', short: 'All', domain: 'google.com', bg: '#111827', fg: '#FFFFFF', hover: '#020617' },
   rakuten: RAKUTEN_PLATFORM,
-  amazon_us: { key: 'amazon_us', label: 'Amazon.com', domain: 'amazon.com', bg: '#232F3E', fg: '#FFFFFF', hover: '#111827' },
-  amazon_jp: { key: 'amazon_jp', label: 'Amazon JP', domain: 'amazon.co.jp', bg: '#232F3E', fg: '#FFFFFF', hover: '#111827' },
-  naver: { key: 'naver', label: 'Naver', domain: 'naver.com', bg: '#03C75A', fg: '#FFFFFF', hover: '#029E48' },
-  matsukiyo: { key: 'matsukiyo', label: 'Matsukiyo 검색', domain: 'matsukiyococokara-online.com', bg: '#F4C400', fg: '#111827', hover: '#DEB200' },
-  oliveyoung: { key: 'oliveyoung', label: 'Olive Young', domain: 'global.oliveyoung.com', bg: '#6FBA2C', fg: '#FFFFFF', hover: '#5CA322' },
+  amazon_us: { key: 'amazon_us', label: 'Amazon.com', short: '아마존', domain: 'amazon.com', bg: '#232F3E', fg: '#FFFFFF', hover: '#111827' },
+  amazon_jp: { key: 'amazon_jp', label: 'Amazon JP', short: '아마존 JP', domain: 'amazon.co.jp', bg: '#232F3E', fg: '#FFFFFF', hover: '#111827' },
+  naver: { key: 'naver', label: 'Naver', short: '네이버', domain: 'naver.com', bg: '#03C75A', fg: '#FFFFFF', hover: '#029E48' },
+  matsukiyo: { key: 'matsukiyo', label: 'Matsukiyo 검색', short: '마츠키요', domain: 'matsukiyococokara-online.com', bg: '#F4C400', fg: '#111827', hover: '#DEB200' },
+  oliveyoung: { key: 'oliveyoung', label: 'Olive Young', short: '올리브영', domain: 'global.oliveyoung.com', bg: '#6FBA2C', fg: '#FFFFFF', hover: '#5CA322' },
 };
 
 type ItemRegion = 'jp' | 'kr';
@@ -875,6 +879,7 @@ function RakutenProductCard({
 }) {
   const t = useT();
   const { lang } = useAppLang();
+  const isNarrow = useIsNarrow();
   const links = buildRakutenShopLinks(product);
   const matchedPlatforms = product.matched_platforms?.length
     ? product.matched_platforms
@@ -951,12 +956,18 @@ function RakutenProductCard({
             }
             sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
           >
-            {t(platform.label)}
+            {t(isNarrow ? platform.short : platform.label)}
           </Button>
         ))}
       </Stack>
     </Box>
   );
+}
+
+/** 폰 폭인가. 600px 은 컬럼이 2열로 접히는 지점이자 styles.css 모바일 블록의 경계와 같다 —
+ *  두 값이 어긋나면 '2열인데 버튼 이름은 길게' 같은 어중간한 상태가 생긴다. */
+function useIsNarrow(): boolean {
+  return useMediaQuery('(max-width:600px)');
 }
 
 /** 긴 안내문을 문장 단위로 끊는다.
@@ -1417,6 +1428,8 @@ function localizeColorToEn(koPhrase: string): string {
 export default function App() {
   const { lang: appLang } = useAppLang();
   const t = useT();
+  // 폰에서는 판매처 버튼 이름을 짧게 쓴다(카드 안쪽 폭이 좁아 줄 수가 곧 카드 높이다).
+  const isNarrow = useIsNarrow();
   /** 추천 색상·카테고리 문구 표시용 번역. 사전(t)에 있으면 그걸 쓰고, 없으면 단어 단위로 옮긴다.
    *
    * 이 값들은 분석 결과로 조합돼 나오기 때문에(예: '쿨 아이보리', '잡티·다크서클 커버',
@@ -4435,7 +4448,7 @@ export default function App() {
                                           }
                                           sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
                                         >
-                                          {t(platform.label)}
+                                          {t(isNarrow ? platform.short : platform.label)}
                                         </Button>
                                       ))}
                                     </Stack>
@@ -4529,7 +4542,7 @@ export default function App() {
                                 }
                                 sx={{ bgcolor: platform.bg, color: platform.fg, fontWeight: 700, minWidth: 0, '&:hover': { bgcolor: platform.hover } }}
                               >
-                                {t(platform.label)}
+                                {t(isNarrow ? platform.short : platform.label)}
                               </Button>
                             ))}
                           </Stack>
