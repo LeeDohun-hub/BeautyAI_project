@@ -1,237 +1,158 @@
 # BeautyAI System Design Overview
 
-## 1. 시스템 목적
+## 1. 목적
 
-BeautyAI는 이미지 기반 분석과 설문 기반 추천을 결합해 사용자에게 맞춤형 뷰티 추천과 AI 상담을 제공하는 시스템이다. BeautyWEB 쇼핑몰은 사용자의 유입과 상품 탐색을 담당하고, BeautyAI는 AI 분석과 추천을 담당한다.
+BeautyAI(YoPalette)의 런타임 구성, 요청 경로, 처리 흐름을 한 장으로 본다. 상세는 `AI_기본설계서.md` / `AI_상세설계서.md` / `AI_ERD.md` 를 본다.
 
-## 2. 현재 시스템 아키텍처
+- 작성 기준: 2026-08-10, 실제 구현 코드
 
-```mermaid
-flowchart LR
-  subgraph Commerce["BeautyWEB"]
-    WebShop["Shopping Frontend\n:5174"]
-  end
+## 2. 아키텍처
 
-  subgraph Client["BeautyAI Client"]
-    Front["React + TypeScript + MUI\n:5173"]
-  end
+```
+                         인터넷
+                            │ 443
+                  ┌─────────▼──────────┐
+                  │ Caddy 2            │  ai.yopalette.com
+                  │ 자동 HTTPS          │  ※ 80 은 인증서 갱신에 필요 — 닫지 말 것
+                  └─────────┬──────────┘
+                  ┌─────────▼──────────┐
+                  │ frontend           │  nginx + React 18 + MUI
+                  │ (컨테이너 내부 8080) │  /api, /internal → backend:8000
+                  └─────────┬──────────┘  ※ 호스트 포트를 열지 않는다
+                  ┌─────────▼──────────┐
+                  │ backend :8000      │  FastAPI
+                  │  ├ api/routes      │
+                  │  ├ services (37)   │
+                  │  └ ai (모델 로더)    │
+                  └───┬────────────┬───┘
+          ┌───────────▼──┐    ┌────▼──────────────┐
+          │ PostgreSQL   │    │ /data (볼륨)       │
+          │ 11 테이블      │    │  models/*.pt      │
+          └──────────────┘    │  rag/*.jsonl      │
+                              │  카탈로그           │
+                              └───────────────────┘
 
-  subgraph Server["BeautyAI Backend"]
-    API["FastAPI\n:8000"]
-    Routes["API Routes"]
-    Services["Service Layer"]
-    Schemas["Pydantic Schemas"]
-  end
-
-  subgraph AI["AI Layer"]
-    FaceModel["Face Skin Model\nEfficientNet"]
-    BodyModel["Body Skin Model\nMobileNet"]
-    Fallback["Image Heuristic Fallback"]
-  end
-
-  subgraph Data["Data Layer"]
-    DB[(SQLite / Postgres)]
-    RAG["Problem Skin Knowledge\nJSONL / ChromaDB candidate"]
-  end
-
-  subgraph External["External Services"]
-    OpenAI["OpenAI API"]
-    Shops["External Shop Links"]
-  end
-
-  WebShop -->|"AI Beauty link"| Front
-  Front --> API
-  API --> Routes
-  Routes --> Schemas
-  Routes --> Services
-  Services --> FaceModel
-  Services --> BodyModel
-  Services --> Fallback
-  Services --> DB
-  Services --> RAG
-  Services --> OpenAI
-  Services --> Shops
+  외부 ── BeautyWEB(계정 티켓·장바구니·카탈로그)
+        ── OpenAI(상담 생성)
+        ── 라쿠텐 / 올리브영 / 아마존 / 마츠키요(상품·링크)
 ```
 
-## 3. 주요 런타임 포트
+핵심 성질.
 
-| 시스템 | 포트 | 실행 예 |
-|---|---:|---|
-| BeautyAI Backend | 8000 | `uvicorn app.main:app --reload --port 8000` |
-| BeautyAI Frontend | 5173 | `npm run dev` |
-| BeautyWEB Frontend | 5174 | `npm run dev` |
+1. **외부 접점은 Caddy 하나다.** 프론트는 호스트 포트를 열지 않는다.
+2. **API 라우팅은 프론트 nginx 가 한다.** Caddy 는 호스트만 가른다.
+3. **`/data` 가 없으면 모델이 없다.** 컨테이너 기준 경로는 `/data` 이며 `/app/data` 가 아니다. 마운트가 어긋나면 기능이 조용히 꺼진다.
 
-## 4. 핵심 처리 흐름
+## 3. 포트
 
-### 4.1 얼굴 피부 분석 흐름
+| 서비스 | 로컬 | 운영 |
+|---|---|---|
+| backend | 8000 | 내부 |
+| frontend | 5173(dev) | Caddy 뒤(내부 8080) |
+| PostgreSQL | 5433 → 5432 | 내부 |
+| Redis | 6379 | 구성에만 존재(코드에서 사용하지 않음) |
+| Caddy | — | 80 / 443 |
 
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant F as BeautyAI Frontend
-  participant API as FastAPI
-  participant S as SkinAnalyzer
-  participant M as EfficientNetSkinRegressor
-  participant DB as Database
+## 4. 처리 흐름
 
-  U->>F: 얼굴 이미지 입력
-  F->>API: POST /api/analyze-skin (analysis_mode=face)
-  API->>API: 이미지 타입 검증
-  API->>S: analyze(image_bytes)
-  S->>M: predict(image)
-  alt model prediction available
-    M-->>S: scores
-  else model unavailable
-    S->>S: fallback pixel heuristic
-  end
-  S-->>API: SkinScores
-  API->>DB: skin_analyses 저장
-  API-->>F: AnalyzeSkinResponse
-  F-->>U: 점수 및 요약 표시
+### 4.1 얼굴 피부 분석
+
+```
+사진 업로드
+  → 얼굴 검출(MediaPipe) → 여유 패딩 크롭
+  → 피부 픽셀 마스킹(화이트밸런스 보정을 먼저)
+  → 모델 추론 6항목 + 홍조는 LAB a* 측정값으로 대체
+  → 촬영 품질 신뢰도 안내(ko/ja 두 벌)
+  → skin_analyses 저장
+```
+여러 장을 넣으면 평균을 낸다. 조명 차이가 가장 큰 오차원이라 평균이 가장 큰 개선 레버다.
+
+### 4.2 추천
+
+```
+점수 + 설문
+  → 우선 고민 집합 → 성분 상위 5개
+  → 루틴 슬롯별 후보 수집(성분 인덱스는 캐시 사용)
+  → 플랫폼 링크 부여 → 빈 링크 카드 제거
+  → 요약문(explanation, 줄바꿈 포함) + 성분 근거(evidence) 분리
+  → recommendation_histories 저장
 ```
 
-### 4.2 바디 피부 분석 흐름
+### 4.3 퍼스널컬러 → 아이템 매칭
 
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant F as BeautyAI Frontend
-  participant API as FastAPI
-  participant B as BodySkinAnalyzer
-  participant M as BodySkinClassifier
-
-  U->>F: 바디 피부 이미지 입력
-  F->>API: POST /api/analyze-skin (analysis_mode=body)
-  API->>B: analyze(image_bytes)
-  B->>M: predict(image)
-  alt model available
-    M-->>B: condition probabilities
-    B-->>API: conditions, model_available=true
-  else model unavailable
-    B-->>API: empty conditions, model_available=false
-  end
-  API-->>F: AnalyzeSkinResponse
-  F-->>U: 조건 확률 또는 안내 표시
 ```
-
-### 4.3 추천 흐름
-
-```mermaid
-sequenceDiagram
-  participant F as Frontend
-  participant API as /api/recommend
-  participant R as Recommender
-  participant DB as Database
-
-  F->>API: RecommendationRequest
-  alt face mode
-    API->>DB: analysis_id로 SkinScores 조회 또는 scores 사용
-  else body mode
-    API->>API: body_conditions 사용
-  end
-  API->>R: recommend_products(...)
-  R->>DB: Ingredient/Product 조회
-  R->>R: 성분 추론
-  R->>R: 상품 점수 계산
-  R->>DB: RecommendationHistory 저장
-  R-->>API: RecommendationResponse
-  API-->>F: 추천 성분/상품/설명
+사진 → Lab 회귀 → 계절 규칙 → 시즌·톤 판정(+판정 근거·경계 안내)
+   │
+   └─ 웹에 저장된 퍼스널컬러가 있으면 촬영을 건너뛸 수 있다
+        (이때 metrics 가 비므로 촬영 품질 배지를 숨긴다)
+   ▼
+카테고리별 색상 키워드 → 라이브 검색 + 로컬 카탈로그
+   → resolve(링크 부여) → balance(컬럼 균형) → 화면
 ```
+⚠ resolve 가 balance 보다 **먼저**여야 한다. 되돌리면 일부 컬럼이 통째로 빈다.
 
-### 4.4 AI 상담 흐름
+### 4.4 상담
 
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant F as Frontend
-  participant API as /api/chat
-  participant K as Knowledge Search
-  participant L as OpenAI API
-  participant DB as Database
+```
+질문
+ ├─ 카탈로그 질문?  → DB 조회로 답변 (LLM 미경유)
+ ├─ LLM 사용 가능?  → 근거 검색 → LLM 이 문장 작성 → 출처 표기
+ └─ 폴백           → 문제성 피부 코퍼스 → 성분 코퍼스 → 키워드 → 범위 밖 안내
+```
+지식 검색은 관련도가 엇비슷하면 **사용자와 인구통계가 같은 사례**를 앞세운다. 코퍼스 답변이 사례 원문이라 첫 문장이 그 사례 본인의 나이·성별로 시작하기 때문이다.
 
-  U->>F: 질문 입력
-  F->>API: ChatRequest
-  API->>K: 관련 지식 검색
-  API->>L: 답변 생성 요청
-  L-->>API: 답변
-  API->>DB: ChatHistory 저장
-  API-->>F: ChatResponse
-  F-->>U: 답변 및 출처 표시
+### 4.5 웹 연동
+
+```
+WEB → AI :  #t=<120초 1회용 티켓> → POST /api/auth/exchange → AI 세션(12h)
+            ※ 소각한 jti 는 used_tickets 에 남겨 재사용을 막는다
+
+AI → WEB :  결과지 QR = <WEB>/cart?ai=<code>
+            WEB → POST /internal/cart-handoff/resolve → 상품 목록 회수
+            ※ QR 에는 목록을 싣지 않는다(1KB 넘으면 인식률이 떨어진다)
 ```
 
 ## 5. 모듈 책임
 
-| 계층 | 모듈 | 책임 |
+| 모듈 | 책임 | 하지 않는 것 |
 |---|---|---|
-| API | `routes.py` | 요청 검증, 서비스 호출, 응답 조립 |
-| Schema | `api.py` | 요청/응답 타입 정의 |
-| Model | `domain.py` | DB 테이블 정의 |
-| Service | `skin_analyzer.py` | 얼굴 피부 분석 |
-| Service | `body_skin_analyzer.py` | 바디 피부 분석 |
-| Service | `recommender.py` | 성분 추론, 상품 점수 계산, 이력 저장 |
-| Service | `chatbot.py` | AI 상담 |
-| AI | `skin_model.py` | 얼굴 피부 모델 로딩/추론 |
-| AI | `body_skin_model.py` | 바디 피부 모델 로딩/추론 |
-| Core | `config.py` | 환경설정 |
-| Core | `database.py` | DB 연결 |
+| `ai/` | 체크포인트 로드·추론 | 비즈니스 판단 |
+| `services/*_analyzer` | 사진 → 수치·판정 | 상품 선택 |
+| `services/recommender` | 성분·상품·컬럼·요약문 | 모델 추론 |
+| `services/*_knowledge` | 근거 검색·문장 조립 | 답변 생성(LLM) |
+| `services/chatbot` | 답변 경로 결정 | 카탈로그 사실 판단 |
+| `services/chat_catalog_answers` | 카탈로그 사실 답변 | 상담·성분 조언 |
+| `services/platform_*` | 구매 링크 해석·가용성 | 가격 표시 |
+| `api/routes` | HTTP 경계 | 도메인 로직 |
 
-## 6. BeautyWEB 연동 설계
+## 6. 데이터 저장 정책
 
-현재 BeautyWEB은 AI 기능을 직접 호출하지 않고 BeautyAI 프론트엔드로 이동한다.
-
-```mermaid
-flowchart LR
-  BW["BeautyWEB\nhttp://localhost:5174"]
-  BAI["BeautyAI Frontend\nhttp://localhost:5173"]
-  API["BeautyAI Backend\nhttp://localhost:8000"]
-
-  BW -->|"AI Beauty 클릭"| BAI
-  BAI --> API
-```
-
-향후 연동 후보:
-
-- BeautyWEB 로그인 사용자 ID를 BeautyAI에 전달
-- BeautyAI 추천 결과의 상품 ID를 BeautyWEB 상품 상세로 연결
-- AI 분석 세션 ID를 QR 또는 결과지로 공유
-- BeautyWEB 상품 DB와 BeautyAI 추천 DB 통합
-
-## 7. 데이터 저장 정책
-
-| 데이터 | 현재 처리 | 향후 후보 |
+| 데이터 | 저장 | 정책 |
 |---|---|---|
-| 얼굴 분석 | DB 저장 | 이미지 저장 정책 추가 |
-| 바디 분석 | 응답만 반환 | 별도 분석 테이블 추가 |
-| 추천 이력 | JSON 문자열 저장 | 추천 상세 테이블 분리 |
-| 상담 이력 | DB 저장 | 사용자별 상담 컨텍스트 확장 |
-| 상품 링크 | URL/브랜드 기반 생성 | 플랫폼별 링크 테이블 분리 |
+| 업로드 사진 | 저장하지 않음 | 확장자만 기록(파일명에 개인정보가 흔하다) |
+| 분석 점수 | `skin_analyses` | 사용자 요청 시 삭제 |
+| 설문 | `surveys` | 동일 |
+| 추천·상담 이력 | `recommendation_histories`, `chat_histories` | 동일 |
+| 핸드오프 코드 | `cart_handoffs` | 짧은 만료 + 1회용 |
+| 소각 티켓 | `used_tickets` | jti 만 보관 |
 
-## 8. 확장 아키텍처
+`DELETE /api/me/data` 로 사용자가 직접 지운다.
 
-```mermaid
-flowchart TD
-  Input["Image + Survey"]
-  SkinAI["SkinAI\nface/body skin analysis"]
-  StyleAI["StyleAI\npersonal color / face shape"]
-  Reco["Recommendation Engine"]
-  Consult["AI Consultant"]
-  Result["Result Sheet\nQR / Print"]
-  Commerce["BeautyWEB Commerce"]
+## 7. 품질 기준
 
-  Input --> SkinAI
-  Input --> StyleAI
-  SkinAI --> Reco
-  StyleAI --> Reco
-  Reco --> Consult
-  Reco --> Result
-  Result --> Commerce
-```
+| 항목 | 기준 |
+|---|---|
+| 응답 시간 | 추천은 성분 인덱스 캐시로 요청당 수 초를 줄인다. 랭킹 루프에서 관계 로딩 금지. |
+| 프록시 타임아웃 | CPU 추론 + 라이브 검색이 겹치므로 300s. 프론트 nginx 와 Caddy 값을 맞춘다(짧은 쪽이 먼저 끊는다). |
+| 모바일 | 360px 에서 상품추천이 2열로 보이고, 스크롤 중에도 카테고리 헤더가 고정된다. 가로 넘침 없음. |
+| 접근성 | 터치 탭 타깃 44px 하한. 헤더 색 위 글자 대비 4.5:1 이상. |
+| 다국어 | 일본어 응답에 한국어가 남지 않는다(테스트로 강제). |
+| 안전 | 확정 진단이 아님을 명시. 악성 의심은 진료 우선. 영유아는 성인 제품 폴백 금지. |
 
-## 9. 품질 기준
+## 8. 알려진 제약
 
-- API 요청/응답 DTO가 프론트엔드 타입과 일치해야 한다.
-- 모델 파일이 없어도 서버는 안내 응답을 반환해야 한다.
-- 추천 API는 추천 이력을 저장해야 한다.
-- 프론트엔드는 분석 전/분석 중/분석 완료/추천 완료 상태를 구분해야 한다.
-- BeautyWEB에서 BeautyAI로 이동하는 링크는 환경별로 바꿀 수 있어야 한다.
-
+- 피부 6항목 회귀는 항목 간 분리도가 낮다. 3그룹·3구간 표시로 완화한다.
+- 발색 미리보기는 타원 근사다. 실제 발색과 다를 수 있음을 화면에 명시한다.
+- `redis` 는 설정에만 있고 코드가 쓰지 않는다. 1회용 티켓은 DB 유니크 제약으로 처리한다.
+- 상품 가격은 표시하지 않는다(판매처가 여럿이라 어느 값도 맞지 않는다).
+- CI 환경에는 `data/` 가 없어, 데이터 의존 테스트는 skip 가드가 필요하다.

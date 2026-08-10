@@ -1,127 +1,194 @@
-# BeautyAI
+# BeautyAI (YoPalette)
 
-AI 기반 피부 분석 및 화장품 추천 플랫폼입니다.
+사진 한 장으로 **피부 · 퍼스널컬러 · 네일 · 얼굴 비율**을 분석하고, 결과에 맞는 화장품을 추천하는 서비스입니다. 판매·결제는 자매 프로젝트 [BeautyWEB](../BeautyWEB_project) 이 담당하며, 두 서비스는 같은 계정으로 이어집니다.
+
+🇯🇵 [日本語版 README](./README_ja.md)
+
+---
+
+## 기능
+
+| 모듈 | 하는 일 |
+|---|---|
+| 피부 케어 분석 | 얼굴·바디 사진 → 6항목 점수 → 성분·상품 추천 → 결과지 |
+| 퍼스널컬러 | 얼굴 사진 → 시즌 판정 → 팔레트·메이크업 → 아이템 매칭 |
+| 네일·페디 | 손·발 사진 → 네일 검출 → 발색 미리보기 → 유사 디자인·상품 |
+| 가상 성형 | 얼굴 비율 분석 → 목표별 미리보기 → 상담용 리포트 |
+| AI 상담 | 성분·루틴 질문 + 카탈로그 조회(재고를 지어내지 않습니다) |
+
+한국어 / 일본어를 지원합니다.
 
 ## 기술 스택
 
-- 프론트엔드: React, TypeScript, Material UI, Vite
-- 백엔드: FastAPI, SQLAlchemy
-- AI: PyTorch 연동을 고려한 서비스 경계, OpenCV 호환 이미지 처리
-- 데이터베이스: SQLAlchemy 모델 + Alembic 마이그레이션, 로컬 기본값 SQLite, 운영은 Supabase/Postgres 연동 가능
-- 벡터 DB: ChromaDB 연동을 고려한 RAG 서비스 경계
-- 캐시/인프라: Redis, Docker, GitHub Actions 플레이스홀더
+- **프론트엔드** React 18 · TypeScript · MUI v6 · Vite
+- **백엔드** FastAPI · SQLAlchemy 2.0 · Alembic · Pydantic v2
+- **추론** PyTorch(.pt) · MediaPipe · OpenCV · scikit-learn
+- **상담** OpenAI API + 로컬 RAG(JSONL)
+- **DB** PostgreSQL(개발·운영) / SQLite(로컬 단독)
+- **배포** Docker Compose · nginx · Caddy 2 · GitHub Actions
+
+---
 
 ## 빠른 시작
 
+### 방법 1. Docker (권장)
+
+가장 확실합니다. Postgres·백엔드·프론트가 한 번에 뜹니다.
+
 ```bash
-cd backend
+cd BeautyAI_project
+docker compose up -d --build
+docker compose ps
+```
+
+- 프론트: http://localhost:5173
+- 백엔드 문서: http://localhost:8000/docs
+
+카탈로그를 채우려면 (최초 1회):
+
+```bash
+docker compose exec backend python scripts/seed_dev_db.py
+```
+
+### 방법 2. 로컬 실행
+
+**백엔드**
+
+```bash
+cd BeautyAI_project/backend
+
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+
+# DB 를 따로 띄우지 않고 SQLite 로 바로 돌립니다
+set DATABASE_URL=sqlite:///./beautyai.db      # macOS/Linux: export ...
+python -m uvicorn app.main:app --reload --port 8000
 ```
+
+**프론트엔드**
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd BeautyAI_project/frontend
+npm ci
+npm run dev        # http://localhost:5173
 ```
 
-http://localhost:5173 을 열고 다음 흐름으로 사용합니다.
+> `uv` 를 쓴다면 `uv venv .venv && uv pip install -r requirements.txt` 로 대체할 수 있습니다.
 
-설문 -> 얼굴 업로드 -> 피부 분석 -> 성분 추천 -> 제품 추천 -> AI 피부 상담 -> 히스토리
+---
 
-## API
+## 환경 변수
 
-- `POST /api/analyze-skin`
-- `POST /api/recommend`
-- `POST /api/chat`
-- `GET /api/products`
-- `GET /api/history`
-- `GET /api/admin/statistics`
+`backend/.env` 에 넣거나 셸에서 export 합니다. **모두 없어도 서비스는 뜹니다** — 해당 기능만 꺼집니다.
 
-## 참고 사항
+| 키 | 기본값 | 없으면 |
+|---|---|---|
+| `DATABASE_URL` | SQLite | — |
+| `APP_ENV` | (없음) | `production` 일 때만 운영 DB 가드가 동작 |
+| `REQUIRE_LOGIN` | `false` | 로그인 없이 전 기능 사용 |
+| `CORS_ORIGINS` | `http://localhost:5173` | 프론트에서 API 호출 차단 |
+| `OPENAI_API_KEY` | (없음) | 상담이 지식베이스 폴백으로 동작 |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | — |
+| `JWT_SECRET` | 개발용 기본값 | BeautyWEB 계정 연동 불가 |
+| `RAKUTEN_APP_ID` | (없음) | 일본 라쿠텐 상품 검색 불가 |
+| `SKIN_MODEL_PATH` 등 | `/data/models/*.pt` | 해당 분석이 `model_available=false` 로 응답 |
 
-현재 피부 분석기는 결정론적인 MVP 구현입니다. 업로드된 얼굴 이미지를 받아 필수 여섯 가지 0-100 피부 점수를 반환합니다. `SkinAnalyzer` 서비스는 의도적으로 분리되어 있어 API 계약을 변경하지 않고도 휴리스틱 구현을 EfficientNet/PyTorch 모델로 교체할 수 있습니다.
+> ⚠️ `.env` 는 **절대 커밋하지 마세요.** `.gitignore` 에 포함되어 있습니다. API 키를 공개 저장소나 이슈·PR 에 붙여넣지 마세요.
 
-## 데이터베이스 / 마이그레이션 (Alembic · Supabase)
+### 모델 파일
 
-스키마는 Alembic으로 관리합니다. 모델([`backend/app/models/domain.py`](backend/app/models/domain.py))을 바꾼 뒤에는 마이그레이션을 생성·적용해야 합니다. (`create_all`은 새 테이블만 만들고 기존 테이블에 컬럼을 추가하지 못합니다.)
+분석 기능은 `data/models/*.pt` 체크포인트가 필요합니다. 저장소에는 포함되지 않습니다(용량). 파일이 없으면 해당 API 가 `model_available: false` 로 응답하고, **다른 기능은 정상 동작합니다.**
+
+```text
+data/models/
+├── skin_efficientnet_b0.pt              얼굴 피부 6항목
+├── derma_tier1_gate.pt                  피부질환 선별 게이트
+├── derma_tier2_classifier.pt            피부질환 분류
+├── personal_color_retrain_try2_*.pt     퍼스널컬러
+├── body_skin_mobilenet_v3.pt            바디 피부
+└── nail_embedder_efficientnet_b0.pt     네일 디자인 검색
+```
+
+---
+
+## 테스트
 
 ```bash
-# 모델 변경 후 마이그레이션 자동 생성
-cd backend && .venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe change"
-# 적용
-cd backend && .venv\Scripts\python.exe -m alembic upgrade head
+cd BeautyAI_project/backend
+
+# ⚠️ 그냥 돌리면 .env 의 운영 DB 를 물어 오래 걸립니다. SQLite 로 덮어쓰세요.
+set DATABASE_URL=sqlite:///./test_run.db
+set APP_ENV=test
+pytest -q
 ```
 
-연결 대상은 `.env`의 `DATABASE_URL` 하나로 결정됩니다(Alembic도 동일 값을 사용 — 자격증명은 alembic.ini가 아닌 .env에만 둡니다).
+약 760건이 돕니다. `data/` 가 없는 환경(CI 등)에서는 데이터 의존 테스트가 자동으로 skip 됩니다.
 
-### SQLite → Supabase(Postgres) 이전
-
-1. Supabase 프로젝트 생성 후 `Project Settings > Database`에서 연결 문자열 확인
-2. `.env`의 `DATABASE_URL`을 Postgres 주소로 교체:
-   ```
-   DATABASE_URL=postgresql+psycopg2://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
-   ```
-3. Supabase에 스키마 생성:
-   ```bash
-   cd backend && .venv\Scripts\python.exe -m alembic upgrade head
-   ```
-4. 기존 SQLite 데이터를 복사(원본 sqlite는 그대로 두고 읽기만 함):
-   ```bash
-   backend\.venv\Scripts\python.exe scripts\migrate_sqlite_to_postgres.py ^
-       --source sqlite:///./beautyai.db ^
-       --target "postgresql+psycopg2://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres"
-   ```
-   - 타깃 테이블에 데이터가 있으면 기본적으로 중단됩니다. 덮어쓰려면 `--truncate` 추가.
-   - Postgres 타깃은 복사 후 id 시퀀스를 자동 보정합니다.
-
-이미 스키마가 있는 기존 DB를 Alembic 관리로 편입할 때는 `alembic stamp head`로 현재 리비전을 표시합니다(로컬 sqlite는 이미 stamp 처리됨).
-
-## 피부 모델 학습
-
-Kaggle 데이터셋을 사용하려면 Kaggle API 토큰이 필요합니다. Windows에서는 `kaggle.json`을 `%USERPROFILE%\.kaggle\kaggle.json`에 두거나, `KAGGLE_USERNAME`과 `KAGGLE_KEY`를 설정하세요.
+프론트엔드:
 
 ```bash
-cd backend
-uv pip install -r requirements-train.txt --python .venv\Scripts\python.exe
-cd ..
-backend\.venv\Scripts\python.exe scripts\download_kaggle_datasets.py
-backend\.venv\Scripts\python.exe scripts\build_skin_manifest.py
-backend\.venv\Scripts\python.exe scripts\train_skin_efficientnet.py --epochs 1 --max-samples 512
-backend\.venv\Scripts\python.exe scripts\train_skin_efficientnet.py --epochs 5
+cd BeautyAI_project/frontend
+npm run lint
+npm run build
 ```
 
-### 팔·목·몸 피부질환 모델
+---
 
-몸 피부 분석은 얼굴 모델과 분리되어 있으며 SkinDisNet의 원본 임상 이미지
-1,710장을 사용합니다. 데이터 라이선스는 CC BY-NC 4.0이므로 비상업 연구 및
-개발 범위에서 사용해야 합니다.
+## 프로젝트 구조
 
-```bash
-backend\.venv\Scripts\python.exe scripts\download_skindisnet.py
-backend\.venv\Scripts\python.exe scripts\prepare_skindisnet.py
-backend\.venv\Scripts\python.exe scripts\train_body_skin_model.py --epochs 8
-backend\.venv\Scripts\python.exe scripts\evaluate_body_skin_model.py
+```text
+BeautyAI_project
+├── backend/
+│   ├── app/
+│   │   ├── main.py            FastAPI 앱
+│   │   ├── api/routes.py      모든 엔드포인트
+│   │   ├── core/              설정 · DB 세션
+│   │   ├── models/domain.py   SQLAlchemy 모델 11개
+│   │   ├── schemas/api.py     요청 · 응답 스키마
+│   │   ├── ai/                모델 로더
+│   │   └── services/          도메인 로직 (약 37개)
+│   ├── alembic/               마이그레이션
+│   ├── tests/                 pytest
+│   └── requirements.txt
+├── frontend/
+│   └── src/
+│       ├── App.tsx            화면 전체
+│       ├── api/client.ts      백엔드 호출
+│       ├── i18n.ts            한국어 · 일본어 사전
+│       └── styles.css         스타일
+├── data/                      모델 · RAG · 카탈로그  ※ 컨테이너에서는 /data
+├── docs/                      설계 문서
+├── docker-compose.yml         로컬
+├── docker-compose.prod.yml    운영
+└── Caddyfile                  리버스 프록시 · 자동 HTTPS
 ```
 
-학습 결과는 `data/models/body_skin_mobilenet_v3.pt`에 저장됩니다. 분류 범주는
-아토피 피부염, 접촉성 피부염, 습진, 옴, 지루성 피부염, 체부백선입니다.
-모델 파일이 없으면 API는 임의 진단값을 만들지 않고 `model_available=false`를
-반환합니다.
+---
 
-학습된 모델은 `data/models/skin_efficientnet_b0.pt`에 저장됩니다. API는 `.env`에서 `SKIN_MODEL_PATH`를 읽습니다. 파일이 존재하고 PyTorch가 설치되어 있으면 `POST /api/analyze-skin`은 EfficientNet 모델을 자동으로 사용합니다. 그렇지 않으면 MVP 분석기로 대체됩니다.
+## 문서
 
-## 문제성 피부 상담 지식
+| 문서 | 내용 |
+|---|---|
+| [AI_요건정의서](docs/AI_요건정의서.md) | 무엇을 만드는가 |
+| [AI_기본설계서](docs/AI_기본설계서.md) | 어떤 구조로 만드는가 |
+| [AI_상세설계서](docs/AI_상세설계서.md) | 어디에 어떻게 들어 있는가 |
+| [AI_system-design-overview](docs/AI_system-design-overview.md) | 런타임 구성과 처리 흐름 |
+| [AI_ERD](docs/AI_ERD.md) | 데이터 모델 |
 
-AI Hub의 `02.문제성 피부 메이크업 추천 데이터` 라벨 ZIP을 상담 검색 인덱스로 변환합니다.
+각 문서에는 일본어판(`*_ja.md`)이 있습니다.
 
-```bash
-backend\.venv\Scripts\python.exe scripts\build_problem_skin_knowledge.py
-```
+---
 
-생성된 `data/rag/problem_skin_knowledge.jsonl`은 원본 데이터와 함께 Git에서 제외됩니다. API의 `/api/chat`은 질문, 설문, 피부 분석 점수와 유사한 상담 사례를 찾아 메이크업 방법과 추천·회피 성분을 안내합니다. 인덱스가 없으면 기존 기본 상담 지식으로 자동 대체됩니다.
+## 기여할 때
 
-원본 데이터에는 연구·학습 목적 등의 이용 조건이 포함되어 있으므로 외부 배포나 상용 서비스 적용 전 라이선스를 별도로 확인해야 합니다. 치료·질환 관련 내용은 의료 진단이 아닌 참고 정보로만 제공합니다.
+- 브랜치를 만들어 작업하고 PR 을 올립니다. **기본 브랜치에 머지되어야 배포가 돕니다.**
+- 커밋 전에 `pytest` 와 `npm run build` 를 돌립니다.
+- **화면에 나가는 한국어 문장을 새로 만들면 일본어판도 함께 만듭니다.** 수치·이름이 끼어 조립되는 문장은 프론트 사전으로 옮길 수 없어, 서버가 두 벌을 만들어야 합니다. 지키지 않으면 `tests/test_assembled_sentence_inventory.py` 가 실패합니다.
+- 분석 결과 문구에는 "확정 진단이 아님"을 남깁니다.
 
+## 라이선스 · 주의
+
+- 분석 결과는 **참고용**이며 의학적 진단이 아닙니다.
+- 업로드한 사진은 저장하지 않습니다(확장자만 기록).
+- `DELETE /api/me/data` 로 사용자가 직접 데이터를 지울 수 있습니다.

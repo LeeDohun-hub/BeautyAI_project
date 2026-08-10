@@ -2,266 +2,198 @@
 
 ## 1. 개요
 
-이 문서는 BeautyAI의 현재 구현 데이터 모델과 향후 StyleAI 확장 후보 데이터 모델을 구분해 정의한다.
+- DBMS: PostgreSQL(개발·운영), SQLite(로컬 단독 실행)
+- 매핑: SQLAlchemy 2.0 (`Mapped` / `mapped_column`), 마이그레이션은 Alembic
+- 작성 기준: 2026-08-10, `backend/app/models/domain.py` 실제 정의
+- 테이블 11개. 이전 판(2026-06-29, 9개)에서 `cart_handoffs`, `used_tickets` 가 추가되고 `users` 가 확장되었다.
 
-현재 구현된 핵심 도메인은 다음이다.
-
-- 사용자
-- 설문
-- 얼굴 피부 분석
-- 브랜드
-- 성분
-- 상품
-- 상품-성분 매핑
-- 추천 이력
-- 상담 이력
-
-## 2. 현재 구현 ERD
+## 2. ERD
 
 ```mermaid
 erDiagram
-  users ||--o{ surveys : "writes"
-  users ||--o{ skin_analyses : "has"
-  users ||--o{ recommendation_histories : "receives"
-  users ||--o{ chat_histories : "asks"
-  brands ||--o{ products : "owns"
-  products ||--o{ product_ingredients : "has"
-  ingredients ||--o{ product_ingredients : "included in"
-  skin_analyses ||--o{ recommendation_histories : "used by"
+    users ||--o{ surveys : "응답한다"
+    users ||--o{ skin_analyses : "분석한다"
+    users ||--o{ recommendation_histories : "추천받는다"
+    users ||--o{ chat_histories : "상담한다"
+    skin_analyses ||--o{ recommendation_histories : "근거가 된다"
 
-  users {
-    int id PK
-    varchar email UK
-    varchar name
-    varchar role
-    datetime created_at
-  }
+    brands ||--o{ products : "보유한다"
+    products ||--o{ product_ingredients : "구성된다"
+    ingredients ||--o{ product_ingredients : "포함된다"
 
-  surveys {
-    int id PK
-    int user_id FK
-    varchar skin_type
-    text concerns
-    int sensitivity
-    varchar routine_level
-    datetime created_at
-  }
+    users {
+        int id PK
+        string email UK
+        string name
+        string role
+        int web_member_id UK "BeautyWEB members.id"
+        string login_id
+        string gender
+        string age_group
+        string skin_type
+        string personal_color
+        datetime created_at
+    }
 
-  skin_analyses {
-    int id PK
-    int user_id FK
-    float acne
-    float pore
-    float wrinkle
-    float redness
-    float pigmentation
-    float oiliness
-    varchar image_name
-    datetime created_at
-  }
+    cart_handoffs {
+        string code PK
+        int web_member_id
+        text payload "상품 목록 직렬화"
+        datetime created_at
+        datetime expires_at
+        datetime consumed_at
+    }
 
-  brands {
-    int id PK
-    varchar name UK
-    text description
-  }
+    used_tickets {
+        string jti PK
+        datetime used_at
+    }
 
-  ingredients {
-    int id PK
-    varchar name UK
-    text benefit
-    varchar targets
-  }
+    surveys {
+        int id PK
+        int user_id FK
+        string skin_type
+        text concerns
+        int sensitivity
+        string routine_level
+        datetime created_at
+    }
 
-  products {
-    int id PK
-    int brand_id FK
-    varchar name
-    varchar category
-    varchar skin_types
-    int price
-    text description
-    varchar product_url
-    varchar image_url
-    float avg_rating
-    int review_count
-  }
+    skin_analyses {
+        int id PK
+        int user_id FK
+        float acne
+        float pore
+        float wrinkle
+        float redness
+        float pigmentation
+        float oiliness
+        string image_name "확장자만"
+        datetime created_at
+    }
 
-  product_ingredients {
-    int product_id PK, FK
-    int ingredient_id PK, FK
-    float weight
-  }
+    brands {
+        int id PK
+        string name UK
+        text description
+    }
 
-  recommendation_histories {
-    int id PK
-    int user_id FK
-    int analysis_id FK
-    text recommended_ingredients
-    text recommended_products
-    datetime created_at
-  }
+    ingredients {
+        int id PK
+        string name UK
+        text benefit
+        string targets "쉼표 구분 고민 키"
+    }
 
-  chat_histories {
-    int id PK
-    int user_id FK
-    text message
-    text answer
-    datetime created_at
-  }
+    products {
+        int id PK
+        int brand_id FK
+        string name
+        string category
+        string skin_types
+        int price
+        text description
+        string product_url
+        string image_url
+        float avg_rating
+        int review_count
+    }
+
+    product_ingredients {
+        int product_id PK "FK"
+        int ingredient_id PK "FK"
+        float weight
+    }
+
+    recommendation_histories {
+        int id PK
+        int user_id FK
+        int analysis_id FK
+        text recommended_ingredients
+        text recommended_products
+        datetime created_at
+    }
+
+    chat_histories {
+        int id PK
+        int user_id FK
+        text message
+        text answer
+        datetime created_at
+    }
 ```
 
 ## 3. 테이블 상세
 
 ### 3.1 `users`
 
-사용자 기본 정보를 저장한다.
+사용자. 익명 이용이 가능하므로 대부분의 컬럼이 NULL 가능하다.
 
-| 컬럼 | 타입 | 설명 |
-|---|---|---|
-| `id` | int | PK |
-| `email` | varchar | 이메일, unique |
-| `name` | varchar | 사용자명 |
-| `role` | varchar | `customer`, `admin` 등 |
-| `created_at` | datetime | 생성일 |
+- `web_member_id` — BeautyWEB `members.id`. 핸드오프 티켓으로 들어온 계정을 여기에 붙여 **같은 사람의 분석·추천 이력이 이어지게** 한다. 웹을 거치지 않은 사용자는 NULL. 유니크 인덱스.
+- `gender` / `age_group` / `skin_type` / `personal_color` — 웹 마이페이지에서 받아온 프로필. 설문 프리필과 "저장된 퍼스널컬러 바로쓰기"에 쓴다.
 
-### 3.2 `surveys`
+### 3.2 `cart_handoffs`
 
-추천 요청 시 사용자의 설문 정보를 저장한다.
+결과지 QR → 웹 장바구니 담기용 **1회용 코드**.
 
-현재 저장 컬럼은 핵심 추천 필드 중심이다. 프론트엔드 DTO에는 `gender`, `age_group`, `makeup_concerns`, `area_concerns`, `male_extras`가 있으나 현재 DB 테이블에는 별도 컬럼으로 분리되어 있지 않다. 향후 분석 통계를 강화하려면 설문 테이블 확장이 필요하다.
+QR 에 상품 목록을 통째로 싣지 않는 이유는 인식률이다. 상품 5개(이름·브랜드·구매 URL)를 base64 로 실으면 1KB 를 넘겨 QR 이 조밀해지고, 인쇄물에서 인식에 실패한다. 그래서 QR 에는 짧은 코드만 싣고(`<WEB>/cart?ai=<code>`) 실제 목록은 서버끼리 주고받는다.
 
-### 3.3 `skin_analyses`
+`web_member_id` 를 함께 들고 있어 **폰이 로그인되어 있지 않아도** 본인 계정 장바구니에 담긴다. 대신 코드 자체가 자격증명이므로 `expires_at`(짧은 수명)과 `consumed_at`(1회용)으로 태운다.
 
-얼굴 피부 분석 결과를 저장한다.
+### 3.3 `used_tickets`
 
-| 분석 항목 | 설명 |
-|---|---|
-| `acne` | 여드름 관련 점수 |
-| `pore` | 모공 관련 점수 |
-| `wrinkle` | 주름 관련 점수 |
-| `redness` | 홍조 관련 점수 |
-| `pigmentation` | 색소침착 관련 점수 |
-| `oiliness` | 유분 관련 점수 |
+소각한 핸드오프 티켓의 `jti`.
 
-바디 피부 분석 결과는 현재 별도 테이블에 저장하지 않는다.
+티켓은 URL 프래그먼트로 오므로 브라우저 히스토리에 남는다. 수명이 120초로 짧지만 그 안의 재사용까지 막으려고 1회용으로 태운다. Redis 대신 DB 유니크 제약을 쓰는데, 교환은 사용자당 세션에 한 번뿐이라 비용이 문제되지 않기 때문이다.
 
-### 3.4 `brands`
+### 3.4 `surveys`
 
-상품 브랜드 정보를 저장한다.
+설문. `concerns` 는 쉼표 구분 문자열이다.
 
-### 3.5 `ingredients`
+### 3.5 `skin_analyses`
 
-성분 정보를 저장한다. `targets`는 쉼표로 구분된 피부 고민/분석 타깃 문자열이다.
+얼굴 피부 분석 결과 6항목(0~100).
 
-예:
+`image_name` 에는 **확장자만** 담는다. 업로드 파일명에는 이름·날짜·기기·장소가 들어가기 쉬운데 이 컬럼은 어디서도 읽지 않으면서 `user_id` 와 묶여 남아 있었다.
 
-```text
-redness,pigmentation
-```
+⚠ 6항목은 완전히 독립되지 않는다(학습 라벨 자체가 일부 겹친다). 화면은 3그룹·3구간으로 보여준다.
 
-### 3.6 `products`
+### 3.6 `brands` / `products`
 
-추천 대상 상품 정보를 저장한다.
+카탈로그. `products.skin_types` 는 쉼표 구분(`all` 포함), `category` 는 루틴 슬롯 판정에 쓴다.
 
-외부 쇼핑몰과 연결하기 위해 `product_url`, `image_url`, `avg_rating`, `review_count`를 포함한다.
+`price` 컬럼은 있으나 **화면에는 표시하지 않는다.** 카드 하나에 판매처가 여럿이라 어느 값을 써도 최소 한 곳과는 맞지 않는다.
 
-### 3.7 `product_ingredients`
+### 3.7 `ingredients` / `product_ingredients`
 
-상품과 성분의 다대다 매핑 테이블이다.
+성분과 상품–성분 연결(복합 기본키 + `weight`).
+
+`ingredients.targets` 는 쉼표 구분 고민 키(`acne`, `pore`, `wrinkle`, `redness`, `pigmentation`, `oiliness`, `dryness`)이며, 성분 추론의 교집합 대상이다.
+
+⚠ 랭킹 루프에서 이 관계를 `selectinload` 하면 요청당 수 초가 늘어난다. 캐시된 성분 인덱스를 쓴다.
 
 ### 3.8 `recommendation_histories`
 
-추천 결과를 저장한다.
-
-- `recommended_ingredients`: JSON 문자열
-- `recommended_products`: JSON 문자열
+추천 이력. 성분·상품 목록을 JSON 문자열로 남긴다. `analysis_id` 로 근거가 된 분석과 연결된다.
 
 ### 3.9 `chat_histories`
 
-사용자 질문과 AI 답변을 저장한다.
+상담 질문·답변. 카탈로그 답변·LLM 답변·폴백 답변 모두 여기 남는다.
 
-## 4. 현재 모델의 설계 메모
+## 4. 설계 메모
 
-| 항목 | 현재 상태 | 향후 개선 후보 |
-|---|---|---|
-| 설문 | 일부 필드만 DB 저장 | `gender`, `age_group`, 고민 목록 세분화 |
-| 바디 분석 | 응답만 반환, DB 미저장 | `body_skin_analyses` 추가 |
-| 추천 이력 | 성분/상품을 JSON 문자열로 저장 | 추천 이력 상세 테이블 분리 |
-| 성분 타깃 | 쉼표 문자열 | `ingredient_targets` 정규화 |
-| 상품 플랫폼 | URL 기반 추론 | `product_platform_links` 분리 |
+- **익명 우선.** 로그인 없이 전 기능을 쓸 수 있어야 하므로 `user_id` 는 대부분 NULL 가능하다.
+- **웹과의 연결은 `web_member_id` 하나로 잇는다.** 계정 체계를 복제하지 않는다.
+- **자격증명성 레코드는 반드시 만료·소각을 갖는다**(`cart_handoffs`, `used_tickets`).
+- **삭제 가능성이 요구사항이다.** `DELETE /api/me/data` 가 사용자 관련 행을 지운다.
+- **카탈로그는 외부에서 들어온다.** 수집·검증은 서비스 계층에서 하고, 테이블은 결과만 들고 있다.
 
-## 5. 향후 확장 ERD 후보
+## 5. 확장 후보
 
-퍼스널컬러, 얼굴형, 스타일 컨설팅, 결과지 기능을 구현할 경우 다음 테이블을 추가한다.
-
-```mermaid
-erDiagram
-  users ||--o{ personal_color_analyses : "has"
-  users ||--o{ face_shape_analyses : "has"
-  users ||--o{ style_consultations : "receives"
-  personal_color_analyses ||--o{ style_consultations : "used by"
-  face_shape_analyses ||--o{ style_consultations : "used by"
-  style_consultations ||--o{ style_item_matches : "contains"
-  products ||--o{ style_item_matches : "matched"
-  style_consultations ||--o| result_sheets : "printed as"
-
-  personal_color_analyses {
-    int id PK
-    int user_id FK
-    varchar season
-    varchar tone
-    float confidence
-    text palette_json
-    varchar image_name
-    datetime created_at
-  }
-
-  face_shape_analyses {
-    int id PK
-    int user_id FK
-    varchar face_shape
-    float confidence
-    text metrics_json
-    varchar image_name
-    datetime created_at
-  }
-
-  style_consultations {
-    int id PK
-    int user_id FK
-    int personal_color_analysis_id FK
-    int face_shape_analysis_id FK
-    varchar occasion
-    text recommendation_json
-    datetime created_at
-  }
-
-  style_item_matches {
-    int id PK
-    int style_consultation_id FK
-    int product_id FK
-    varchar item_type
-    text reason
-    float score
-  }
-
-  result_sheets {
-    int id PK
-    int style_consultation_id FK
-    varchar qr_token
-    varchar print_status
-    datetime created_at
-  }
-```
-
-## 6. 확장 테이블 설명
-
-| 테이블 | 설명 |
+| 후보 | 이유 |
 |---|---|
-| `personal_color_analyses` | 퍼스널컬러 분석 결과 |
-| `face_shape_analyses` | 얼굴형 분석 결과 |
-| `style_consultations` | AI 스타일 컨설팅 결과 |
-| `style_item_matches` | 컨설팅 결과와 상품 매칭 |
-| `result_sheets` | QR/프린트 결과지 |
-
+| `personal_color_results` | 지금은 퍼스널컬러 판정 결과가 저장되지 않는다. 재방문 시 재분석이 필요하다 |
+| `nail_analyses` | 네일 검출·색 이력이 남지 않는다 |
+| `products.region`, `products.currency` | 지역·통화가 컬럼에 없어 서비스 계층 추론에 의존한다 |
+| `product_links`(플랫폼별 URL·검증 상태) | 지금은 링크가 단일 컬럼이라 플랫폼별 상태를 남길 수 없다 |
+| `analysis_images`(동의 기반) | 재현·재학습용 이미지 보관이 필요할 때. 개인정보 정책 선행 필요 |
