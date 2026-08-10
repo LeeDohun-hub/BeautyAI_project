@@ -1309,6 +1309,98 @@ body {
   gap: 16px;
 }
 
+/* ── 컬럼 헤더 색 구분 ──────────────────────────────────────────────────────
+   헤더가 전부 같은 흰 카드라 '클렌저인지 토너인지'를 글자로만 읽어야 했다.
+   컬럼마다 다른 배경 + 왼쪽 색 띠를 줘서 색으로도 구분되게 한다.
+
+   ⚠ 색은 **한 화면에 같이 보이는 세트 안에서** 구분되면 된다. 키는 15개지만 동시에
+     보이는 건 최대 5개다(퍼스널컬러 여성 5 / 남성 4, 얼굴 5, 바디 2). 그래서 세트가
+     다르면 같은 색을 다시 쓴다 — 15개를 억지로 다르게 만들면 어느 것도 구분이 안 된다.
+
+   ⚠ 배경은 반드시 **불투명**이어야 한다. 폰에서 이 헤더는 sticky 라 반투명이면 아래
+     카드가 비쳐 글자가 안 읽힌다.
+
+   글자색은 건드리지 않는다 — 잉크(#18233a)를 그대로 쓰도록 배경을 충분히 밝게(L≈94%)
+   잡았다. 색은 어디까지나 보조 신호이고, 이름표는 언제나 글자로 남는다. */
+
+/* 퍼스널컬러 — 여성: 립/블러셔/아이/베이스/네일 */
+.item-match-columns .kiosk-match-card.compact[data-column='lip'],
+.item-match-columns .kiosk-match-card.compact[data-column='lipbalm'] {
+  --col-bg: #ffe3ea;
+  --col-accent: #dd4d78;
+}
+
+.item-match-columns .kiosk-match-card.compact[data-column='blush'] {
+  --col-bg: #ffeeda;
+  --col-accent: #eb8a3c;
+}
+
+.item-match-columns .kiosk-match-card.compact[data-column='eye'],
+.item-match-columns .kiosk-match-card.compact[data-column='concealer'] {
+  --col-bg: #eae6fb;
+  --col-accent: #7a68df;
+}
+
+/* 베이스는 피부톤 자체라 색을 입히지 않고 중립 회색으로 둔다 — 옆의 웜톤(블러셔·브로우)과
+   가장 확실하게 갈린다. */
+.item-match-columns .kiosk-match-card.compact[data-column='base'] {
+  --col-bg: #eceff3;
+  --col-accent: #7b8794;
+}
+
+.item-match-columns .kiosk-match-card.compact[data-column='nail'] {
+  --col-bg: #ddf4ea;
+  --col-accent: #26a97f;
+}
+
+/* 퍼스널컬러 — 남성 전용(베이스/브로우/컨실러/립밤). 위와 겹치지 않는 것만 여기 둔다. */
+.item-match-columns .kiosk-match-card.compact[data-column='brow'] {
+  --col-bg: #f0e4d6;
+  --col-accent: #a97a4d;
+}
+
+/* 피부 케어 — 얼굴 루틴: 클렌저/토너/세럼/보습/선크림 */
+.item-match-columns .kiosk-match-card.compact[data-column='cleanser'],
+.item-match-columns .kiosk-match-card.compact[data-column='body_wash'] {
+  --col-bg: #e2f1fd;
+  --col-accent: #2b8fd0;
+}
+
+.item-match-columns .kiosk-match-card.compact[data-column='toner'] {
+  --col-bg: #ddf4ea;
+  --col-accent: #26a97f;
+}
+
+.item-match-columns .kiosk-match-card.compact[data-column='serum'] {
+  --col-bg: #eae6fb;
+  --col-accent: #7a68df;
+}
+
+.item-match-columns .kiosk-match-card.compact[data-column='moisturizer'],
+.item-match-columns .kiosk-match-card.compact[data-column='body_moisturizer'] {
+  --col-bg: #ffe3ea;
+  --col-accent: #dd4d78;
+}
+
+.item-match-columns .kiosk-match-card.compact[data-column='sunscreen'] {
+  --col-bg: #fff2cf;
+  --col-accent: #d99a12;
+}
+
+/* 실제 적용은 여기 한 곳. 위에서 정한 키가 없으면 기존 모습 그대로 떨어진다
+   (새 컬럼이 생겨도 화면이 깨지지 않는다). */
+.item-match-columns .kiosk-match-card.compact {
+  background: var(--col-bg, linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(243, 248, 252, 0.86)));
+  border-left: 4px solid var(--col-accent, transparent);
+}
+
+/* 배경에 색이 깔리면 MUI 기본 보조색(검정 60%)의 대비가 4.5:1 아래로 떨어진다
+   (실측: 흰 배경 4.6 → 색 배경 3.9~4.3). 색을 넣느라 글자를 못 읽게 만들면 안 되므로
+   보조 줄만 한 단계 진하게 고정한다(위 색들 기준 6.7:1 이상). */
+.item-match-columns .kiosk-match-card.compact .MuiTypography-root + .MuiTypography-root {
+  color: #46505f;
+}
+
 .item-match-product-stack {
   min-height: 0;
 }
@@ -1380,7 +1472,9 @@ body {
     z-index: 3;
     min-height: 0 !important;
     padding: 8px 10px;
-    background: #ffffff;
+    /* 컬럼 색을 그대로 쓰되, 키가 없으면 흰색으로 떨어진다.
+       ⚠ 반투명이면 안 된다 — sticky 라 아래 카드가 비쳐 글자가 안 읽힌다. */
+    background: var(--col-bg, #ffffff);
     box-shadow: 0 8px 12px -9px rgba(9, 20, 32, 0.55);
   }
 

@@ -3726,7 +3726,9 @@ export default function App() {
               {itemMatchGroups.map((group) => (
                 <Grid item xs={6} sm={6} md={12 / itemMatchGroups.length} key={group.key}>
                   <Box className="item-match-column">
-                    <Box className="kiosk-match-card compact">
+                    {/* data-column: 컬럼마다 헤더 배경색을 달리해 어느 컬럼인지 색으로도 알게 한다.
+                        색 지정은 styles.css 한 곳에 모아 둔다(키를 모르면 기본색으로 떨어진다). */}
+                    <Box className="kiosk-match-card compact" data-column={group.key}>
                       <Typography fontWeight={900}>{t(group.label)}{group.showColor ? ' color' : ''}</Typography>
                       <Typography color="text.secondary" sx={{ mt: 1 }}>{group.values.map(tPhrase).join(', ')}</Typography>
                     </Box>
@@ -4381,7 +4383,8 @@ export default function App() {
                       {recommendation.product_columns!.map((col) => (
                         <Grid item xs={6} sm={6} md={12 / recommendation.product_columns!.length} key={col.key}>
                           <Box className="item-match-column">
-                            <Box className="kiosk-match-card compact" sx={{ minHeight: 66 }}>
+                            {/* data-column — 아이템매칭 컬럼과 같은 이유(색으로도 구분). */}
+                            <Box className="kiosk-match-card compact" data-column={col.key} sx={{ minHeight: 66 }}>
                               <Typography fontWeight={900}>{tColumnLabel(col.label)}</Typography>
                               <Typography color="text.secondary" variant="body2" sx={{ mt: 0.5 }}>
                                 {tColumnReason(col.reason) || t(SKIN_COLUMN_HINT[col.key] ?? '')}
