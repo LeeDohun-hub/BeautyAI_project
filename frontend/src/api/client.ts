@@ -178,6 +178,8 @@ export async function simulateSkincare(
   file: File,
   scores?: SkinScores,
   strength = 1,
+  // 바디는 얼굴 랜드마크가 없어 서버가 살색 범위로 피부를 고른다.
+  mode: AnalysisMode = 'face',
 ): Promise<SkincareSimulationResponse> {
   const form = new FormData();
   form.append('image', file);
@@ -186,6 +188,7 @@ export async function simulateSkincare(
     form.append(key, String(scores?.[key] ?? 0));
   });
   form.append('strength', String(strength));
+  form.append('mode', mode);
   const { data } = await api.post<SkincareSimulationResponse>('/api/skin/care-simulation', form);
   return data;
 }

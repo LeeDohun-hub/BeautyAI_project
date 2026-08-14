@@ -1966,9 +1966,12 @@ export default function App() {
     if (appModule !== 'skin-care' || currentStep !== 4) return;   // 4 = 결과지 출력
     if (careSim || careSimLoading) return;
     const file = faceFiles[0];
-    if (!file || !analysis?.scores) return;
+    // ⚠ 바디는 6항목 점수가 없다(질환 선별이라 body_conditions 만 온다). scores 를 조건으로
+    //   걸면 바디 결과지에서는 이 영역이 통째로 안 뜬다(실측 2026-08-14).
+    if (!file || !analysis) return;
+    const mode: AnalysisMode = analysis.analysis_mode === 'body' ? 'body' : 'face';
     setCareSimLoading(true);
-    simulateSkincare(file, analysis.scores)
+    simulateSkincare(file, analysis.scores ?? undefined, 1, mode)
       .then(setCareSim)
       // 실패하면 이 영역만 비운다. 결과지의 나머지는 그대로 보여야 한다.
       .catch(() => setCareSim({ applied: false, changed: [], message: '' }))

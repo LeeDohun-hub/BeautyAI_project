@@ -1275,6 +1275,8 @@ async def skin_care_simulation(
     pigmentation: float = Form(default=0.0),
     oiliness: float = Form(default=0.0),
     strength: float = Form(default=1.0),
+    # face | body. 바디는 얼굴 랜드마크가 없어 살색 범위로 피부를 고른다.
+    mode: str = Form(default="face"),
 ) -> SkincareSimulationResponse:
     """케어를 이어갔을 때의 예상 모습을 만든다(피부케어 결과지용).
 
@@ -1300,6 +1302,7 @@ async def skin_care_simulation(
                 "oiliness": oiliness,
             },
             strength=strength,
+            mode=mode,
         )
         return SkincareSimulationResponse(**result)
     except Exception as exc:

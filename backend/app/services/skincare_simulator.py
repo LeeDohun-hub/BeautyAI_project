@@ -103,10 +103,25 @@ def _reduce_shine(rgb: np.ndarray, mask: np.ndarray, strength: float) -> np.ndar
     return cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
 
 
+def _body_skin_mask(rgb: np.ndarray) -> np.ndarray:
+    """바디 사진엔 얼굴 랜드마크가 없다. 살색 범위로 피부를 골라낸다.
+
+    YCrCb 의 Cr/Cb 는 조명(Y)과 비교적 분리돼 있어, 밝기가 달라도 살색 범위가 덜 흔들린다.
+    정밀한 분할이 아니라 **어디를 보정할지** 정하는 용도라 이 정도면 충분하다.
+    """
+    ycrcb = cv2.cvtColor(rgb, cv2.COLOR_RGB2YCrCb)
+    skin = cv2.inRange(ycrcb, np.array([0, 133, 77], np.uint8), np.array([255, 173, 127], np.uint8))
+    k = max(3, int(min(rgb.shape[:2]) * 0.02) | 1)
+    skin = cv2.morphologyEx(skin, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
+    skin = cv2.morphologyEx(skin, cv2.MORPH_CLOSE, np.ones((k * 2 + 1, k * 2 + 1), np.uint8))
+    return cv2.GaussianBlur(skin, (k * 2 + 1, k * 2 + 1), 0).astype(np.float32) / 255.0
+
+
 def simulate_skincare(
     image_bytes: bytes,
     scores: dict[str, float] | None = None,
     strength: float = 1.0,
+    mode: str = "face",
 ) -> dict:
     """케어 후 예상 모습을 만든다.
 
@@ -115,21 +130,42 @@ def simulate_skincare(
     '개선 결과'라고 내보내는 것이 제일 나쁘다.
     """
     rgb = _load_rgb(image_bytes)
-    result = _detect(rgb)
-    if not getattr(result, "multi_face_landmarks", None):
-        return {
-            "applied": False,
-            "before": _to_data_url(rgb),
-            "after": None,
-            "changed": [],
-            "message": "얼굴을 찾지 못해 시뮬레이션을 만들지 못했습니다.",
-        }
-    landmarks = result.multi_face_landmarks[0].landmark
-
     h, w = rgb.shape[:2]
-    face_mask = _face_mask(rgb, landmarks)
-    mask = _skin_mask(face_mask, landmarks, w, h)
+
+    # 바디는 얼굴 랜드마크가 없다. 살색 범위로 피부를 고르고, 잡티 인페인팅은 건너뛴다
+    # (후보 탐색이 얼굴 마스크를 전제로 만들어져 있다).
+    is_body = mode == "body"
+    landmarks = None
+    face_mask = None
+    if is_body:
+        mask = _body_skin_mask(rgb)
+        if float(mask.mean()) < 0.02:
+            return {
+                "applied": False,
+                "before": _to_data_url(rgb),
+                "after": None,
+                "changed": [],
+                "message": "피부 영역을 찾지 못해 시뮬레이션을 만들지 못했습니다.",
+            }
+    else:
+        result = _detect(rgb)
+        if not getattr(result, "multi_face_landmarks", None):
+            return {
+                "applied": False,
+                "before": _to_data_url(rgb),
+                "after": None,
+                "changed": [],
+                "message": "얼굴을 찾지 못해 시뮬레이션을 만들지 못했습니다.",
+            }
+        landmarks = result.multi_face_landmarks[0].landmark
+        face_mask = _face_mask(rgb, landmarks)
+        mask = _skin_mask(face_mask, landmarks, w, h)
+
     s = scores or {}
+    # 바디는 6항목 점수가 없다(질환 선별이라 body_conditions 만 온다). 점수가 하나도
+    # 안 오면 붉은기·결만 중간 강도로 다듬는다 — 없는 점수를 지어내지 않는다.
+    if is_body and not any(float(s.get(k) or 0) > 0 for k in ("redness", "pore", "acne")):
+        s = {**s, "redness": 55.0, "pore": 50.0}
     k = float(np.clip(strength, 0.0, 1.0))
 
     w_red = _weight(s.get("redness")) * k
@@ -141,7 +177,7 @@ def simulate_skincare(
     out = rgb.copy()
     changed: list[str] = []
 
-    if w_pig > 0:
+    if w_pig > 0 and face_mask is not None:
         try:
             # 후보 탐색은 윤곽 마스크를 받는다(안쪽으로 깎아 피부만 보는 건 함수가 알아서 한다).
             points = find_blemish_candidates(rgb, face_mask, landmarks) or []
