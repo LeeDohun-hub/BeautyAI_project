@@ -1679,6 +1679,224 @@ body {
   color: #18202a;
 }
 
+/* ── 시뮬레이션(4단계) ────────────────────────────────────────────────
+   카드가 곧 '담기' 단위다. 사진이 주인공이라 여백을 주지 않고 카드 끝까지 채우고,
+   글자는 아래 본문 영역에만 둔다. 담긴 상태는 테두리·배지·버튼 세 곳에서 같이 말한다
+   — 한 곳만 바뀌면 눌렀는지 아닌지 헷갈린다. */
+.pc-simulation-screen {
+  color: #1a2433;
+}
+
+.sim-card {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border: 2px solid #e4ecf3;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 26px rgba(9, 20, 32, 0.07);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.sim-card:hover {
+  transform: translateY(-4px);
+  border-color: #cddceb;
+  box-shadow: 0 20px 42px rgba(9, 20, 32, 0.15);
+}
+
+.sim-card:focus-visible {
+  outline: 3px solid #1d8fc7;
+  outline-offset: 2px;
+}
+
+.sim-card.selected {
+  border-color: #1d8fc7;
+  box-shadow: 0 20px 44px rgba(29, 143, 199, 0.26);
+}
+
+/* ── 사진 ── */
+.sim-shot {
+  position: relative;
+  aspect-ratio: 4 / 5;
+  background: #eef3f8;
+  overflow: hidden;
+}
+
+.sim-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 28%;
+  display: block;
+}
+
+.sim-swatch {
+  width: 100%;
+  height: 100%;
+  box-shadow: inset 0 -40px 60px rgba(0, 0, 0, 0.18);
+}
+
+/* 사진 아래쪽을 어둡게 깔아 무드 이름이 어떤 사진 위에서도 읽히게 한다. */
+.sim-shot::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 46%;
+  background: linear-gradient(180deg, rgba(12, 20, 30, 0) 0%, rgba(12, 20, 30, 0.72) 100%);
+  pointer-events: none;
+}
+
+.sim-shot-name {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  z-index: 1;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+.sim-rank {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(12, 20, 30, 0.62);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.sim-card.selected .sim-rank {
+  background: #1d8fc7;
+}
+
+.sim-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #1d8fc7;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 900;
+  box-shadow: 0 4px 14px rgba(29, 143, 199, 0.5);
+}
+
+/* ── 본문 ── */
+.sim-body {
+  flex: 1;
+  padding: 14px 16px 4px;
+}
+
+.sim-reason {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #5b6b7d;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sim-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sim-items li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.sim-cat {
+  flex: none;
+  width: 46px;
+  padding: 2px 0;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #6b7c8e;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.sim-name {
+  flex: 1;
+  min-width: 0;
+  color: #45566a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sim-name b {
+  color: #1a2433;
+  font-weight: 800;
+}
+
+.sim-name b::after {
+  content: ' · ';
+  color: #9fb0c0;
+  font-weight: 500;
+}
+
+/* ── 담기 ── */
+.sim-cta {
+  margin: 14px 16px 16px;
+  padding: 11px 12px;
+  border-radius: 11px;
+  background: #f2f6fa;
+  color: #51606f;
+  font-size: 13.5px;
+  font-weight: 900;
+  text-align: center;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.sim-card:hover .sim-cta {
+  background: #e4eef7;
+  color: #1d8fc7;
+}
+
+.sim-card.selected .sim-cta {
+  background: #1d8fc7;
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sim-card,
+  .sim-cta {
+    transition: none;
+  }
+  .sim-card:hover {
+    transform: none;
+  }
+}
+
 .camera-box {
   position: relative;
   overflow: hidden;

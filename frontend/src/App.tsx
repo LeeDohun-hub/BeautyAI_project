@@ -3479,21 +3479,39 @@ export default function App() {
         const picks = styleMoodRecommendations.slice(0, 3);
         const grouped = groupItemMatchProducts(personalColorItems?.products ?? [], isMaleItems);
         // 카드 i 는 카테고리마다 i 번째 후보를 가져간다 — 같은 상품이 두 카드에 겹치지 않는다.
-        const comboFor = (index: number) =>
+        // 카테고리 라벨을 상품과 **함께** 들고 다닌다. 후보가 없는 카테고리는 빠지므로,
+        // 나중에 인덱스로 라벨을 되찾으면 한 칸씩 밀린다.
+        const comboEntriesFor = (index: number) =>
           itemMatchGroups
-            .map((group) => grouped[group.key]?.[index])
-            .filter((product): product is RakutenProduct => Boolean(product))
+            .map((group) => ({ label: group.label, product: grouped[group.key]?.[index] }))
+            .filter((entry): entry is { label: string; product: RakutenProduct } => Boolean(entry.product))
             .slice(0, reportMax);
 
         return (
           <Box className="pc-simulation-screen">
             <Typography variant="caption" color="primary" fontWeight={900}>{t('시뮬레이션')}</Typography>
-            <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
-              {t('추천 상품을 얼굴에 올려봤습니다')}
-            </Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.6 }}>
-              {t('마음에 드는 쪽을 고르시면 그 세트가 그대로 결과지와 장바구니로 갑니다.')}
-            </Typography>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              justifyContent="space-between"
+              alignItems={{ xs: 'flex-start', sm: 'flex-end' }}
+              spacing={1.5}
+              sx={{ mt: 0.8 }}
+            >
+              <Box>
+                <Typography variant="h5" fontWeight={900}>
+                  {t('추천 상품을 얼굴에 올려봤습니다')}
+                </Typography>
+                <Typography color="text.secondary" sx={{ mt: 0.6 }}>
+                  {t('마음에 드는 쪽을 고르시면 그 세트가 그대로 결과지와 장바구니로 갑니다.')}
+                </Typography>
+              </Box>
+              {personalColorResult && (
+                <Chip
+                  className="style-consult-hint"
+                  label={`${t(displaySeasonLabel(personalColorResult.label))} · ${t('상위 3개')}`}
+                />
+              )}
+            </Stack>
 
             {/* 들어오자마자 본인 사진으로 굽는다(위 useEffect). 버튼은 다시 굽기용으로만 남긴다. */}
             {personalColorFile ? (
@@ -3520,7 +3538,8 @@ export default function App() {
 
             <Grid container spacing={2} sx={{ mt: 0.5 }}>
               {picks.map(({ mood, reason }, index) => {
-                const combo = comboFor(index);
+                const entries = comboEntriesFor(index);
+                const combo = entries.map((entry) => entry.product);
                 // ⚠ 체크 표시는 **실제로 담긴 것**을 따라야 한다. selectedMood 로 판정했더니
                 //   진입 시 무드만 자동 선택되는 것만으로 '담았습니다'가 떴고, 결과지 장바구니는
                 //   비어 있었다(실측 2026-08-14). 담기지 않은 것을 담았다고 말하면 안 된다.
@@ -3534,9 +3553,10 @@ export default function App() {
                 return (
                   <Grid item xs={12} sm={4} key={mood.id}>
                     <Box
-                      className={`style-mood-card${selected ? ' selected' : ''}`}
+                      className={`sim-card${selected ? ' selected' : ''}`}
                       role="button"
                       tabIndex={0}
+                      aria-pressed={selected}
                       onClick={choose}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
@@ -3545,36 +3565,35 @@ export default function App() {
                         }
                       }}
                     >
-                      {/* 본인 사진 → 없으면 색상 견본. 번들 모델 사진은 쓰지 않는다. */}
-                      {simPreviews[mood.id] ? (
-                        <Box className="style-mood-thumb photo">
+                      <Box className="sim-shot">
+                        {/* 본인 사진 → 없으면 색상 견본. 번들 모델 사진은 쓰지 않는다. */}
+                        {simPreviews[mood.id] ? (
                           <img src={simPreviews[mood.id]} alt={`${t('내 사진에')} ${t(mood.label)} ${t('적용')}`} />
-                        </Box>
-                      ) : (
-                        <Box className={`style-mood-thumb ${mood.thumbClass}`} />
-                      )}
-                      <Typography className="style-mood-label" fontWeight={900}>{t(mood.label)}</Typography>
-                      <Typography variant="caption" color="text.secondary">{reason}</Typography>
-                      <Stack spacing={0.4} sx={{ mt: 1.2 }}>
-                        {combo.map((product) => (
-                          <Typography
-                            key={`${product.id}-${product.keyword}`}
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                          >
-                            {product.brand ? `${product.brand} · ` : ''}{product.name}
-                          </Typography>
-                        ))}
-                      </Stack>
-                      <Typography
-                        variant="caption"
-                        fontWeight={900}
-                        color={selected ? 'primary.main' : 'text.secondary'}
-                        sx={{ display: 'block', mt: 1.2 }}
-                      >
+                        ) : (
+                          <Box className={`sim-swatch ${mood.thumbClass}`} />
+                        )}
+                        <span className="sim-rank">{index + 1}{t('순위')}</span>
+                        {selected && <span className="sim-check" aria-hidden="true">✓</span>}
+                        <span className="sim-shot-name">{t(mood.label)}</span>
+                      </Box>
+
+                      <Box className="sim-body">
+                        <p className="sim-reason">{reason}</p>
+                        <ul className="sim-items">
+                          {entries.map(({ label, product }) => (
+                            <li key={`${product.id}-${product.keyword}`}>
+                              <span className="sim-cat">{t(label)}</span>
+                              <span className="sim-name">
+                                {product.brand ? <b>{product.brand}</b> : null}{product.name}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </Box>
+
+                      <span className="sim-cta">
                         {selected ? `✓ ${t('이 세트를 담았습니다')}` : t('이 세트 담기')}
-                      </Typography>
+                      </span>
                     </Box>
                   </Grid>
                 );
