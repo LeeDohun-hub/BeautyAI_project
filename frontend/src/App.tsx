@@ -53,7 +53,7 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getMoodThumbnails, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, retouchBlemishes, setSessionToken, simulateVirtualSurgery } from './api/client';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, retouchBlemishes, setSessionToken, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
 import type { AnalysisMode, BlemishPoint, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
 
@@ -1702,12 +1702,17 @@ export default function App() {
   const itemMatchRequestId = useRef(0);
   const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [moodItems, setMoodItems] = useState<PersonalColorItemMatchResponse | null>(null);
-  const [moodThumbnails, setMoodThumbnails] = useState<Record<string, string>>({});
-  const [moodThumbsLoading, setMoodThumbsLoading] = useState(false);
+  // 번들 모델 사진(model_face.png) 기반 무드 썸네일은 더 이상 쓰지 않는다 —
+  // 서비스에 내보낼 만한 이미지가 아니었고, 지금은 시뮬레이션이 본인 사진으로 바로 굽는다.
+  // 백엔드의 /style/mood-thumbnails 는 남아 있지만 화면에서 호출하지 않는다.
   // 내 사진에 무드 적용 — 퍼스널컬러 분석에 쓴 사진을 그대로 재사용해 다시 올리지 않게 한다.
   const [myFaceMakeup, setMyFaceMakeup] = useState<{ mood: string; image: string } | null>(null);
   const [myFaceLoading, setMyFaceLoading] = useState(false);
   const [myFaceError, setMyFaceError] = useState('');
+  // 시뮬레이션 카드는 무드마다 결과 이미지가 **따로** 필요하다. myFaceMakeup 은 결과지용이라
+  // 한 장만 들고 있어서 카드 3장에는 쓸 수 없다.
+  const [simPreviews, setSimPreviews] = useState<Record<string, string>>({});
+  const [simLoading, setSimLoading] = useState(false);
   const [itemRegion, setItemRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [itemPlatform, setItemPlatform] = useState<ItemPlatform>('all');
   // 결과지에 담은 상품을 **객체로** 들고 있는다(키 목록이 아니라).
@@ -1914,28 +1919,33 @@ export default function App() {
   }, [personalColorItems, moodItems]);
 
   useEffect(() => {
-    if (appModule !== 'personal-color' || personalColorStep !== 4 || !personalColorResult) return;
-    // Step 4 아이템 매칭은 무드가 아니라 '얼굴분석(퍼스널컬러)' 기반으로 추천한다.
+    // 아이템 매칭은 2단계다(2026-08-14 재구성). 여기서 상품을 못 채우면 3단계 시뮬레이션이
+    // 통째로 빈다 — 카드가 이 결과에서 조합되기 때문이다.
+    if (appModule !== 'personal-color' || personalColorStep !== 2 || !personalColorResult) return;
+    // 아이템 매칭은 무드가 아니라 '얼굴분석(퍼스널컬러)' 기반으로 추천한다.
     if (personalColorItems) return;
     loadPersonalColorItems();
   }, [appModule, personalColorStep, personalColorResult, personalColorItems, selectedMood, itemRegion, itemPlatform]);
 
   useEffect(() => {
-    if (appModule !== 'personal-color' || personalColorStep !== 4 || !selectedMood) return;
+    // 무드는 이제 3단계 시뮬레이션에서 정해진다. 카드에서 고른 무드로 상품을 다시 받아
+    // 결과지가 그 무드 기준으로 나오게 한다.
+    if (appModule !== 'personal-color' || personalColorStep !== 3 || !selectedMood) return;
     if (moodItems || loading === 'style-mood-items') return;
     const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood);
     if (activeMood) selectStyleMood(activeMood);
   }, [appModule, personalColorStep, selectedMood, moodItems, loading, itemRegion, itemPlatform]);
 
   useEffect(() => {
+    // 시뮬레이션에 들어오면 **바로 본인 사진으로** 굽는다. 예전에는 번들 모델 사진을 먼저
+    // 보여주고 버튼을 눌러야 내 얼굴이 됐는데, 그 모델 사진(model_face.png)은 서비스에
+    // 내보낼 만한 이미지가 아니었다. 지금은 모델 사진 경로를 아예 쓰지 않는다.
     if (appModule !== 'personal-color' || personalColorStep !== 3) return;
-    if (Object.keys(moodThumbnails).length || moodThumbsLoading) return;
-    setMoodThumbsLoading(true);
-    getMoodThumbnails()
-      .then((res) => setMoodThumbnails(res.thumbnails))
-      .catch(() => undefined)
-      .finally(() => setMoodThumbsLoading(false));
-  }, [appModule, personalColorStep, moodThumbnails, moodThumbsLoading]);
+    if (!personalColorFile || simLoading) return;
+    const ids = styleMoodRecommendations.slice(0, 3).map(({ mood }) => mood.id);
+    if (ids.every((id) => simPreviews[id])) return;
+    void loadSimulationPreviews(ids);
+  }, [appModule, personalColorStep, personalColorFile, styleMoodRecommendations, simPreviews, simLoading]);
 
   useEffect(() => {
     if (appModule !== 'personal-color' || personalColorStep !== 3) return;
@@ -2441,6 +2451,35 @@ export default function App() {
       setMyFaceError('내 사진에 적용하지 못했어요. 잠시 후 다시 시도해 주세요.');
     } finally {
       setMyFaceLoading(false);
+    }
+  }
+
+  // 시뮬레이션 카드 3장을 한 번에 굽는다. 실패한 무드는 조용히 건너뛰고 모델 사진으로 떨어진다
+  // — 한 장이 실패했다고 화면 전체를 막으면 고를 수가 없다.
+  async function loadSimulationPreviews(moodIds: string[]) {
+    if (!personalColorFile || !moodIds.length) return;
+    const missing = moodIds.filter((id) => !simPreviews[id]);
+    if (!missing.length) return;
+    setSimLoading(true);
+    try {
+      const gender = personalColorProfile.gender === 'male' ? 'male' : 'female';
+      const results = await Promise.all(
+        missing.map(async (id) => {
+          try {
+            const result = await previewMakeupOnPhoto(personalColorFile, id, gender);
+            return result.applied ? ([id, result.image] as const) : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const next: Record<string, string> = {};
+      results.forEach((pair) => {
+        if (pair) next[pair[0]] = pair[1];
+      });
+      if (Object.keys(next).length) setSimPreviews((prev) => ({ ...prev, ...next }));
+    } finally {
+      setSimLoading(false);
     }
   }
 
@@ -2991,12 +3030,14 @@ export default function App() {
         }}
       />
     );
+    // 2026-08-14 고객사 리뷰 반영: 얼굴형 분석·무드 선택을 단계에서 빼고 시뮬레이션을 넣었다.
+    // 얼굴형은 없앤 게 아니라 자동 계산으로만 남아 결과지에 실린다(셰이딩·치크 근거가 사라지지
+    // 않게). 무드 선택은 시뮬레이션 카드가 대신한다 — 이름을 보고 고르던 것을 결과를 보고 고르게.
     const personalColorSteps = [
       '개인정보 입력',
       'AI 퍼스널컬러 분석',
-      '얼굴형 분석',
-      '메이크업 무드 선택',
       '아이템 매칭',
+      '시뮬레이션',
       '결과지 출력',
     ];
     const canMoveNext =
@@ -3429,249 +3470,135 @@ export default function App() {
         );
       }
 
-      if (personalColorStep === 2) {
-        const personalColorKey = personalColorResult
-          ? `${personalColorResult.tone}-${personalColorResult.subtype}`
-          : '';
-        const faceProductSet = FACE_PRODUCT_MAP[personalColorKey] ?? DEFAULT_FACE_PRODUCT_SET;
-        // 태그는 `#계란형` 처럼 '#'+얼굴형이라 '#'를 떼고 번역한 뒤 다시 붙인다.
-        const shapeTags = faceShape?.detected
-          ? faceShape.tags.map((tag) => (tag.startsWith('#') ? `#${t(tag.slice(1))}` : t(tag))).join(' ')
-          : null;
-        const shapeSummary = faceShape?.detected
-          ? t(faceShape.summary)
-          : faceShape
-            ? t(faceShape.summary)
-            // 저장된 퍼스널 컬러로 들어오면 사진이 없다 — '분석 중'으로 두면 영영 안 끝난다.
-            : personalColorResult && personalColorCount === 0
-              ? t('저장된 퍼스널 컬러로 진행 중이라 얼굴형 분석은 건너뛰었습니다. 사진을 넣으면 얼굴형까지 함께 분석합니다.')
-              : personalColorResult
-                ? t('얼굴형을 분석하고 있어요…')
-                : t('AI 퍼스널컬러 분석을 먼저 진행하면 사진을 바탕으로 얼굴형이 표시됩니다.');
-        const ratioRows = faceShape?.detected && faceShape.ratios.length
-          ? faceShape.ratios
-          : [
-              { label: '상/중/하안부 비율', width: 80 },
-              { label: '눈 사이/눈 크기', width: 72 },
-              { label: '얼굴 가로/세로', width: 78 },
-              { label: '턱선/광대 대비', width: 64 },
-            ];
-        const blusherTip = t(
-          faceShape?.detected
-            ? faceShape.blusher_tip
-            : '웃을 때 볼 중앙보다 살짝 바깥에 생기 있게 올려 부드러운 인상을 살려주세요.',
-        );
-        const shadingTip = t(
-          faceShape?.detected
-            ? faceShape.shading_tip
-            : '턱선 양옆과 광대 외곽에 부드럽게 넣어 얼굴 윤곽을 자연스럽게 정리해 보세요.',
-        );
-
-        const toneMatchLabel = personalColorResult
-          ? `${t(personalColorResult.label)} ${t('매치')}`
-          : t('추천');
-        const blushColors = personalColorResult?.makeup.blush ?? [];
-        const blusherRows = (blushColors.length ? blushColors.slice(0, 2) : ['생기 코랄', '맑은 핑크']).map(
-          (color, i) => ({
-            brand: faceProductSet.blushBrands[i] ?? faceProductSet.blushBrands[0],
-            desc: `${tPhrase(color)} ${t('톤으로 생기 강조')}`,
-          }),
-        );
-        const shadingRows = faceProductSet.shadingColors.map((color, i) => ({
-          brand: faceProductSet.shadingBrands[i] ?? faceProductSet.shadingBrands[0],
-          desc: `${tPhrase(color)} ${t('음영으로 턱선·광대 외곽 정리')}`,
-        }));
-
-        return (
-          <Box className="face-shape-screen">
-            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
-              <Stack direction="row" spacing={1} className="kiosk-sub-tabs">
-                {['내 퍼스널 컬러', '내 얼굴형 분석', '메이크업 무드 선택', '아이템 매칭'].map((tab) => (
-                  <Chip key={tab} label={t(tab)} className={tab === '내 얼굴형 분석' ? 'selected' : ''} />
-                ))}
-              </Stack>
-              <Button variant="text" color="inherit">{t('나가기')}</Button>
-            </Stack>
-
-            <Box sx={{ mt: 3 }}>
-              <Typography variant="caption" color="primary" fontWeight={900}>{t('내 얼굴형 분석')}</Typography>
-              <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
-                {shapeTags ? `${t('내 얼굴형 유형은')} ${shapeTags}` : t('내 얼굴형 분석')}
-              </Typography>
-              <Typography color="text.secondary" sx={{ mt: 0.6 }}>
-                {shapeSummary}
-              </Typography>
-            </Box>
-
-            <Grid container spacing={3} sx={{ mt: 1 }}>
-              <Grid item xs={12} md={4}>
-                <Box className="face-diagram">
-                  <Box className="face-outline">
-                    <Box className="hair-line" />
-                    <Box className="brow left" />
-                    <Box className="brow right" />
-                    <Box className="eye left" />
-                    <Box className="eye right" />
-                    <Box className="nose" />
-                    <Box className="mouth" />
-                  </Box>
-                  <Box className="measure-line horizontal top" />
-                  <Box className="measure-line horizontal mid" />
-                  <Box className="measure-line vertical left" />
-                  <Box className="measure-line vertical right" />
-                </Box>
-              </Grid>
-              <Grid item xs={12} md={8}>
-                <Box className="face-ratio-panel">
-                  <Typography fontWeight={900}>{t('얼굴 비율 측정')}</Typography>
-                  {ratioRows.map((row) => (
-                    <Box className="face-ratio-row" key={row.label}>
-                      <Typography variant="body2">{localizeRatioLabel(row.label)}</Typography>
-                      <Box className="face-ratio-track">
-                        <Box sx={{ width: `${row.width}%` }} />
-                      </Box>
-                    </Box>
-                  ))}
-                </Box>
-              </Grid>
-            </Grid>
-
-            <Box sx={{ mt: 3 }}>
-              <Typography variant="h5" fontWeight={900}>{t('얼굴형에 맞춘 메이크업 제안이에요!')}</Typography>
-              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                {t('AI가 얼굴형이나 피부톤에 맞는 메이크업 팁과 추천템을 제안해드려요.')}
-              </Typography>
-
-              <Stack direction="row" spacing={1} sx={{ mt: 2 }} className="makeup-tabs">
-                <Chip label={t('블러셔')} className="selected" />
-                <Chip label={t('쉐딩')} />
-              </Stack>
-
-              <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                <Grid item xs={12} md={6}>
-                  <Box className="face-makeup-section">
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Box className="section-index">1</Box>
-                      <Typography fontWeight={900}>{t('블러셔')}</Typography>
-                    </Stack>
-                    <Typography color="text.secondary" sx={{ mt: 1 }}>
-                      {blusherTip}
-                    </Typography>
-                    <Stack spacing={1.2} sx={{ mt: 2 }}>
-                      {blusherRows.map((row) => (
-                        <Box className="face-product-row" key={row.brand}>
-                          <Box className="product-swatch" sx={{ backgroundColor: faceProductSet.blushSwatch }} />
-                          <Box>
-                            <Typography fontWeight={900}>{t(row.brand)}</Typography>
-                            <Typography variant="body2" color="text.secondary">{row.desc}</Typography>
-                            <Typography variant="caption" color="error">● {toneMatchLabel}</Typography>
-                          </Box>
-                        </Box>
-                      ))}
-                    </Stack>
-                  </Box>
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <Box className="face-makeup-section">
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Box className="section-index">2</Box>
-                      <Typography fontWeight={900}>{t('쉐딩')}</Typography>
-                    </Stack>
-                    <Typography color="text.secondary" sx={{ mt: 1 }}>
-                      {shadingTip}
-                    </Typography>
-                    <Stack spacing={1.2} sx={{ mt: 2 }}>
-                      {shadingRows.map((row) => (
-                        <Box className="face-product-row" key={row.brand}>
-                          <Box className="product-swatch" sx={{ backgroundColor: faceProductSet.shadingSwatch }} />
-                          <Box>
-                            <Typography fontWeight={900}>{t(row.brand)}</Typography>
-                            <Typography variant="body2" color="text.secondary">{row.desc}</Typography>
-                            <Typography variant="caption" color="error">● {toneMatchLabel}</Typography>
-                          </Box>
-                        </Box>
-                      ))}
-                    </Stack>
-                  </Box>
-                </Grid>
-              </Grid>
-            </Box>
-
-            <Button fullWidth variant="contained" className="print-card-button" sx={{ mt: 3 }}>
-              {t('진단카드 출력하기')}
-            </Button>
-          </Box>
-        );
-      }
-
+      // ── 3단계: 시뮬레이션 ──────────────────────────────────────────────
+      // 아이템 매칭(2단계)이 끝난 뒤라 후보 상품이 이미 있다. 상위 3개 무드를 자동으로 제안하고,
+      // 사용자는 여기서 **한 번만** 고른다(예전 무드 선택 + 아이템 5회 체크 = 6번 → 1번).
+      // ⚠ 카드에 가격을 넣지 않는다 — 고르는 기준이 '어울리는가'여야 하는데 금액이 붙으면
+      //    싼 쪽으로 눈이 간다. 금액은 결과지에서만 보여준다.
       if (personalColorStep === 3) {
-        const activeRecommendation =
-          styleMoodRecommendations.find((item) => item.mood.id === selectedMood) ?? styleMoodRecommendations[0] ?? null;
-        const activeMood = activeRecommendation?.mood ?? null;
+        const picks = styleMoodRecommendations.slice(0, 3);
+        const grouped = groupItemMatchProducts(personalColorItems?.products ?? [], isMaleItems);
+        // 카드 i 는 카테고리마다 i 번째 후보를 가져간다 — 같은 상품이 두 카드에 겹치지 않는다.
+        const comboFor = (index: number) =>
+          itemMatchGroups
+            .map((group) => grouped[group.key]?.[index])
+            .filter((product): product is RakutenProduct => Boolean(product))
+            .slice(0, reportMax);
+
         return (
-          <Box className="style-consult-screen">
-            <Typography variant="caption" color="primary" fontWeight={900}>{t('메이크업 무드 선택')}</Typography>
+          <Box className="pc-simulation-screen">
+            <Typography variant="caption" color="primary" fontWeight={900}>{t('시뮬레이션')}</Typography>
             <Typography variant="h5" fontWeight={900} sx={{ mt: 0.8 }}>
-              {t('AI 스타일 컨설턴트가')}<br />{t('추천하는 메이크업 무드에요!')}
+              {t('추천 상품을 얼굴에 올려봤습니다')}
             </Typography>
-            <Chip className="style-consult-hint" label={t('퍼스널컬러 분석 결과로 상위 3개 무드를 골랐습니다')} sx={{ mt: 2 }} />
+            <Typography color="text.secondary" sx={{ mt: 0.6 }}>
+              {t('마음에 드는 쪽을 고르시면 그 세트가 그대로 결과지와 장바구니로 갑니다.')}
+            </Typography>
+
+            {/* 들어오자마자 본인 사진으로 굽는다(위 useEffect). 버튼은 다시 굽기용으로만 남긴다. */}
+            {personalColorFile ? (
+              simLoading ? (
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
+                  <CircularProgress size={16} />
+                  <Typography variant="body2" color="text.secondary">{t('내 사진에 적용 중…')}</Typography>
+                </Stack>
+              ) : (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  sx={{ mt: 2 }}
+                  onClick={() => loadSimulationPreviews(picks.map(({ mood }) => mood.id))}
+                >
+                  {t('다시 적용')}
+                </Button>
+              )
+            ) : (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                {t('분석에 쓴 사진이 없어 색상 견본으로 보여드립니다.')}
+              </Alert>
+            )}
 
             <Grid container spacing={2} sx={{ mt: 0.5 }}>
-              {styleMoodRecommendations.map(({ mood, reason }, index) => (
-                <Grid item xs={12} sm={4} key={mood.id}>
-                  <Box
-                    className={`style-mood-card${selectedMood === mood.id ? ' selected' : ''}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectStyleMood(mood)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        selectStyleMood(mood);
-                      }
-                    }}
-                  >
-                    {moodThumbnails[mood.id] ? (
-                      <Box className="style-mood-thumb photo">
-                        <img src={moodThumbnails[mood.id]} alt={`${t(mood.label)} ${t('적용')}`} />
-                      </Box>
-                    ) : (
-                      <Box className={`style-mood-thumb ${mood.thumbClass}`} />
-                    )}
-                    <Typography className="style-mood-label" fontWeight={900}>{t(mood.label)}</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {index + 1}{t('순위')} · {reason}
-                    </Typography>
-                  </Box>
-                </Grid>
-              ))}
+              {picks.map(({ mood, reason }, index) => {
+                const combo = comboFor(index);
+                // ⚠ 체크 표시는 **실제로 담긴 것**을 따라야 한다. selectedMood 로 판정했더니
+                //   진입 시 무드만 자동 선택되는 것만으로 '담았습니다'가 떴고, 결과지 장바구니는
+                //   비어 있었다(실측 2026-08-14). 담기지 않은 것을 담았다고 말하면 안 된다.
+                const comboKey = combo.map(productIdentityKey).join('|');
+                const pickedKey = reportPicks.map(productIdentityKey).join('|');
+                const selected = combo.length > 0 && comboKey === pickedKey;
+                const choose = () => {
+                  selectStyleMood(mood);
+                  if (combo.length) setReportPicks(combo);
+                };
+                return (
+                  <Grid item xs={12} sm={4} key={mood.id}>
+                    <Box
+                      className={`style-mood-card${selected ? ' selected' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={choose}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          choose();
+                        }
+                      }}
+                    >
+                      {/* 본인 사진 → 없으면 색상 견본. 번들 모델 사진은 쓰지 않는다. */}
+                      {simPreviews[mood.id] ? (
+                        <Box className="style-mood-thumb photo">
+                          <img src={simPreviews[mood.id]} alt={`${t('내 사진에')} ${t(mood.label)} ${t('적용')}`} />
+                        </Box>
+                      ) : (
+                        <Box className={`style-mood-thumb ${mood.thumbClass}`} />
+                      )}
+                      <Typography className="style-mood-label" fontWeight={900}>{t(mood.label)}</Typography>
+                      <Typography variant="caption" color="text.secondary">{reason}</Typography>
+                      <Stack spacing={0.4} sx={{ mt: 1.2 }}>
+                        {combo.map((product) => (
+                          <Typography
+                            key={`${product.id}-${product.keyword}`}
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          >
+                            {product.brand ? `${product.brand} · ` : ''}{product.name}
+                          </Typography>
+                        ))}
+                      </Stack>
+                      <Typography
+                        variant="caption"
+                        fontWeight={900}
+                        color={selected ? 'primary.main' : 'text.secondary'}
+                        sx={{ display: 'block', mt: 1.2 }}
+                      >
+                        {selected ? `✓ ${t('이 세트를 담았습니다')}` : t('이 세트 담기')}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                );
+              })}
             </Grid>
 
-            {activeMood && (
-              <Box sx={{ mt: 3 }}>
-                <Alert severity="success" icon={<Sparkles size={18} />}>
-                  {t('AI가')} ‘{t(activeMood.label)}’ {t('무드를 우선 추천했어요.')} {t(activeRecommendation?.reason ?? activeMood.vibe)}
-                </Alert>
-
-                <Button
-                  variant="contained"
-                  sx={{ mt: 2 }}
-                  onClick={() => setPersonalColorStep(4)}
-                  disabled={loading === 'style-mood-items'}
-                >
-                  {t(loading === 'style-mood-items'
-                    ? '추천 제품 불러오는 중…'
-                    : '아이템 매칭에서 추천 제품 보기 →')}
-                </Button>
-              </Box>
-            )}
+            {!personalColorItems?.products?.length ? (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                {t('추천 상품이 아직 없습니다. 이전 단계에서 상품을 먼저 불러와 주세요.')}
+              </Alert>
+            ) : !reportPicks.length ? (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                {t('세트를 하나 고르면 결과지와 장바구니에 담깁니다.')}
+              </Alert>
+            ) : null}
           </Box>
         );
       }
 
-      if (personalColorStep === 4) {
-        // Step 4는 얼굴분석(퍼스널컬러) 기반 추천으로 고정한다. 무드는 Step 3 메이크업
-        // 미리보기 전용이며 아이템 매칭에는 관여하지 않는다.
+
+      // 아이템 매칭은 2단계로 앞당겼다(선택은 3단계 시뮬레이션에서 한 번만 한다).
+      if (personalColorStep === 2) {
+        // 아이템 매칭(2단계)은 얼굴분석(퍼스널컬러) 기반 추천으로 고정한다. 무드는 3단계
+        // 시뮬레이션에서 정해지며 이 화면의 후보 산출에는 관여하지 않는다.
         const activeMood = STYLE_MOODS.find((mood) => mood.id === selectedMood) ?? null;
         const items = activeMood ? moodItems : personalColorItems;
         const itemsLoading = loading === (activeMood ? 'style-mood-items' : 'personal-color-items');
@@ -3684,7 +3611,7 @@ export default function App() {
           <Box>
             <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5}>
               <Box>
-                <Typography variant="h5" fontWeight={900}>{t('Step 4. 아이템 매칭')}</Typography>
+                <Typography variant="h5" fontWeight={900}>{t('Step 3. 아이템 매칭')}</Typography>
                 <Typography color="text.secondary" sx={{ mt: 0.5 }}>
                   {t(isJapanRegion
                     ? itemPlatform === 'matsukiyo'
@@ -3840,16 +3767,18 @@ export default function App() {
                     </Typography>
                   </Box>
                   <Box>
+                    {/* 시뮬레이션에서 이미 구운 본인 사진을 그대로 쓴다. 번들 모델 사진은
+                        서비스에 내보내지 않으므로 폴백은 색상 견본이다. */}
                     <Box className="report-mood-thumb">
-                      {myFaceMakeup?.mood === activeMood.id ? (
+                      {simPreviews[activeMood.id] ? (
+                        <img src={simPreviews[activeMood.id]} alt={`${t('내 사진에')} ${t(activeMood.label)} ${t('적용')}`} />
+                      ) : myFaceMakeup?.mood === activeMood.id ? (
                         <img src={myFaceMakeup.image} alt={`${t('내 사진에')} ${t(activeMood.label)} ${t('적용')}`} />
-                      ) : moodThumbnails[activeMood.id] ? (
-                        <img src={moodThumbnails[activeMood.id]} alt={t(activeMood.label)} />
                       ) : (
                         <Box className={`style-mood-thumb ${activeMood.thumbClass}`} />
                       )}
                     </Box>
-                    {personalColorFile ? (
+                    {personalColorFile && !simPreviews[activeMood.id] ? (
                       <Button
                         size="small"
                         fullWidth
@@ -3857,11 +3786,7 @@ export default function App() {
                         onClick={() => applyMoodToMyFace(activeMood.id)}
                         sx={{ mt: 0.6, fontSize: 12 }}
                       >
-                        {t(myFaceLoading
-                          ? '적용 중…'
-                          : myFaceMakeup?.mood === activeMood.id
-                            ? '모델 사진 보기'
-                            : '내 사진으로 보기')}
+                        {t(myFaceLoading ? '적용 중…' : '내 사진으로 보기')}
                       </Button>
                     ) : null}
                     {myFaceError ? (
@@ -3952,8 +3877,8 @@ export default function App() {
           </Box>
           <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
             {t(reportPicks.length
-              ? 'Step 4에서 결과지에 담은 상품만 표시됩니다.'
-              : 'Step 4에서 상품을 담으면 여기에 표시됩니다.')}
+              ? '시뮬레이션에서 고른 세트가 표시됩니다.'
+              : '시뮬레이션에서 세트를 고르면 여기에 표시됩니다.')}
           </Typography>
 
           {/* 결과지를 본 뒤 바로 질문할 수 있게 상담을 같은 화면에서 연다. */}
