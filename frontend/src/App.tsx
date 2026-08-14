@@ -53,9 +53,9 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, retouchBlemishes, setSessionToken, simulateVirtualSurgery } from './api/client';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, retouchBlemishes, setSessionToken, simulateSkincare, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
-import type { AnalysisMode, BlemishPoint, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard } from './types/api';
+import type { AnalysisMode, BlemishPoint, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard , SkincareSimulationResponse } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
 // 그 외에는 브랜드+상품명으로 각 플랫폼 검색 결과를 연다.
@@ -1716,6 +1716,9 @@ export default function App() {
   // 가상성형 미리보기에서 '바뀐 곳' 표시. 기본은 켬 — 안 보인다는 지적에서 나온 기능이라
   // 처음부터 보여야 의미가 있다. 원본 그대로 보고 싶으면 끌 수 있다.
   const [showChangeMarks, setShowChangeMarks] = useState(true);
+  // 피부케어 결과지의 '케어 후 예상' 시뮬레이션.
+  const [careSim, setCareSim] = useState<SkincareSimulationResponse | null>(null);
+  const [careSimLoading, setCareSimLoading] = useState(false);
   const [itemRegion, setItemRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [itemPlatform, setItemPlatform] = useState<ItemPlatform>('all');
   // 결과지에 담은 상품을 **객체로** 들고 있는다(키 목록이 아니라).
@@ -1956,6 +1959,21 @@ export default function App() {
     const firstRecommendation = styleMoodRecommendations[0]?.mood;
     if (firstRecommendation) selectStyleMood(firstRecommendation);
   }, [appModule, personalColorStep, selectedMood, loading, styleMoodRecommendations]);
+
+  // 피부케어 결과지(5단계)에 들어오면 '케어 후 예상'을 굽는다.
+  // ⚠ 사진 원본이 있어야 한다 — 서버가 사진을 들고 있지 않아 다시 보내야 한다.
+  useEffect(() => {
+    if (appModule !== 'skin-care' || currentStep !== 4) return;   // 4 = 결과지 출력
+    if (careSim || careSimLoading) return;
+    const file = faceFiles[0];
+    if (!file || !analysis?.scores) return;
+    setCareSimLoading(true);
+    simulateSkincare(file, analysis.scores)
+      .then(setCareSim)
+      // 실패하면 이 영역만 비운다. 결과지의 나머지는 그대로 보여야 한다.
+      .catch(() => setCareSim({ applied: false, changed: [], message: '' }))
+      .finally(() => setCareSimLoading(false));
+  }, [appModule, currentStep, careSim, careSimLoading, faceFiles, analysis]);
 
   async function refreshCameraDevices() {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -5823,6 +5841,57 @@ export default function App() {
                       </Box>
                     ))}
                   </Stack>
+                )}
+
+                {/* 케어를 이어갔을 때의 예상. 얼굴을 못 찾았거나 걸린 항목이 없으면
+                    applied=false 로 오고, 그때는 이 영역을 통째로 감춘다 —
+                    원본을 '개선 결과'라고 내보내는 것이 제일 나쁘다. */}
+                {careSimLoading && (
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
+                    <CircularProgress size={14} />
+                    <Typography variant="caption" color="text.secondary">
+                      {t('케어 후 예상 모습을 만드는 중…')}
+                    </Typography>
+                  </Stack>
+                )}
+                {careSim?.applied && careSim.before && careSim.after && (
+                  <Box className="care-sim" sx={{ mt: 2 }}>
+                    <Typography className="report-section-title">{t('케어를 이어갔을 때')}</Typography>
+                    <Box className="care-sim-pair">
+                      <Box className="care-sim-shot">
+                        <span>Now</span>
+                        <img src={careSim.before} alt={t('현재 피부')} />
+                      </Box>
+                      <Box className="care-sim-shot">
+                        <span className="after">After</span>
+                        <img src={careSim.after} alt={t('케어 후 예상 모습')} />
+                        {showChangeMarks && (careSim.regions ?? []).length > 0 && (
+                          <Box className="change-marks" aria-hidden="true">
+                            {(careSim.regions ?? []).map((region, i) => (
+                              <span
+                                key={`${region.x}-${region.y}-${i}`}
+                                className="change-mark"
+                                style={{
+                                  left: `${region.x * 100}%`,
+                                  top: `${region.y * 100}%`,
+                                  width: `${region.w * 100}%`,
+                                  height: `${region.h * 100}%`,
+                                  animationDelay: `${i * 0.12}s`,
+                                }}
+                              />
+                            ))}
+                          </Box>
+                        )}
+                      </Box>
+                    </Box>
+                    {careSim.changed.length > 0 && (
+                      <Box className="care-sim-tags">
+                        {careSim.changed.map((key) => (
+                          <span key={key}>{t(scoreLabels[key as keyof typeof scoreLabels] ?? key)}</span>
+                        ))}
+                      </Box>
+                    )}
+                  </Box>
                 )}
               </Box>
 

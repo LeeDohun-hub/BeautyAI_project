@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, MyDataDeletionResult, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryRetouchResponse, VirtualSurgeryTuning } from '../types/api';
+import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, MyDataDeletionResult, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationResponse, SkincareSimulationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryRetouchResponse, VirtualSurgeryTuning } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -170,6 +170,23 @@ export async function previewMakeupOnPhoto(
   // 성별로 '강도'가 아니라 **올리는 항목**이 바뀐다 — 여성 립·볼·아이 / 남성 눈썹·립밤.
   form.append('gender', gender);
   const { data } = await api.post<MakeupPreviewResponse>('/api/style/makeup-preview/photo', form);
+  return data;
+}
+
+/** 케어를 이어갔을 때의 예상 모습. 분석 점수를 함께 보내 **걸린 항목만** 손대게 한다. */
+export async function simulateSkincare(
+  file: File,
+  scores?: SkinScores,
+  strength = 1,
+): Promise<SkincareSimulationResponse> {
+  const form = new FormData();
+  form.append('image', file);
+  // ⚠ 원본을 다시 보낸다 — 서버가 사진을 들고 있지 않다(개인정보 미저장 원칙).
+  (['acne', 'pore', 'wrinkle', 'redness', 'pigmentation', 'oiliness'] as const).forEach((key) => {
+    form.append(key, String(scores?.[key] ?? 0));
+  });
+  form.append('strength', String(strength));
+  const { data } = await api.post<SkincareSimulationResponse>('/api/skin/care-simulation', form);
   return data;
 }
 

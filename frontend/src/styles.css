@@ -248,6 +248,68 @@ body {
   background: #f7fbfe;
 }
 
+/* ── 케어 후 예상(피부케어 결과지) ────────────────────────────────────
+   진단 요약 아래 비어 있던 자리를 채운다. 가상성형과 같은 문법(전/후 나란히 +
+   바뀐 곳 표시)이라 사용자가 새로 배울 것이 없다. */
+.care-sim-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* 결과지 카드가 고정 높이라 3/4 로 두면 아래가 잘린다(실측). 가로로 눕혀 자리를 맞춘다. */
+.care-sim-shot {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--yp-line);
+  background: #f7fbfe;
+  aspect-ratio: 1 / 1;
+}
+
+.care-sim-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 28%;
+  display: block;
+}
+
+.care-sim-shot span {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 900;
+  color: var(--yp-ink);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.care-sim-shot span.after {
+  background: rgba(29, 143, 199, 0.92);
+  color: #fff;
+}
+
+.care-sim-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.care-sim-tags span {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #eef4f9;
+  color: #51606f;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 /* ── 바뀐 곳 표시 ──────────────────────────────────────────────────────
    결과 이미지만으로는 어디가 달라졌는지 알아보기 어렵다는 지적(2026-08-14).
    서버가 전/후를 비교해 좌표를 내려주고, 여기서 그 위에 테두리를 얹는다.
