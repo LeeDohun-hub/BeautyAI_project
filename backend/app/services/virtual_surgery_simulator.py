@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+from app.services.change_highlight import change_regions
 from app.services.face_shape_analyzer import analyze as analyze_face_shape
 
 # 워프 상한(얼굴 폭을 최대 몇 %까지 줄이나). 슬라이더를 끝까지 밀었을 때의 값이다.
@@ -1180,4 +1181,8 @@ def simulate(
         ),
         # 점·잡티 후보 위치(0~1 정규화). 지우지는 않았다 — 사용자가 고른 것만 지운다.
         "blemish_points": blemish_points,
+        # 실제로 바뀐 자리(0~1 정규화). "엄청 자세히 보지 않으면 어디가 변했는지 모르겠다"는
+        # 지적(2026-08-14)에 대한 답 — 화면이 이 좌표 위에 표시를 얹는다. 이미지에 구워
+        # 넣지 않는 이유는 끄고 켤 수 없고 확대하면 같이 뭉개지기 때문이다.
+        "change_regions": change_regions(rgb, out),
     }

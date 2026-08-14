@@ -47,6 +47,7 @@ from app.schemas.api import (
     RecommendationResponse,
     SkinScores,
     VirtualSurgeryPreviewCardsResponse,
+    SkincareSimulationResponse,
     VirtualSurgeryRetouchResponse,
     VirtualSurgeryResponse,
 )
@@ -1261,6 +1262,48 @@ async def retouch_virtual_surgery(
         return VirtualSurgeryRetouchResponse(preview_image=_to_data_url(out), removed=len(parsed))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not retouch this image.") from exc
+
+
+@router.post("/skin/care-simulation", response_model=SkincareSimulationResponse)
+async def skin_care_simulation(
+    image: UploadFile = File(...),
+    # 분석 점수(0~100). 걸린 항목만 손대려고 받는다 — 없으면 아무것도 바꾸지 않는다.
+    acne: float = Form(default=0.0),
+    pore: float = Form(default=0.0),
+    wrinkle: float = Form(default=0.0),
+    redness: float = Form(default=0.0),
+    pigmentation: float = Form(default=0.0),
+    oiliness: float = Form(default=0.0),
+    strength: float = Form(default=1.0),
+) -> SkincareSimulationResponse:
+    """케어를 이어갔을 때의 예상 모습을 만든다(피부케어 결과지용).
+
+    ⚠ 원본을 다시 받는다 — 서버에 사진을 들고 있지 않다(개인정보 미저장 원칙,
+      가상성형 retouch 와 같은 이유).
+    """
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="An image file is required.")
+    image_bytes = await image.read()
+
+    # mediapipe/cv2 는 무거우므로 요청 시점에 지연 임포트한다.
+    from app.services.skincare_simulator import simulate_skincare
+
+    try:
+        result = simulate_skincare(
+            image_bytes,
+            {
+                "acne": acne,
+                "pore": pore,
+                "wrinkle": wrinkle,
+                "redness": redness,
+                "pigmentation": pigmentation,
+                "oiliness": oiliness,
+            },
+            strength=strength,
+        )
+        return SkincareSimulationResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Could not simulate this image.") from exc
 
 
 @router.post("/analyze-nail-design", response_model=AnalyzeNailDesignResponse)

@@ -29,6 +29,29 @@ class SkinScores(BaseModel):
     oiliness: float
 
 
+class ChangeRegion(BaseModel):
+    """시뮬레이션으로 바뀐 자리(0~1 정규화). 화면이 그 위에 표시를 얹는다."""
+    x: float
+    y: float
+    w: float
+    h: float
+    strength: float = 0.0
+
+
+class SkincareSimulationResponse(BaseModel):
+    """케어를 이어갔을 때의 예상 모습.
+
+    applied=False 면 화면은 이 영역을 감춘다 — 원본을 '개선 결과'라고 내보내면 안 된다.
+    changed 는 실제로 손댄 항목이라, 화면이 '무엇이 달라졌는지'를 말할 수 있다.
+    """
+    applied: bool = False
+    before: str | None = None
+    after: str | None = None
+    changed: list[str] = Field(default_factory=list)
+    regions: list[ChangeRegion] = Field(default_factory=list)
+    message: str = ""
+
+
 class BodyConditionScore(BaseModel):
     condition: str
     label: str
@@ -285,6 +308,9 @@ class VirtualSurgeryResponse(BaseModel):
     consultation_questions: list[str] = Field(default_factory=list)
     # 점·잡티 **후보 위치**(0~1 정규화). 자동으로 지우지 않는다 — 사용자가 고른 것만 지운다.
     blemish_points: list[BlemishPoint] = Field(default_factory=list)
+    # 미리보기에서 **실제로 바뀐 자리**(0~1 정규화). 결과 이미지만으로는 어디가 달라졌는지
+    # 알아보기 어렵다는 지적(2026-08-14)에 따라 화면이 표시를 얹을 수 있게 좌표로 내려준다.
+    change_regions: list[ChangeRegion] = Field(default_factory=list)
 
 
 class VirtualSurgeryRetouchResponse(BaseModel):

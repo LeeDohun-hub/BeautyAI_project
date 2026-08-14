@@ -268,9 +268,23 @@ export type VirtualSurgeryResponse = {
    * 자동으로 지우지 않는다 — 사용자가 고른 것만 retouch 로 지운다.
    */
   blemish_points?: BlemishPoint[];
+  /** 미리보기에서 실제로 바뀐 자리. 화면이 이 위에 표시를 얹는다. */
+  change_regions?: ChangeRegion[];
 };
 
 export type BlemishPoint = { x: number; y: number; r: number };
+
+/** 시뮬레이션으로 실제 바뀐 자리(0~1 정규화). 사진 위에 표시를 얹는 데 쓴다. */
+export type ChangeRegion = { x: number; y: number; w: number; h: number; strength: number };
+
+export type SkincareSimulationResponse = {
+  applied: boolean;
+  before?: string | null;
+  after?: string | null;
+  changed: string[];
+  regions?: ChangeRegion[];
+  message: string;
+};
 
 export type VirtualSurgeryRetouchResponse = {
   preview_image: string;

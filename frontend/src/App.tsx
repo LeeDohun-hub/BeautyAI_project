@@ -1713,6 +1713,9 @@ export default function App() {
   // 한 장만 들고 있어서 카드 3장에는 쓸 수 없다.
   const [simPreviews, setSimPreviews] = useState<Record<string, string>>({});
   const [simLoading, setSimLoading] = useState(false);
+  // 가상성형 미리보기에서 '바뀐 곳' 표시. 기본은 켬 — 안 보인다는 지적에서 나온 기능이라
+  // 처음부터 보여야 의미가 있다. 원본 그대로 보고 싶으면 끌 수 있다.
+  const [showChangeMarks, setShowChangeMarks] = useState(true);
   const [itemRegion, setItemRegion] = useState<ItemRegion>(() => detectInitialRegion());
   const [itemPlatform, setItemPlatform] = useState<ItemPlatform>('all');
   // 결과지에 담은 상품을 **객체로** 들고 있는다(키 목록이 아니라).
@@ -4672,32 +4675,75 @@ export default function App() {
     // ⚠ lang === 'ja' 로 가르는 것은 근사치다. 정확히는 '일본 시장 사용자'여야 하는데
     //   지금 가진 신호 중 이게 가장 가깝다(jp.yopalette.com 도 이 앱을 쓴다).
     const hideBeforeAfter = appLang === 'ja' && authConfig?.jp_before_after === false;
+    // 바뀐 자리 표시. "엄청 자세히 보지 않으면 어디가 변했는지 모르겠다"는 지적(2026-08-14).
+    // 서버가 전/후를 비교해 좌표로 내려주고, 여기서 그 위에 표시를 얹는다.
+    // 이미지에 구워 넣지 않는 이유: 끄고 켤 수 없고 확대하면 같이 뭉개진다.
+    const changeRegions = virtualSurgeryResult?.change_regions ?? [];
+    const changeOverlay = showChangeMarks && changeRegions.length ? (
+      <Box className="change-marks" aria-hidden="true">
+        {changeRegions.map((region, i) => (
+          <span
+            key={`${region.x}-${region.y}-${i}`}
+            className="change-mark"
+            style={{
+              left: `${region.x * 100}%`,
+              top: `${region.y * 100}%`,
+              width: `${region.w * 100}%`,
+              height: `${region.h * 100}%`,
+              animationDelay: `${i * 0.12}s`,
+            }}
+          />
+        ))}
+      </Box>
+    ) : null;
+
+    const changeToggle = changeRegions.length ? (
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
+        <Button
+          size="small"
+          variant={showChangeMarks ? 'contained' : 'outlined'}
+          onClick={() => setShowChangeMarks((on) => !on)}
+        >
+          {t(showChangeMarks ? '바뀐 곳 표시 끄기' : '바뀐 곳 표시')}
+        </Button>
+        <Typography variant="caption" color="text.secondary">
+          {t('바뀐 곳')} {changeRegions.length}{t('군데')}
+        </Typography>
+      </Stack>
+    ) : null;
+
     const beforeAfter = virtualSurgeryResult?.detected ? (
       hideBeforeAfter ? (
         <Stack spacing={1}>
           <Box className="virtual-result-image">
             <span>Recommended</span>
             <img src={virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
+            {changeOverlay}
           </Box>
+          {changeToggle}
           <Typography variant="caption" color="text.secondary">
             {t('원본 사진과 나란히 비교하는 표시는 일본에서 제공하지 않습니다.')}
           </Typography>
         </Stack>
       ) : (
-        <Grid container spacing={1.5}>
-          <Grid item xs={12} sm={6}>
-            <Box className="virtual-result-image">
-              <span>Before</span>
-              <img src={virtualSurgeryResult.original_image} alt={t('원본 얼굴 사진')} />
-            </Box>
+        <>
+          <Grid container spacing={1.5}>
+            <Grid item xs={12} sm={6}>
+              <Box className="virtual-result-image">
+                <span>Before</span>
+                <img src={virtualSurgeryResult.original_image} alt={t('원본 얼굴 사진')} />
+              </Box>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Box className="virtual-result-image">
+                <span>Recommended</span>
+                <img src={retouchedImage ?? virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
+                {changeOverlay}
+              </Box>
+            </Grid>
           </Grid>
-          <Grid item xs={12} sm={6}>
-            <Box className="virtual-result-image">
-              <span>Recommended</span>
-              <img src={retouchedImage ?? virtualSurgeryResult.preview_image} alt={t('가상 성형 추천 미리보기')} />
-            </Box>
-          </Grid>
-        </Grid>
+          {changeToggle}
+        </>
       )
     ) : uploadBox;
 
