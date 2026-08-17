@@ -185,6 +185,26 @@ def test_auth_config_reports_gate_state(client: TestClient) -> None:
     assert body["web_login_url"]
 
 
+def test_web_api_base_url_falls_back_to_login_origin(client: TestClient) -> None:
+    """WEB_API_BASE_URL 을 안 채워도 로그인 주소에서 유도돼야 한다.
+
+    운영 .env 는 사람이 직접 고치는 파일이라, 필수로 만들면 빠뜨렸을 때
+    '웹에 로그인했는데 AI 는 게이트' 가 조용히 되살아난다.
+    """
+    settings = get_settings()
+    original_api, original_login = settings.web_api_base_url, settings.web_login_url
+    try:
+        settings.web_api_base_url = ""
+        settings.web_login_url = "https://www.example.com/login"
+        assert client.get("/api/auth/config").json()["web_api_base_url"] == "https://www.example.com/v1/api"
+
+        # 명시값이 있으면 그것을 그대로 쓴다(로그인 주소와 API 호스트가 다른 배포).
+        settings.web_api_base_url = "https://api.example.com/v1/api/"
+        assert client.get("/api/auth/config").json()["web_api_base_url"] == "https://api.example.com/v1/api"
+    finally:
+        settings.web_api_base_url, settings.web_login_url = original_api, original_login
+
+
 @pytest.mark.parametrize(
     "label",
     [

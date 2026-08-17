@@ -53,7 +53,7 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, recommend, retouchBlemishes, setSessionToken, simulateSkincare, simulateVirtualSurgery } from './api/client';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, probeWebSession, recommend, requestWebAiTicket, retouchBlemishes, setSessionToken, simulateSkincare, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
 import type { AnalysisMode, BlemishPoint, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard , SkincareSimulationResponse } from './types/api';
 
@@ -163,6 +163,32 @@ const WEB_URL_BY_LANG: Record<AppLang, string> = {
   ko: (import.meta.env.VITE_WEB_BASE_URL_KO as string | undefined) || 'http://localhost:5174',
   ja: (import.meta.env.VITE_WEB_BASE_URL_JA as string | undefined) || 'http://localhost:5175',
 };
+
+/** 웹 세션을 물어볼 API 주소의 **폴백**. 1순위는 서버 설정(/api/auth/config).
+ *
+ * ⚠ 언어와 무관하게 **한국몰(www)** 이다. 일본몰은 화면만 다를 뿐 API 는 한국몰 하나를
+ *   쓰고, 리프레시 쿠키도 그 호스트에만 붙는다. 일본몰 주소로 물으면 늘 비로그인이다.
+ */
+const WEB_API_BASE_URL =
+  (import.meta.env.VITE_WEB_API_BASE_URL as string | undefined)
+  || `${(WEB_URL_BY_LANG.ko || WEB_BASE_URL).replace(/\/$/, '')}/v1/api`;
+
+/** 게이트에서 보낼 웹 로그인 주소.
+ *
+ * `?next=ai` 를 붙인다 — 이게 없으면 웹은 로그인 성공 후 **커머스 홈**으로 가버려서,
+ * AI 를 쓰러 온 사람이 쇼핑몰에 떨어진다(웹 App.tsx 의 next=ai 처리 참조).
+ * 돌아올 주소 자체는 넘기지 않는다. 임의 URL 을 받으면 열린 리다이렉트가 되므로,
+ * 목적지는 웹이 자기가 아는 AI 주소로만 정하게 한다.
+ *
+ * 일본어로 보고 있으면 일본몰 로그인으로 보낸다 — 서버 설정값은 한국몰 고정이다.
+ */
+function webLoginUrl(lang: AppLang, configured?: string): string {
+  const base =
+    lang === 'ja'
+      ? `${WEB_URL_BY_LANG.ja.replace(/\/$/, '')}/login`
+      : configured || `${WEB_BASE_URL.replace(/\/$/, '')}/login`;
+  return `${base}${base.includes('?') ? '&' : '?'}next=ai`;
+}
 
 /** 카드에 붙은 구매 링크 중 하나를 고른다(선호 순서 → 없으면 남은 것 아무거나 → 원산지 URL).
  *
@@ -1802,15 +1828,51 @@ export default function App() {
     if (authBootRef.current) return;
     authBootRef.current = true;
     void (async () => {
-      // 게이트 문구·링크에 쓸 설정. 실패해도 앱은 뜬다(로그인 강제만 못 한다).
-      fetchAuthConfig().then(setAuthConfig).catch(() => undefined);
+      // 게이트 문구·링크와 **웹 API 주소**가 여기서 온다. 실패해도 앱은 뜬다(로그인 강제만
+      // 못 한다). 티켓 교환은 이 값이 필요 없으므로 **기다리지 않고** 먼저 시작한다 —
+      // 백엔드 워밍 중이면 config 응답이 늦는데, 거기에 로그인을 묶을 이유가 없다.
+      const configPromise = fetchAuthConfig().catch(() => null);
+      void configPromise.then((config) => config && setAuthConfig(config));
       const ticket = takeHandoffTicket();
       try {
+        // ① 웹의 AI 버튼으로 넘어온 경우 — 프래그먼트의 티켓이 그대로 세션이 된다.
         if (ticket) {
           setAuthUser((await exchangeTicket(ticket)).user);
-        } else if (getSessionToken()) {
-          setAuthUser(await fetchMe());
+          return;
         }
+
+        // 웹 세션을 물어보려면 주소가 필요하다. 설정이 없으면 빌드 시 구운 폴백으로 간다.
+        const webApiBase = (await configPromise)?.web_api_base_url || WEB_API_BASE_URL;
+
+        // ② 저장된 AI 세션과 ③ 웹 로그인 상태를 **한꺼번에** 확인한다.
+        //    웹 조회 한 번으로 두 가지를 처리한다 — 세션이 있으면 로그아웃 동기화용,
+        //    없으면 조용히 이어받기용. 직렬로 하면 부팅에 왕복이 하나 더 붙는다.
+        const [saved, web] = await Promise.all([
+          getSessionToken() ? fetchMe().catch(() => null) : Promise.resolve(null),
+          probeWebSession(webApiBase),
+        ]);
+        // 죽은 세션 토큰은 지운다 — 그래야 아래 ③ 이 깨끗하게 다시 만든다.
+        if (!saved) setSessionToken(null);
+
+        if (saved) {
+          // 웹에서 로그아웃했는데 AI 세션(12시간)만 살아 있으면 '로그아웃했는데 로그인돼
+          // 있다' 가 된다. 웹이 **명확히** 비로그인이라고 답할 때만 끊는다 — 네트워크가
+          // 잠깐 삐끗한 것(unknown)을 로그아웃으로 읽으면 멀쩡한 사용자를 쫓아낸다.
+          if (web.status === 'signed-out') {
+            setSessionToken(null);
+            setAuthUser(null);
+            return;
+          }
+          setAuthUser(saved);
+          return;
+        }
+
+        // ③ AI 세션은 없는데 웹에는 로그인돼 있다 — 티켓을 직접 받아 세션을 만든다.
+        //    웹에서 로그인만 하고 주소창으로 AI 에 들어오는 흐름이 여기다.
+        //    예전에는 이 경우가 통째로 없어서, 웹에 로그인해도 게이트가 다시 떴다.
+        if (web.status !== 'active') return;
+        const silentTicket = await requestWebAiTicket(webApiBase, web.accessToken);
+        setAuthUser((await exchangeTicket(silentTicket)).user);
       } catch {
         // 만료·재사용된 티켓이나 죽은 세션. 토큰을 지워 다음 진입이 깨끗하게 시작되게 한다.
         setSessionToken(null);
@@ -5985,7 +6047,7 @@ export default function App() {
 
   // 백엔드가 REQUIRE_LOGIN 으로 켜져 있을 때만 막는다(로컬 개발은 그대로 열림).
   if (authConfig?.require_login && !authUser) {
-    const loginUrl = authConfig.web_login_url || `${WEB_BASE_URL.replace(/\/$/, '')}/login`;
+    const loginUrl = webLoginUrl(appLang, authConfig.web_login_url);
     return (
       <Box className="app-shell">
         <AppLangToggle authUser={authUser} />

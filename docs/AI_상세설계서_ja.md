@@ -66,10 +66,20 @@ BeautyAI_project
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| GET | `/api/auth/config` | ログイン要否・Webリンク |
+| GET | `/api/auth/config` | ログイン要否・Webリンク・Web APIアドレス（`web_api_base_url`） |
 | POST | `/api/auth/exchange` | Webハンドオフチケット → AIセッション（12h） |
 | GET | `/api/auth/me` | 現在のセッション利用者 |
 | DELETE | `/api/me/data` | 自分の分析・アンケート・推薦・相談履歴を削除 |
+
+**起動時のログイン判定順** — ① URLフラグメントのチケット（`#t=`） ② 保存済みのAIセッション
+③ **Webセッションの直接照会**。③ はフロントが `web_api_base_url` の `/account/token` を
+`credentials:'include'` で呼び、Webにログイン済みなら `/account/ai-ticket` でチケットを受け取り
+①と同じ方式でセッションを作る。AIオリジン（`ai.…`）とWeb API（`www.…`）は**同一サイト**なので
+リフレッシュCookieがそのまま送られる（WebのCORS許可リストにAIオリジンが必要）。
+③ が無いと、Webでログインしただけでアドレスバーから入った利用者がゲートで止まる。
+
+同じ照会で**ログアウト同期**も行う。Webが「未ログイン」と**明確に**答えた場合のみAIセッションを
+切る — 照会失敗（ネットワーク・CORS）はログアウトとして扱わない。
 
 ### 4.3 肌分析・推薦
 

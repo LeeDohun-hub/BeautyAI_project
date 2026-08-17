@@ -31,6 +31,12 @@ export type AuthConfigResponse = {
   require_login: boolean;
   web_login_url: string;
   /**
+   * 웹 세션을 직접 물어볼 API 주소(`/v1/api` 까지). 부팅 때 여기에 `/account/token` 을
+   * 물어 "웹에 로그인돼 있나"를 판단한다. 구 백엔드는 안 보내므로 optional —
+   * 없으면 빌드 시 구운 폴백(VITE_WEB_API_BASE_URL)으로 내려간다.
+   */
+  web_api_base_url?: string;
+  /**
    * 일본어 화면에서 비포/애프터를 나란히 보여도 되는가(일본 医療広告ガイドライン 대응).
    * **서버가 정한다** — 규제 대응이므로 클라이언트 설정이 아니다.
    * 구 백엔드는 이 값을 안 보내므로 optional. undefined 면 현행(나란히) 유지.

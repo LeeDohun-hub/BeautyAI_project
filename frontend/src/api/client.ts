@@ -33,6 +33,74 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// ── 웹(BeautyWEB) 세션 직접 조회 ───────────────────────────────────────────────
+// AI 오리진(ai.…)과 웹 API 호스트(www.…)는 오리진이 다르지만 **같은 사이트**(eTLD+1 이
+// yopalette.com 으로 같다)다. 그래서 웹의 리프레시 쿠키(HttpOnly·Domain 미설정·SameSite
+// 미지정=Lax)가 credentials:'include' 요청에 그대로 실려 간다 — 일본몰↔한국몰에서 이미
+// 쓰고 있는 것과 같은 원리다. 웹 API 쪽 CORS 허용 목록에 AI 오리진이 있어야 한다.
+
+/** 웹 로그인 상태 조회 결과.
+ *
+ *  - `active`     : 웹에 로그인돼 있고 액세스 토큰을 받았다.
+ *  - `signed-out` : 웹이 **명확히** '로그인 아님'이라고 답했다.
+ *  - `unknown`    : 물어보지 못했다(네트워크·CORS·5xx·타임아웃).
+ *
+ *  ⚠ `unknown` 과 `signed-out` 을 절대 같이 취급하면 안 된다. 웹 API 가 잠깐 삐끗한 것을
+ *    '로그아웃'으로 읽으면 멀쩡히 쓰던 사용자의 AI 세션을 끊어버린다.
+ */
+export type WebSessionProbe =
+  | { status: 'active'; accessToken: string }
+  | { status: 'signed-out' }
+  | { status: 'unknown' };
+
+/** 부팅을 오래 붙잡지 않도록 하는 상한. 웹 API 가 죽어도 게이트까지는 즉시 가야 한다. */
+const WEB_PROBE_TIMEOUT_MS = 6000;
+/** JWT 모양(헤더.페이로드.서명). 응답이 토큰인지 엉뚱한 HTML 인지 가른다. */
+const JWT_SHAPE = /^[\w-]+\.[\w-]+\.[\w-]+$/;
+
+async function webFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), WEB_PROBE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, credentials: 'include', signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/** 웹에 로그인돼 있는지 묻는다(`GET {web}/account/token`).
+ *
+ * ⚠ 웹은 **로그인이 아니어도 200** 을 돌려주고 본문만 빈 문자열이다
+ *   (AccountController#regenerate). 상태코드로 판단하면 전원 로그인으로 보인다.
+ */
+export async function probeWebSession(webApiBase: string): Promise<WebSessionProbe> {
+  const base = (webApiBase || '').replace(/\/$/, '');
+  if (!base) return { status: 'unknown' };
+  try {
+    const res = await webFetch(`${base}/account/token`);
+    if (!res.ok) return { status: 'unknown' };
+    const body = (await res.text()).trim();
+    if (!body) return { status: 'signed-out' };
+    // 주소를 잘못 잡으면(예: API 가 아니라 웹 **프론트** 주소) 200 + index.html 이 온다.
+    // 그걸 토큰으로 착각하면 '로그인됨'으로 오판하고 다음 호출에서 401 로 튕긴다.
+    if (!JWT_SHAPE.test(body)) return { status: 'unknown' };
+    return { status: 'active', accessToken: body };
+  } catch {
+    return { status: 'unknown' };
+  }
+}
+
+/** 웹에서 1회용 핸드오프 티켓을 받아온다(120초). 웹의 AI 버튼이 하는 일과 같다. */
+export async function requestWebAiTicket(webApiBase: string, accessToken: string): Promise<string> {
+  const res = await webFetch(`${(webApiBase || '').replace(/\/$/, '')}/account/ai-ticket`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`ai-ticket ${res.status}`);
+  const data = (await res.json()) as { ticket?: string };
+  if (!data.ticket) throw new Error('ai-ticket empty');
+  return data.ticket;
+}
+
 /** 웹 핸드오프 티켓을 AI 세션으로 교환한다. 성공하면 토큰을 저장하고 사용자 정보를 돌려준다. */
 export async function exchangeTicket(ticket: string): Promise<AuthSessionResponse> {
   const { data } = await api.post<AuthSessionResponse>('/api/auth/exchange', { ticket });

@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -52,6 +53,20 @@ class Settings(BaseSettings):
     jp_before_after: bool = True
     # 게이트에 걸렸을 때 프론트가 안내할 웹 로그인 주소.
     web_login_url: str = "http://localhost:5174/login"
+    # 웹 API 주소(BeautyWEB 프론트의 VITE_API_BASE_URL 과 같은 값 — `/v1/api` 까지).
+    #
+    # AI 프론트가 부팅할 때 "웹에 로그인돼 있나"를 **브라우저에서 직접** 물어보는 곳이다.
+    # 웹에서 로그인만 하고 주소창으로 AI 에 들어온 사용자를 게이트에서 되돌리지 않으려면
+    # 필요하다(티켓은 웹의 AI 버튼으로 넘어올 때만 생긴다).
+    #
+    # **비워두면 web_login_url 의 오리진에서 자동으로 만든다**(resolved_web_api_base_url).
+    # 운영 서버의 .env.prod 는 사람이 직접 고치는 파일이라, 새 변수를 필수로 만들면
+    # 채우는 걸 잊었을 때 기능만 조용히 죽는다 — 이미 있는 값에서 유도되게 둔다.
+    #
+    # ⚠ 반드시 **리프레시 쿠키가 붙은 호스트**(=한국몰 www)여야 한다. 쿠키는 Domain 미설정
+    #   호스트 한정이라, 일본몰 주소를 넣으면 쿠키가 없어 항상 비로그인으로 보인다.
+    # ⚠ 그 호스트의 CORS 허용 목록(BEAUTYWEB_CORS_ALLOWED_ORIGINS)에 AI 오리진이 있어야 한다.
+    web_api_base_url: str = ""
     # 결과지 QR 이 가리킬 웹 장바구니 주소. `?ai=<code>` 가 붙는다.
     web_cart_url: str = "http://localhost:5174/cart"
     # 장바구니 핸드오프 코드 수명(분). 결과지를 출력해 놓고 나중에 찍는 경우가 있어
@@ -121,6 +136,22 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.strip().lower() in {"production", "prod"}
+
+    @property
+    def resolved_web_api_base_url(self) -> str:
+        """웹 세션을 물어볼 API 주소. 설정이 비었으면 web_login_url 의 오리진에서 만든다.
+
+        운영은 WEB_LOGIN_URL 이 이미 `https://<한국몰>/login` 이라 그대로 맞아떨어진다.
+        로그인 주소와 API 호스트가 다른 배포(예: api 서브도메인)에서만 WEB_API_BASE_URL 을
+        따로 준다.
+        """
+        explicit = self.web_api_base_url.strip().rstrip("/")
+        if explicit:
+            return explicit
+        parts = urlsplit(self.web_login_url.strip())
+        if not parts.scheme or not parts.netloc:
+            return ""
+        return f"{parts.scheme}://{parts.netloc}/v1/api"
 
     @property
     def cors_origin_list(self) -> list[str]:

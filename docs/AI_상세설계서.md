@@ -64,10 +64,20 @@ BeautyAI_project
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| GET | `/api/auth/config` | 로그인 필요 여부·웹 링크 |
+| GET | `/api/auth/config` | 로그인 필요 여부·웹 링크·웹 API 주소(`web_api_base_url`) |
 | POST | `/api/auth/exchange` | 웹 핸드오프 티켓 → AI 세션(12h) |
 | GET | `/api/auth/me` | 현재 세션 사용자 |
 | DELETE | `/api/me/data` | 내 분석·설문·추천·상담 이력 삭제 |
+
+**부팅 시 로그인 판정 순서** — ① URL 프래그먼트의 티켓(`#t=`) ② 저장된 AI 세션
+③ **웹 세션 직접 조회**. ③ 은 프론트가 `web_api_base_url` 의 `/account/token` 을
+`credentials:'include'` 로 불러, 웹에 로그인돼 있으면 `/account/ai-ticket` 으로 티켓을 받아
+①과 같은 방식으로 세션을 만든다. AI 오리진(`ai.…`)과 웹 API(`www.…`)는 **같은 사이트**라
+리프레시 쿠키가 그대로 실려 간다(웹 CORS 허용 목록에 AI 오리진이 있어야 한다).
+③ 이 없으면 웹에서 로그인만 하고 주소창으로 들어온 사용자가 게이트에 막힌다.
+
+같은 조회로 **로그아웃 동기화**도 한다. 웹이 '비로그인'이라고 **명확히** 답하면 AI 세션도
+끊는다 — 조회 실패(네트워크·CORS)는 로그아웃으로 취급하지 않는다.
 
 ### 4.3 피부 분석 · 추천
 

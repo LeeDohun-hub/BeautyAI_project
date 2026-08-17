@@ -57,6 +57,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_32_BYTE_MINIMUM_JWT_SECRET!}
       REQUIRE_LOGIN: ${REQUIRE_LOGIN:-false}
       WEB_LOGIN_URL: ${WEB_LOGIN_URL:-http://localhost:5174/login}
+      # 프론트가 부팅 때 웹 세션을 확인할 API(`/v1/api` 까지). 로컬은 WEB 백엔드 8080.
+      WEB_API_BASE_URL: ${WEB_API_BASE_URL:-http://localhost:8080/v1/api}
       WEB_CART_URL: ${WEB_CART_URL:-http://localhost:5174/cart}
       RAKUTEN_APP_ID: ${RAKUTEN_APP_ID:-}
       RAKUTEN_ACCESS_KEY: ${RAKUTEN_ACCESS_KEY:-}

@@ -490,6 +490,9 @@ class AuthConfigResponse(BaseModel):
 
     require_login: bool
     web_login_url: str
+    # 웹 세션을 직접 조회할 API 주소(`/v1/api` 까지). 프론트가 부팅 때 여기에
+    # `/account/token` 을 물어 "웹에 로그인돼 있나"를 판단한다. Settings 참조.
+    web_api_base_url: str = ""
     # 일본어 화면에서 비포/애프터를 나란히 보여도 되는가.
     # False 면 프론트가 변형본만 보여준다(일본 医療広告ガイドライン 대응 스위치).
     # ⚠ **서버가 정한다.** 사용자 설정이 아니라 규제 대응이므로 클라이언트가 못 바꾼다.
