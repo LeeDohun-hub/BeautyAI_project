@@ -10,6 +10,7 @@ from sqlalchemy import inspect, text
 
 from app.api.auth import auth_router
 from app.api.cart_handoff import cart_handoff_router
+from app.api.journey import journey_router
 from app.api.routes import router
 from app.core.config import get_settings
 from app.core.database import Base, SessionLocal, engine
@@ -146,6 +147,9 @@ app.add_middleware(
 app.include_router(auth_router)
 # 장바구니 핸드오프: /api/cart/handoff 는 사용자 세션, /internal/... 은 서비스 토큰으로 각각 지킨다.
 app.include_router(cart_handoff_router)
+# 동선 수집도 게이트보다 먼저다 — 로그인 게이트 앞에서 돌아서는 사람이 이탈의 큰 몫인데,
+# 메인 router 의 enforce_login 아래 두면 그 구간이 통째로 안 쌓인다.
+app.include_router(journey_router)
 app.include_router(router)
 
 

@@ -32,13 +32,25 @@ def _i18n() -> str:
     return I18N.read_text(encoding="utf-8")
 
 
+def _ui_sources() -> str:
+    """화면을 그리는 모든 소스.
+
+    ⚠ 예전에는 App.tsx 하나만 봤다. 그래서 화면 컴포넌트를 **새 파일로 분리하는 순간**
+      이 검사가 조용히 눈을 감았다(AdminJourneyPanel.tsx 를 만들면서 드러났다).
+      파일이 늘어나는 건 정상적인 리팩터링이므로 검사 쪽이 따라가야 한다.
+    """
+    return "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(FRONTEND.rglob("*.tsx"))
+    )
+
+
 def _ui_korean() -> set[str]:
     """화면에 나가는 한국어 문자열을 모은다.
 
     · t('…')  직접 호출
     · label: '…'  드롭다운/버튼 옵션 정의(대부분 t(item.label) 로 나간다)
     """
-    source = _app()
+    source = _ui_sources()
     found = set(re.findall(r"t\(\s*'([^']+)'\s*\)", source))
     found |= set(re.findall(r'\bt\(\s*"([^"]+)"\s*\)', source))
     found |= set(re.findall(r"label:\s*'([^']+)'", source))

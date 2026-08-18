@@ -542,3 +542,98 @@ class MyDataDeletionResult(BaseModel):
     """
 
     deleted: dict[str, int] = Field(default_factory=dict)
+
+
+# ── 회원 동선 · 선호(journey) ──────────────────────────────────────────────────
+
+
+class JourneyEventIn(BaseModel):
+    """프론트가 보내는 행동 한 건.
+
+    ⚠ user_id 는 일부러 없다. 클라이언트가 사용자 번호를 정할 수 있으면 남의 이름으로
+    동선을 심을 수 있다 — 사용자는 서버가 세션 토큰에서만 꺼낸다.
+    """
+
+    type: str
+    module: str = ""
+    product_id: int | None = None
+    #: 상품이 AI DB 에 없을 때(퍼스널컬러 아이템매칭은 외부 카탈로그에서 실시간으로 온다)
+    #: 쓰는 보조 값. product_id 로 찾을 수 있으면 서버 값이 이긴다.
+    category: str = ""
+    brand: str = ""
+    platform: str = ""
+    price: float = 0.0
+    detail: str = ""
+
+
+class JourneyBatchIn(BaseModel):
+    """행동은 한 건씩이 아니라 묶어서 보낸다. 클릭마다 요청을 날리면 결과지를 훑기만 해도
+    요청이 수십 개가 되는데, 그 부하는 분석 품질에 아무 도움이 안 된다."""
+
+    session_id: str = ""
+    lang: str = "ko"
+    events: list[JourneyEventIn] = Field(default_factory=list)
+
+
+class JourneyFunnelStep(BaseModel):
+    type: str
+    label: str
+    #: 앞 단계를 전부 거쳐 이 행동까지 온 세션 수. 정의상 절대 늘어나지 않는다.
+    sessions: int
+    #: 순서와 무관하게 이 행동을 한 세션 수. sessions 보다 크면 단계를 건너뛴 사람이 있다.
+    sessions_any_order: int
+    from_previous_percent: float
+    from_start_percent: float
+    drop_off_percent: float
+
+
+class LabelCount(BaseModel):
+    label: str
+    total: int
+
+
+class JourneyFunnelOut(BaseModel):
+    days: int
+    module: str
+    lang: str
+    total_events: int
+    steps: list[JourneyFunnelStep]
+    #: 기능별 진입 세션 수. AI 에서 가장 먼저 보고 싶은 숫자다.
+    modules: list[LabelCount]
+    #: 분석 실패 사유별 건수. 이탈의 큰 원인이라 퍼널 옆에 같이 본다.
+    errors: list[LabelCount]
+
+
+class JourneyPreferenceScore(BaseModel):
+    label: str
+    score: float
+    views: int
+    clicks: int
+    handoffs: int
+
+
+class JourneyPreferenceOut(BaseModel):
+    user_id: int
+    days: int
+    event_count: int
+    top_modules: list[LabelCount]
+    top_categories: list[JourneyPreferenceScore]
+    top_brands: list[JourneyPreferenceScore]
+    top_platforms: list[LabelCount]
+
+
+class JourneyTrailStep(BaseModel):
+    type: str
+    module: str
+    detail: str
+    product_name: str = ""
+    at: datetime
+    #: 앞 행동과의 간격(초). 어디서 오래 붙잡혔는지가 여기서 보인다.
+    seconds_from_previous: int | None = None
+
+
+class JourneyTrailOut(BaseModel):
+    session_id: str
+    user_id: int | None = None
+    lang: str = ""
+    steps: list[JourneyTrailStep] = Field(default_factory=list)

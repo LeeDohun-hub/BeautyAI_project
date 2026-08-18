@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AnalysisMode, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, MyDataDeletionResult, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationResponse, SkincareSimulationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryRetouchResponse, VirtualSurgeryTuning } from '../types/api';
+import type { AnalysisMode, JourneyFunnel, JourneyLabelCount, JourneyTrail, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthSessionResponse, AuthUser, BodyConditionScore, CartHandoffItem, CartHandoffResponse, ChatResponse, FaceShapeResponse, HistoryItem, ItemPlatform, MakeupPreviewResponse, MoodThumbnailsResponse, MyDataDeletionResult, PersonalColorItemMatchResponse, PersonalColorResponse, RecommendationResponse, SkincareSimulationResponse, SkinScores, SurveyInput, VirtualSurgeryIntensity, VirtualSurgeryPreviewCardsResponse, VirtualSurgeryResponse, VirtualSurgeryRetouchResponse, VirtualSurgeryTuning } from '../types/api';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -336,5 +336,25 @@ export async function previewVirtualSurgeryCards(
     '/api/virtual-surgery/preview-cards',
     form,
   );
+  return data;
+}
+
+// ── 회원 동선 · 선호(관리자 전용) ─────────────────────────────────────────────
+// 세션 토큰은 인터셉터가 자동으로 붙인다. 관리자가 아니면 서버가 403 을 준다.
+
+export async function fetchJourneyFunnel(days: number): Promise<JourneyFunnel> {
+  const { data } = await api.get<JourneyFunnel>('/api/journey/funnel', { params: { days } });
+  return data;
+}
+
+export async function fetchJourneySessions(days: number, limit = 20): Promise<JourneyLabelCount[]> {
+  const { data } = await api.get<JourneyLabelCount[]>('/api/journey/sessions', {
+    params: { days, limit },
+  });
+  return data;
+}
+
+export async function fetchJourneyTrail(sessionId: string): Promise<JourneyTrail> {
+  const { data } = await api.get<JourneyTrail>(`/api/journey/sessions/${encodeURIComponent(sessionId)}`);
   return data;
 }

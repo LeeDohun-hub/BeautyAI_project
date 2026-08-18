@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -173,3 +173,49 @@ class ChatHistory(Base):
     answer: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+
+
+class JourneyEvent(Base):
+    """AI 앱에서 사용자가 한 행동 하나 = 한 줄. 동선과 선호는 이 표를 세로로 쌓아 만든다.
+
+    WEB(member_events)과 표를 나눠 갖는 이유: 두 앱은 DB 도 배포도 따로고, 애초에 흐름의
+    모양이 다르다. WEB 은 방문→상품→장바구니→주문이지만 AI 는 기능선택→사진→분석→추천이라
+    같은 표에 섞으면 어느 쪽 퍼널도 제대로 못 센다. 같은 사람을 이어 보고 싶으면
+    users.web_member_id 로 나중에 이어 붙일 수 있다.
+
+    user_id 가 None 이어도 받는다. 로그인 게이트 앞에서 돌아서는 사람이 이탈의 큰 몫인데,
+    로그인한 사람만 남기면 그 구간이 통째로 빈다. 대신 session_id 로 한 방문을 묶는다.
+    """
+
+    __tablename__ = "journey_events"
+    __table_args__ = (
+        Index("ix_journey_events_user_created", "user_id", "created_at"),
+        Index("ix_journey_events_type_created", "type", "created_at"),
+        Index("ix_journey_events_session_created", "session_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    #: 브라우저 탭 한 번의 방문을 묶는 값. 비로그인 동선을 잇는 유일한 끈이다.
+    session_id: Mapped[str] = mapped_column(String(64), default="")
+    #: app_open / gate_view / module_open / photo_ready / analysis_done / analysis_error
+    #: / recommend_view / product_click / cart_handoff / survey_submit
+    type: Mapped[str] = mapped_column(String(40))
+    #: 어느 기능인지. home / skin-care / personal-color / nail-design / virtual-surgery.
+    #: AI 에서는 이게 WEB 의 '경로'에 해당하는 축이다.
+    module: Mapped[str] = mapped_column(String(40), default="")
+    #: 화면 언어(ko/ja). 언어별로 이탈 지점이 다를 수 있어 섞지 않는다.
+    lang: Mapped[str] = mapped_column(String(10), default="ko")
+
+    #: 상품 관련 행동일 때만. products.id 가 있으면 서버가 이걸로 아래 값을 채운다.
+    product_id: Mapped[int | None] = mapped_column(Integer)
+    category: Mapped[str] = mapped_column(String(80), default="")
+    brand: Mapped[str] = mapped_column(String(160), default="")
+    #: 어느 쇼핑몰로 나갔는지(oliveyoung/amazon_us/rakuten…). 채널 선호를 본다.
+    platform: Mapped[str] = mapped_column(String(40), default="")
+    price: Mapped[float] = mapped_column(Float, default=0.0)
+
+    #: 실패 사유(type=analysis_error). '얼굴 미검출' 같은 짧은 코드만 넣는다.
+    detail: Mapped[str] = mapped_column(String(200), default="")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

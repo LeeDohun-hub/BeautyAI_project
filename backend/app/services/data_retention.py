@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from app.models import ChatHistory, RecommendationHistory, SkinAnalysis, Survey
+from app.models import ChatHistory, JourneyEvent, RecommendationHistory, SkinAnalysis, Survey
 
 # 지우는 대상. **users 는 넣지 않는다** — 웹에서 넘어온 연동 정보라 여기서 지우면
 # 로그인 상태와 어긋난다(삭제 API 와 같은 이유). 계정 정리는 웹 소관이다.
@@ -26,6 +26,8 @@ EXPIRABLE = (
     ("surveys", Survey),
     ("recommendation_histories", RecommendationHistory),
     ("chat_histories", ChatHistory),
+    # 행동 로그는 가장 빨리 커지는 표이고 개인정보이기도 하다 — 기한을 두는 게 맞다.
+    ("journey_events", JourneyEvent),
 )
 
 

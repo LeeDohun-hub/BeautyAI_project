@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.core.security import enforce_login, optional_user
 from app.models import (
     ChatHistory,
+    JourneyEvent,
     Product,
     ProductIngredient,
     RecommendationHistory,
@@ -1963,6 +1964,9 @@ def delete_my_data(
         "recommendation_histories": db.query(RecommendationHistory).filter(
             RecommendationHistory.user_id == uid).delete(synchronize_session=False),
         "chat_histories": db.query(ChatHistory).filter(ChatHistory.user_id == uid).delete(synchronize_session=False),
+        # 동선 기록도 같이 지운다. 여기서 빠뜨리면 "내 데이터를 지웠다" 고 답하면서
+        # 어디를 어떤 순서로 돌아다녔는지는 그대로 남는다 — 삭제 약속이 거짓이 된다.
+        "journey_events": db.query(JourneyEvent).filter(JourneyEvent.user_id == uid).delete(synchronize_session=False),
     }
     db.commit()
     return MyDataDeletionResult(deleted={k: int(v or 0) for k, v in deleted.items()})

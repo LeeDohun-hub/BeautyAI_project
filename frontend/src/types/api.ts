@@ -419,3 +419,45 @@ export type VirtualSurgeryPreviewCardsResponse = {
 
 /** 변화 강도. 슬라이더 %(의학적 의미 없는 워프 강도)를 대신한다. */
 export type VirtualSurgeryIntensity = 'natural' | 'balanced' | 'defined';
+
+// ── 회원 동선 · 선호(관리자) ──────────────────────────────────────────────────
+
+export type JourneyFunnelStep = {
+  type: string;
+  label: string;
+  /** 앞 단계를 전부 거쳐 온 세션 수. 정의상 절대 늘어나지 않는다. */
+  sessions: number;
+  /** 순서 무관하게 그 행동을 한 세션 수. sessions 보다 크면 단계를 건너뛴 사람이 있다. */
+  sessions_any_order: number;
+  from_previous_percent: number;
+  from_start_percent: number;
+  drop_off_percent: number;
+};
+
+export type JourneyLabelCount = { label: string; total: number };
+
+export type JourneyFunnel = {
+  days: number;
+  module: string;
+  lang: string;
+  total_events: number;
+  steps: JourneyFunnelStep[];
+  modules: JourneyLabelCount[];
+  errors: JourneyLabelCount[];
+};
+
+export type JourneyTrailStep = {
+  type: string;
+  module: string;
+  detail: string;
+  product_name?: string;
+  at: string;
+  seconds_from_previous?: number | null;
+};
+
+export type JourneyTrail = {
+  session_id: string;
+  user_id?: number | null;
+  lang?: string;
+  steps: JourneyTrailStep[];
+};
