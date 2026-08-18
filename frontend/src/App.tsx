@@ -55,6 +55,8 @@ import {
 } from 'lucide-react';
 import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, probeWebSession, recommend, requestWebAiTicket, retouchBlemishes, setSessionToken, simulateSkincare, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
+import { flushJourney, setJourneyContext, track as trackJourney } from './tracking';
+import AdminJourneyPanel from './AdminJourneyPanel';
 import type { AnalysisMode, BlemishPoint, DetectedNail, NailShade, PhotoQuality, AnalyzeNailDesignResponse, AnalyzeSkinResponse, AuthConfigResponse, AuthUser, BodyConditionScore, CartHandoffItem, FaceShapeResponse, HistoryItem, ItemPlatform, PersonalColorItemMatchResponse, PersonalColorResponse, Product, RakutenProduct, RecommendationPlatform, RecommendationResponse, SkinScores, SurveyInput, VirtualSurgeryResponse, VirtualSurgeryTuning, VirtualSurgeryIntensity, VirtualSurgeryPreviewCard , SkincareSimulationResponse } from './types/api';
 
 // 상품을 외부 쇼핑몰에서 검색/열기 위한 링크. 직접 상품 URL이 아마존이면 그대로 쓰고,
@@ -280,8 +282,19 @@ function CartHandoffQr({
         if (cancelled) return;
         // 200 인데 url 이 비어 오면 setUrl('') 이 되어 영원히 로딩으로 남는다.
         // 실패로 취급해야 화면에 이유가 뜬다.
-        if (response.url) setUrl(response.url);
-        else setError('장바구니 QR 을 만들지 못했습니다.');
+        if (response.url) {
+          setUrl(response.url);
+          // 결과지에서 웹 장바구니로 넘긴 시점. 상품마다 한 줄씩 남겨야 어떤 카테고리가
+          // 실제로 구매 직전까지 갔는지 알 수 있다(선호 집계에서 가장 무거운 신호).
+          items.slice(0, 8).forEach((item) =>
+            trackJourney('cart_handoff', {
+              category: (item as { category?: string }).category,
+              brand: item.brand,
+              platform: item.source,
+            }),
+          );
+          void flushJourney();
+        } else setError('장바구니 QR 을 만들지 못했습니다.');
       })
       .catch(() => {
         if (!cancelled) setError('장바구니 QR 을 만들지 못했습니다.');
@@ -373,7 +386,9 @@ const commonSkinConcerns: ChipOption[] = [
 // 다중선택 칩. 부모를 고르면 children이 들여쓰기되어 펼쳐지고, 부모를 끄면 자식도 함께 해제됩니다.
 
 // 상담은 결과지까지 본 뒤 질문하는 흐름이라 마지막에 둔다(사용자 지시 2026-07-29).
-const steps = ['설문', '피부 입력', '피부 분석', '추천', '결과지 출력', '상담'];
+// '상담' 단계를 뺐다(2026-08-18 지시). AI 상담은 흐름의 마지막 칸이 아니라
+// 결과지를 보다가 궁금할 때 여는 것이라, 결과지(5단계)에서 링크로 연다.
+const steps = ['설문', '피부 입력', '피부 분석', '추천', '결과지 출력'];
 // 결과지에 담을 수 있는 최대 개수. 추천 카테고리가 5개(클렌저·토너·세럼·보습·선크림)라
 // 카테고리당 하나씩 고를 수 있게 5로 둔다.
 const SKIN_REPORT_MAX = 5;
@@ -888,6 +903,28 @@ function ProductImage({
 }
 
 // region prop 은 가격 표기(통화 포맷) 전용이었는데 가격을 없애면서 함께 제거했다.
+/**
+ * 구매 버튼 클릭 기록.
+ *
+ * 이 앱에서 '상품 클릭' 은 퍼널의 마지막 칸이다 — 여기서 사용자는 외부 쇼핑몰로 나가고
+ * 그 뒤는 우리가 볼 수 없다. 새 탭이 열리면서 페이지가 사라질 수 있으므로 바로 밀어 보낸다
+ * (모아뒀다 보내면 그 사이에 탭이 닫혀 마지막 칸만 비는 일이 생긴다).
+ */
+function trackProductClick(
+  product: { id?: number | string; category?: string; brand?: string; price?: number },
+  platform: string,
+): void {
+  const numericId = typeof product.id === 'number' ? product.id : undefined;
+  trackJourney('product_click', {
+    productId: numericId,
+    category: product.category,
+    brand: product.brand,
+    platform,
+    price: product.price,
+  });
+  void flushJourney();
+}
+
 function RakutenProductCard({
   product,
   selectedPlatform = 'all',
@@ -970,6 +1007,7 @@ function RakutenProductCard({
             key={platform.key}
             component="a"
             href={links[platform.key]}
+            onClick={() => trackProductClick(product, platform.key)}
             target="_blank"
             rel="noreferrer"
             size="small"
@@ -1743,6 +1781,8 @@ export default function App() {
   // 처음부터 보여야 의미가 있다. 원본 그대로 보고 싶으면 끌 수 있다.
   const [showChangeMarks, setShowChangeMarks] = useState(true);
   // 피부케어 결과지의 '케어 후 예상' 시뮬레이션.
+  // AI 상담은 단계가 아니라 결과지에서 여는 창이다(2026-08-18).
+  const [consultOpen, setConsultOpen] = useState(false);
   const [careSim, setCareSim] = useState<SkincareSimulationResponse | null>(null);
   const [careSimLoading, setCareSimLoading] = useState(false);
   const [itemRegion, setItemRegion] = useState<ItemRegion>(() => detectInitialRegion());
@@ -1808,12 +1848,12 @@ export default function App() {
   const personalColorPreview = personalColorPreviews[safePersonalColorIndex] ?? '';
 
   const highestReadyStep = useMemo(() => {
-    if (answer) return 4;
+    // 상담 답변(answer)은 이제 단계가 아니라 결과지에서 여는 창이라 진행도에 넣지 않는다.
     if (recommendation) return 3;
     if (analysis) return 2;
     if (faceFiles.length) return 1;
     return 0;
-  }, [answer, recommendation, analysis, faceFiles.length]);
+  }, [recommendation, analysis, faceFiles.length]);
 
   // 계정 연동 부팅. 웹에서 넘어왔으면 티켓을 세션으로 바꾸고, 아니면 저장된 세션을 확인한다.
   //
@@ -1889,6 +1929,38 @@ export default function App() {
     if (authBooting) return;
     getHistory().then(setHistory).catch(() => undefined);
   }, [recommendation, authBooting, authUser?.id]);
+
+  // ── 회원 동선 수집 ───────────────────────────────────────────────────────────
+  // 언어는 행동마다 넘기지 않고 여기서 한 번 심어 둔다. 빠뜨리면 언어별 표에 구멍이 난다.
+  useEffect(() => {
+    setJourneyContext({ lang: appLang });
+  }, [appLang]);
+  // 앱 진입은 퍼널의 첫 칸이다. 세션 확인이 끝난 뒤에 남긴다 — 부팅 중에 남기면
+  // 토큰이 아직 안 붙어서, 로그인한 사람의 진입이 전부 비로그인으로 쌓인다.
+  useEffect(() => {
+    if (authBooting) return;
+    trackJourney('app_open', { module: 'home' });
+  }, [authBooting]);
+  // 로그인 게이트를 실제로 본 사람. 여기서 돌아서는 게 이 앱 이탈의 큰 몫이라
+  // 퍼널 단계와 별개로 따로 센다.
+  useEffect(() => {
+    if (authBooting || !authConfig?.require_login || authUser) return;
+    trackJourney('gate_view', { module: 'home' });
+  }, [authBooting, authConfig?.require_login, authUser]);
+  // 추천이 화면에 뜬 시점. 분석은 됐는데 추천을 못 본 채 나가는 사람을 가려낸다.
+  useEffect(() => {
+    if (!recommendation) return;
+    trackJourney('recommend_view');
+    // 추천 상품의 카테고리는 선호 집계의 주재료다. 상품마다 한 줄씩 남기되
+    // 큐 상한(30)을 넘기지 않게 앞쪽 몇 개만 — 어차피 사용자가 보는 것도 위쪽이다.
+    recommendation.products.slice(0, 8).forEach((product) => {
+      trackJourney('recommend_view', {
+        productId: product.id,
+        category: product.category,
+        brand: product.brand,
+      });
+    });
+  }, [recommendation]);
 
   // 촬영 조명 힌트 — 카메라가 켜져 있는 동안만 프레임 밝기를 샘플링한다.
   //
@@ -2113,12 +2185,16 @@ export default function App() {
   }
 
   function startSkinCareAnalysis() {
+    setJourneyContext({ module: 'skin-care' });
+    trackJourney('module_open', { module: 'skin-care' });
     setAppModule('skin-care');
     setCurrentStep(0);
     setError('');
   }
 
   function startPersonalColorAnalysis() {
+    setJourneyContext({ module: 'personal-color' });
+    trackJourney('module_open', { module: 'personal-color' });
     stopCamera();
     setAppModule('personal-color');
     setPersonalColorStep(0);
@@ -2126,6 +2202,8 @@ export default function App() {
   }
 
   function startNailDesign() {
+    setJourneyContext({ module: 'nail-design' });
+    trackJourney('module_open', { module: 'nail-design' });
     stopCamera();
     setAppModule('nail-design');
     setNailResult(null);
@@ -2134,6 +2212,8 @@ export default function App() {
   }
 
   function startVirtualSurgery() {
+    setJourneyContext({ module: 'virtual-surgery' });
+    trackJourney('module_open', { module: 'virtual-surgery' });
     stopCamera();
     setAppModule('virtual-surgery');
     setVirtualSurgeryStep(0);
@@ -2150,15 +2230,23 @@ export default function App() {
     setVirtualSurgeryResult(null);
     setVirtualSurgeryLoading(true);
     setError('');
+    trackJourney('photo_ready', { module: 'virtual-surgery' });
     try {
       const result = await simulateVirtualSurgery(file, virtualSurgeryTuning, virtualSurgeryProfile);
       setVirtualSurgeryResult(result);
+      // 얼굴을 못 찾은 것도 '실패'다. 200 으로 돌아온다고 성공으로 세면
+      // 가장 흔한 이탈 원인이 통계에서 사라진다.
+      trackJourney(result.detected ? 'analysis_done' : 'analysis_error', {
+        module: 'virtual-surgery',
+        detail: result.detected ? '' : 'face_not_detected',
+      });
       // 새 분석이면 이전에 고른 점은 무효다. 안 지우면 다른 사진에 옛 좌표가 얹힌다.
       setPickedBlemishes([]);
       setRetouchedImage(null);
       if (result.detected) setVirtualSurgeryStep((step) => Math.max(step, 2));
       if (!result.detected) setError(result.message);
     } catch {
+      trackJourney('analysis_error', { module: 'virtual-surgery', detail: 'analyze_failed' });
       setError('가상 성형 추천을 생성하지 못했습니다. 정면 얼굴 사진과 밝은 조명의 이미지를 다시 선택해 주세요.');
     } finally {
       setVirtualSurgeryLoading(false);
@@ -2232,14 +2320,17 @@ export default function App() {
     setNailResult(null);
     const previewUrl = URL.createObjectURL(file);
     setNailPreview(previewUrl);
+    trackJourney('photo_ready', { module: 'nail-design' });
     try {
       const result = await analyzeNailDesign(file, 5);
       setNailResult(result);
+      trackJourney('analysis_done', { module: 'nail-design' });
       // 예전엔 스와치를 눌러야만 미리보기·상품이 떴다 — 결과 화면이 비어 보였다(사용자 지적).
       // 분석 직후 1순위 추천 색을 자동 적용해 바로 보이게 한다.
       const top = result.recommended_palette?.[0];
       if (top) void applyNailShade(top, result.detected, previewUrl);
     } catch {
+      trackJourney('analysis_error', { module: 'nail-design', detail: 'analyze_failed' });
       setError('네일 사진을 분석하지 못했습니다. 다른 사진으로 다시 시도해 주세요.');
     } finally {
       setNailLoading(false);
@@ -2247,6 +2338,7 @@ export default function App() {
   }
 
   function goHome() {
+    setJourneyContext({ module: 'home' });
     stopCamera();
     setAppModule('home');
     setCurrentStep(0);
@@ -2356,16 +2448,22 @@ export default function App() {
       .then((result) => setFaceShape(result))
       .catch(() => setFaceShape(null));
 
+    trackJourney('photo_ready', { module: 'personal-color' });
     try {
       const files = personalColorFiles.length > 0 ? personalColorFiles : [personalColorFile];
       setPersonalColorResult(await analyzePersonalColor(files));
+      trackJourney('analysis_done', { module: 'personal-color' });
     } catch (err) {
       // ⚠ 422 는 서버가 **왜 못 하는지**를 담아 보낸다(어두움 / 색조명 / 얼굴 미검출).
       //   예전처럼 통째로 삼키고 일반 문구로 덮으면, 구체적 이유를 만들어 놓고 화면에서 버리는 셈이다.
       const detail = (err as { response?: { status?: number; data?: { detail?: string } } })?.response;
       if (detail?.status === 422 && typeof detail.data?.detail === 'string') {
+        // 422 는 서버가 이유를 알려준 실패다(어두움/색조명/얼굴 미검출). 그 이유를 그대로
+        // 남겨야 '사진 안내를 고칠 문제'인지 '모델을 고칠 문제'인지 나중에 구분할 수 있다.
+        trackJourney('analysis_error', { module: 'personal-color', detail: detail.data.detail });
         setError(detail.data.detail);
       } else {
+        trackJourney('analysis_error', { module: 'personal-color', detail: 'analyze_failed' });
         setError('퍼스널컬러 분석에 실패했습니다. 정면 얼굴 사진과 조명이 충분한 이미지를 다시 선택해 주세요.');
       }
     } finally {
@@ -2741,6 +2839,7 @@ export default function App() {
     setCurrentStep(2);
     setLoading('analyzing');
     setError('');
+    trackJourney('photo_ready', { module: 'skin-care' });
     try {
       const results = await Promise.all(faceFiles.map((item) => analyzeSkin(item, analysisMode)));
       const faceResults = results.filter((item) => item.analysis_mode === 'face' && item.scores);
@@ -2762,6 +2861,7 @@ export default function App() {
             summary: (bodyResults[0] ?? results[0]).summary,
           };
       setAnalysis(result);
+      trackJourney('analysis_done', { module: 'skin-care', detail: result.analysis_mode });
       setRecommendation(await recommend(
         survey,
         result.analysis_id ?? undefined,
@@ -2772,6 +2872,9 @@ export default function App() {
         skinRegion,
       ));
     } catch {
+      // 실패 사유를 남긴다. AI 앱에서 이탈의 큰 몫이 '분석이 안 됐다' 이고,
+      // 사유별로 세어야 사진 안내를 고칠지 모델을 고칠지 판단할 수 있다.
+      trackJourney('analysis_error', { module: 'skin-care', detail: 'analyze_failed' });
       setError('분석에 실패했습니다. 백엔드가 실행 중인지, 피부 사진이 정상적으로 선택되었는지 확인해 주세요.');
     } finally {
       setLoading('');
@@ -2881,7 +2984,7 @@ export default function App() {
     }
     if (currentStep === 2) return Boolean(analysis);
     if (currentStep === 3) return Boolean(recommendation);
-    if (currentStep === 4) return Boolean(recommendation);  // 상담 → 결과지 출력
+    // 결과지가 마지막 칸이다. AI 상담은 단계가 아니라 결과지에서 여는 링크다.
     return false;
   }
 
@@ -3046,6 +3149,8 @@ export default function App() {
               </Paper>
             </Grid>
           </Grid>
+          {/* 관리자에게만 보이는 운영 패널. 역할은 웹 로그인에서 넘어온다. */}
+          {authUser?.role?.toLowerCase() === 'admin' && <AdminJourneyPanel />}
         </Container>
       </Box>
     );
@@ -4469,6 +4574,7 @@ export default function App() {
                                           key={platform.key}
                                           component="a"
                                           href={rlinks[platform.key]}
+                                          onClick={() => trackProductClick(rp, platform.key)}
                                           target="_blank"
                                           rel="noreferrer"
                                           size="small"
@@ -4563,6 +4669,7 @@ export default function App() {
                                 key={platform.key}
                                 component="a"
                                 href={links[platform.key]}
+                                onClick={() => trackProductClick(product, platform.key)}
                                 target="_blank"
                                 rel="noreferrer"
                                 size="small"
@@ -4614,28 +4721,45 @@ export default function App() {
     );
   }
 
-  function renderConsultPage() {
+  /** AI 피부 상담 창. 결과지에서 링크로 연다 — 별도 단계였다가 창으로 바뀌었다(2026-08-18).
+   *
+   *  창으로 옮긴 이유: 상담은 '거쳐야 하는 단계'가 아니라 결과지를 보다가 궁금할 때 여는
+   *  것이다. 단계로 두면 안 물어볼 사람도 마지막 칸을 지나가야 하고, 진행률 표시도
+   *  상담을 안 하면 영원히 미완료로 남는다. */
+  function renderConsultDialog() {
     return (
-      <Paper className="page-panel" elevation={0}>
-        <Typography variant="h5" fontWeight={800}>{t('AI 피부 상담')}</Typography>
-        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          {t('분석 점수를 바탕으로 루틴, 성분 사용 순서, 주의점을 질문할 수 있습니다.')}
-        </Typography>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 3 }}>
-          {/* 예시 질문을 놓아 둔다 — 빈 칸만 있으면 무엇을 물을 수 있는지 알 수 없다. */}
-          <TextField
-            fullWidth
-            size="small"
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-            placeholder={t('예: ‘라운드랩 독도토너’ 라는 상품 조회가 되나요?')}
-          />
-          <Button variant="contained" startIcon={<Send size={16} />} onClick={handleChat} disabled={loading === 'chat'}>
-            {t('질문')}
-          </Button>
-        </Stack>
-        <ConsultAnswer loading={loading === 'chat'} answer={answer} sources={answerSources} />
-      </Paper>
+      <Dialog open={consultOpen} onClose={() => setConsultOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>{t('AI 피부 상담')}</DialogTitle>
+        <DialogContent dividers>
+          <Typography color="text.secondary">
+            {t('분석 점수를 바탕으로 루틴, 성분 사용 순서, 주의점을 질문할 수 있습니다.')}
+          </Typography>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 2 }}>
+            {/* 예시 질문을 놓아 둔다 — 빈 칸만 있으면 무엇을 물을 수 있는지 알 수 없다. */}
+            <TextField
+              fullWidth
+              size="small"
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder={t('예: ‘라운드랩 독도토너’ 라는 상품 조회가 되나요?')}
+            />
+            {/* 창은 페이지보다 좁아서 그냥 두면 '질/문' 으로 쪼개진다. */}
+            <Button
+              variant="contained"
+              startIcon={<Send size={16} />}
+              onClick={handleChat}
+              disabled={loading === 'chat'}
+              sx={{ flex: 'none', whiteSpace: 'nowrap' }}
+            >
+              {t('질문')}
+            </Button>
+          </Stack>
+          <ConsultAnswer loading={loading === 'chat'} answer={answer} sources={answerSources} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConsultOpen(false)}>{t('닫기')}</Button>
+        </DialogActions>
+      </Dialog>
     );
   }
 
@@ -5921,7 +6045,15 @@ export default function App() {
                 )}
                 {careSim?.applied && careSim.before && careSim.after && (
                   <Box className="care-sim" sx={{ mt: 2 }}>
-                    <Typography className="report-section-title">{t('케어를 이어갔을 때')}</Typography>
+                    {/* ⚠ 색소를 지운 경우엔 제목을 바꾼다. 점·지루각화 같은 색소병변은
+                        화장품 케어로 없어지지 않는데(시술 영역), '케어를 이어갔을 때'
+                        아래에 지워진 사진을 놓으면 화장품을 쓰면 사라진다는 약속이 된다.
+                        홍조·모공만 손댄 경우는 케어로 실제 좋아지므로 원래 문구가 맞다. */}
+                    <Typography className="report-section-title">
+                      {t((careSim.changed ?? []).includes('pigmentation')
+                        ? '색소를 제거했을 때'
+                        : '케어를 이어갔을 때')}
+                    </Typography>
                     <Box className="care-sim-pair">
                       <Box className="care-sim-shot">
                         <span>Now</span>
@@ -5955,6 +6087,13 @@ export default function App() {
                           <span key={key}>{t(scoreLabels[key as keyof typeof scoreLabels] ?? key)}</span>
                         ))}
                       </Box>
+                    )}
+                    {/* 무엇으로 지워지는지 한 줄로 못박는다. 이 사진만 보고 화장품을 사면
+                        기대한 결과가 나오지 않는다 — 결과지는 상담에 쓰이므로 더 그렇다. */}
+                    {(careSim.changed ?? []).includes('pigmentation') && (
+                      <Typography className="care-sim-note">
+                        {t('색소병변 제거는 시술 영역입니다. 케어만으로는 지워지지 않습니다.')}
+                      </Typography>
                     )}
                   </Box>
                 )}
@@ -6018,6 +6157,21 @@ export default function App() {
             ? '추천 단계에서 결과지에 담은 상품만 표시됩니다.'
             : '추천 단계에서 상품을 담으면 여기에 표시됩니다.')}
         </Typography>
+        {/* AI 상담 입구. 인쇄면(.print-report-card) **밖**에 둔다 — 안에 넣으면
+            고정 크기 결과지를 넘쳐 잘린다. */}
+        <Stack alignItems="center" sx={{ mt: 2 }}>
+          <Button
+            variant="outlined"
+            startIcon={<Send size={16} />}
+            onClick={() => setConsultOpen(true)}
+          >
+            {t('AI 피부 상담 열기')}
+          </Button>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.8 }}>
+            {t('결과지를 보다가 궁금한 점을 바로 물어볼 수 있습니다.')}
+          </Typography>
+        </Stack>
+        {renderConsultDialog()}
       </Box>
     );
   }
@@ -6028,7 +6182,6 @@ export default function App() {
     renderAnalysisPage,
     renderRecommendationPage,
     renderSkinReportPage,
-    renderConsultPage,
   ];
   const CurrentPage = pages[currentStep];
 
@@ -6118,7 +6271,7 @@ export default function App() {
                 disabled={!canGoNext()}
                 onClick={goNext}
               >
-                {t(currentStep === 1 ? '분석 시작' : currentStep === 5 ? '완료' : '다음')}
+                {t(currentStep === 1 ? '분석 시작' : currentStep === 4 ? '완료' : '다음')}
               </Button>
             </Stack>
           </Stack>
@@ -6163,7 +6316,7 @@ export default function App() {
               disabled={!canGoNext()}
               onClick={goNext}
             >
-              {t(currentStep === 1 ? '분석 시작' : currentStep === 5 ? '완료' : '다음')}
+              {t(currentStep === 1 ? '분석 시작' : currentStep === 4 ? '완료' : '다음')}
             </Button>
           </Stack>
         </Paper>
