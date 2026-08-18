@@ -117,6 +117,132 @@ def _body_skin_mask(rgb: np.ndarray) -> np.ndarray:
     return cv2.GaussianBlur(skin, (k * 2 + 1, k * 2 + 1), 0).astype(np.float32) / 255.0
 
 
+def find_body_pigment_candidates(rgb: np.ndarray, skin_mask: np.ndarray) -> list[dict]:
+    """바디 사진에서 색소 자국(점·기미·지루각화 등)의 위치를 찾는다.
+
+    얼굴용 find_blemish_candidates 를 그대로 못 쓰는 이유가 두 가지다.
+
+    ① **얼굴 마스크와 랜드마크를 전제**로 한다(윤곽 안쪽으로 깎고 이목구비를 뺀다).
+       바디엔 둘 다 없다.
+    ② **크기 기준이 얼굴 셀카 기준**이다(면적 5~170px). 바디는 대개 접사라 병변 하나가
+       수천 px 를 차지한다 — 그 기준으로는 정작 크고 뚜렷한 것만 걸러낸다.
+       그래서 여기서는 면적을 **이미지 대비 비율**로 잡는다.
+
+    좌표는 0~1 정규화(remove_blemishes 규약과 같다). r 은 이미지 **너비** 기준이다.
+    """
+    full_h, full_w = rgb.shape[:2]
+    # 큰 커널 연산이 뒤에 있으므로 작업 해상도를 고정한다(속도 + 결과 일관성).
+    scale = 512.0 / max(full_h, full_w)
+    if scale < 1.0:
+        small = cv2.resize(rgb, (int(full_w * scale), int(full_h * scale)), interpolation=cv2.INTER_AREA)
+        small_mask = cv2.resize(skin_mask, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_LINEAR)
+    else:
+        small, small_mask = rgb, skin_mask
+    h, w = small.shape[:2]
+
+    lab = cv2.cvtColor(cv2.cvtColor(small, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2LAB)
+    lightness = lab[:, :, 0].astype(np.float32)
+
+    # 주변보다 얼마나 어두운가 = black-hat(닫힘 − 원본).
+    #
+    # ⚠ 가우시안 국소평균을 쓰면 안 된다. 커널이 병변보다 크지 않으면 '주변 평균'이 병변
+    #   자신에 끌려가 차이가 0 이 된다 — 실측(420px 사진, 지름 50px 점): 커널 51px 에서
+    #   delta 0.7, 커널 169px 에서 76.3. 바디는 접사라 병변이 크고 크기를 미리 모르므로
+    #   **크기에 덜 휘둘리는** 형태학 연산이 맞다. 닫힘은 구조요소보다 작은 어두운 얼룩을
+    #   주변 밝기로 메우므로, 그 차이가 곧 '얼마나 어두운 점인가'가 된다.
+    ksize = max(15, int(min(h, w) * 0.30) | 1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+    closed = cv2.morphologyEx(lightness, cv2.MORPH_CLOSE, kernel)
+    dark_delta = np.clip(closed - lightness, 0, 255)
+
+    # 피부 안쪽만 본다. 테두리를 안 깎으면 옷·배경 경계의 그늘이 색소로 잡힌다.
+    margin = max(3, int(min(h, w) * 0.02))
+    inner = cv2.erode((small_mask > 0.5).astype(np.uint8) * 255, np.ones((margin, margin), np.uint8))
+    usable = inner > 0
+    if not usable.any():
+        return []
+
+    values = dark_delta[usable]
+    if values.size == 0:
+        return []
+    # 문턱은 사진마다 다르다(조명·피부톤). Otsu 로 잡되 **최소 문턱**을 깔아 둔다 —
+    # 깨끗한 피부에서도 Otsu 는 노이즈를 억지로 둘로 가르기 때문이다.
+    otsu, _ = cv2.threshold(
+        np.clip(dark_delta, 0, 255).astype(np.uint8), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    threshold = max(10.0, float(otsu))
+
+    candidate = ((dark_delta > threshold) & usable).astype(np.uint8) * 255
+    candidate = cv2.morphologyEx(candidate, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    # 색소는 가장자리가 흐려 조각날 수 있다 — 붙여서 하나로 본다.
+    candidate = cv2.morphologyEx(candidate, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+
+    total = float(h * w)
+    num, labels, stats, centroids = cv2.connectedComponentsWithStats(candidate, 8)
+    found: list[dict] = []
+    for idx in range(1, num):
+        area = int(stats[idx, cv2.CC_STAT_AREA])
+        ratio = area / total
+        # 너무 작으면 노이즈, 너무 크면 그림자나 조명 얼룩이다(피부의 12% 를 넘는 '점'은 없다).
+        if not (0.00004 <= ratio <= 0.12):
+            continue
+        bw = int(stats[idx, cv2.CC_STAT_WIDTH])
+        bh = int(stats[idx, cv2.CC_STAT_HEIGHT])
+        # 색소 자국은 대체로 둥글다. 길쭉한 것(주름 그늘·옷 경계·체모)은 뺀다.
+        if max(bw, bh) > 3.2 * max(1, min(bw, bh)):
+            continue
+        # 옅은 얼룩까지 지우면 피부가 밀랍처럼 된다. 실제로 어두운 것만 남긴다.
+        if float(dark_delta[labels == idx].mean()) < 12.0:
+            continue
+        cx, cy = centroids[idx]
+        # 반지름은 경계보다 넉넉하게 — 가장자리 색이 남으면 '지운 티'만 나고 색소는 보인다.
+        radius = 0.5 * max(bw, bh) * 1.25
+        found.append({"x": float(cx / w), "y": float(cy / h), "r": float(radius / w)})
+
+    # 큰 것부터. 화면에서 눈에 띄는 것이 먼저 지워져야 '없앴다'로 읽힌다.
+    found.sort(key=lambda p: -p["r"])
+    return found[:12]
+
+
+def _erase_pigment(rgb: np.ndarray, points: list[dict], strength: float) -> np.ndarray:
+    """찾은 색소 자국을 주변 살색으로 덮는다.
+
+    remove_blemishes(얼굴용)를 안 쓰는 이유는 **inpaint 반지름이 3 으로 고정**이라서다.
+    얼굴 좁쌀엔 맞지만 바디 접사의 큰 병변에는 턱없이 작아, 가운데가 얼룩덜룩하게 남는다.
+    여기서는 병변 크기에 맞춰 반지름을 키운다.
+    """
+    if not points or strength <= 0:
+        return rgb
+    h, w = rgb.shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    largest = 0
+    for point in points:
+        x = int(float(point.get("x", 0)) * w)
+        y = int(float(point.get("y", 0)) * h)
+        r = max(4, int(float(point.get("r", 0)) * w) + 2)
+        largest = max(largest, r)
+        cv2.circle(mask, (x, y), r, 255, -1)
+
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    repaired = cv2.inpaint(bgr, mask, max(3, min(largest, 24)), cv2.INPAINT_TELEA)
+
+    # ⚠ TELEA 는 구멍 **테두리에서 안쪽으로** 색을 전파한다. 병변이 크면 가운데까지 닿기
+    #   전에 힘이 빠져 얼룩덜룩한 심지가 남는다(실측: 지름 66px 병변에서 83.5% 만 제거,
+    #   나머지가 중앙에 그대로 보였다). 채운 결과를 병변 크기에 맞춰 한 번 더 뭉개면
+    #   그 심지가 사라지고 주변 살색으로 고르게 덮인다.
+    if largest >= 10:
+        smooth = max(9, (largest // 2) * 2 + 1)
+        repaired = cv2.GaussianBlur(repaired, (smooth, smooth), 0)
+
+    # 가장자리는 부드럽게 잇되 **중심은 완전히 덮어야** 한다. 페더가 반지름만큼 크면
+    # 중심 알파가 1 에 못 미쳐 원래 색이 비쳐 보인다.
+    feather = max(5, (largest // 3) * 2 + 1)
+    alpha = (cv2.GaussianBlur(mask, (feather, feather), 0).astype(np.float32) / 255.0)
+    alpha = np.clip(alpha * min(1.0, strength), 0.0, 1.0)
+    out = bgr * (1 - alpha[..., None]) + repaired * alpha[..., None]
+    return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
+
+
 def simulate_skincare(
     image_bytes: bytes,
     scores: dict[str, float] | None = None,
@@ -177,7 +303,27 @@ def simulate_skincare(
     out = rgb.copy()
     changed: list[str] = []
 
-    if w_pig > 0 and face_mask is not None:
+    if is_body:
+        # ⚠ 예전엔 이 블록이 `face_mask is not None` 조건 아래에 있어서 **바디에서는 색소
+        #   제거가 통째로 실행되지 않았다.** 그래서 바디 결과지의 '케어 후'가 홍조·결만
+        #   손댄 거의 같은 사진이었고, 정작 사용자가 신경 쓰는 점·색소는 그대로 남았다
+        #   (제보 2026-08-18). 바디에서 눈에 띄는 건 결이 아니라 색소다 — 여기가 본체다.
+        #
+        # 바디는 pigmentation 점수 자체가 없으므로(질환 선별이라 6항목이 안 온다) 점수로
+        # 게이트하지 않고 **검출되면 지운다**. 점수를 지어내는 것보다 정직하다.
+        # 강도는 1.0 고정이다. 점수로 깎으면 안 된다 — 바디엔 pigmentation 점수가 아예
+        # 안 오므로 w_pig 는 항상 0 이고, 그때 강도 0.85 는 **원본의 15% 를 그대로 비쳐
+        # 보이게** 한다(실측: 원본 67 → 결과 170, 깨끗한 피부 187). 그 정도로 남으면
+        # '지웠다'가 아니라 '문질렀다'로 보인다. 색소는 지우거나 안 지우거나 둘 중 하나다.
+        try:
+            points = find_body_pigment_candidates(rgb, mask)
+            if points:
+                out = _erase_pigment(out, points, strength=1.0)
+                changed.append("pigmentation")
+        except Exception:
+            # 색소 검출이 실패해도 나머지 보정은 계속한다.
+            pass
+    elif w_pig > 0 and face_mask is not None:
         try:
             # 후보 탐색은 윤곽 마스크를 받는다(안쪽으로 깎아 피부만 보는 건 함수가 알아서 한다).
             points = find_blemish_candidates(rgb, face_mask, landmarks) or []
