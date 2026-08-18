@@ -1735,7 +1735,12 @@ export default function App() {
   const [nailResult, setNailResult] = useState<AnalyzeNailDesignResponse | null>(null);
   const [nailLoading, setNailLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('face');
+  // 기본값은 'auto'(서버 자동 판별)다. 'face' 고정이었는데, 바디 사진을 올리고 토글을
+  // 안 누르면 얼굴 회귀기가 돌아 **그럴듯한 6개 점수를 지어냈다**(살색+점 사진에
+  // acne 37.6 / pore 40.8 / pigmentation 45.0). 조용히 틀린 숫자가 결과지에 실리는
+  // 것이 가장 나쁘다. 실측 정확도는 얼굴 27/28·바디 239/240 이고, 틀린 경우엔
+  // 아래 토글로 사용자가 되돌릴 수 있다.
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('auto');
   const [survey, setSurvey] = useState<SurveyInput>({
     gender: 'female',
     age: '',
@@ -4229,9 +4234,15 @@ export default function App() {
               }}
               sx={{ mt: 2 }}
             >
+              <ToggleButton value="auto">{t('자동 판별')}</ToggleButton>
               <ToggleButton value="face">{t('얼굴 피부 케어')}</ToggleButton>
               <ToggleButton value="body">{t('바디 피부 케어')}</ToggleButton>
             </ToggleButtonGroup>
+            {analysisMode === 'auto' && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.8 }}>
+                {t('사진을 보고 얼굴/바디를 자동으로 고릅니다. 결과가 다르면 위에서 직접 선택해 주세요.')}
+              </Typography>
+            )}
 
             {/* 조명 힌트 테두리. **촬영을 막지 않는다** — 최종 판정은 촬영 후 서버가 원본으로 한다.
                 프리뷰(작은 프레임)와 원본은 판정이 다를 수 있어(실측 8장 중 2장), 여기서 막으면
