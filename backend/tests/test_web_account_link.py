@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import jwt
 import pytest
@@ -134,6 +135,41 @@ def test_expired_session_is_rejected(client: TestClient, secret: str) -> None:
         algorithm="HS256",
     )
     assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {stale}"}).status_code == 401
+
+
+# ── 만료 뒤 프론트가 무엇을 보여주는가 (2026-08-19) ────────────────────────────
+#
+# 위 test_expired_session_is_rejected 는 서버가 401 을 준다는 것까지만 본다. 그런데
+# **사용자가 실제로 보는 화면**은 그 401 을 프론트가 어떻게 읽느냐로 정해진다.
+# 실제로 이랬다: 창구에 응답 인터셉터가 없어 401 이 흐름별 catch 로 떨어졌고, 거기서
+# "백엔드 연결을 확인해 주세요" 가 떴다. 백엔드는 멀쩡하고 답은 '다시 로그인'이었다.
+# 게이트도 부팅 때 한 번만 판단해 authUser 가 남아 있어 다시 서지 않았다.
+# 세션 수명이 12시간이라 하루를 걸쳐 쓰는 사용자는 **반드시** 이 화면을 만난다.
+
+FRONTEND_SRC = Path(__file__).resolve().parents[2] / "frontend" / "src"
+
+
+def test_frontend_handles_401_centrally() -> None:
+    """401 을 창구 한 곳에서 잡아 세션을 비우는지 본다."""
+    client_ts = (FRONTEND_SRC / "api" / "client.ts").read_text(encoding="utf-8")
+    assert "interceptors.response.use" in client_ts, (
+        "client.ts 에 응답 인터셉터가 없습니다 — 세션 만료(401)가 흐름별 catch 로 떨어져 "
+        "'백엔드 연결을 확인해 주세요' 로 잘못 안내됩니다."
+    )
+    assert "onSessionExpired" in client_ts, "만료를 화면에 알릴 통로(onSessionExpired)가 없습니다"
+
+
+def test_frontend_rebuilds_gate_on_session_expiry() -> None:
+    """만료를 잡기만 하고 게이트를 안 세우면 사용자는 여전히 답을 못 본다."""
+    app_tsx = (FRONTEND_SRC / "App.tsx").read_text(encoding="utf-8")
+    assert "onSessionExpired(" in app_tsx, "App 이 만료 신호를 구독하지 않습니다"
+    assert "세션이 만료되었습니다. 다시 로그인해 주세요." in app_tsx, (
+        "만료 안내 문구가 없습니다 — 게이트만 다시 떠도 사용자는 왜 튕겼는지 모릅니다."
+    )
+    i18n = (FRONTEND_SRC / "i18n.ts").read_text(encoding="utf-8")
+    assert "'세션이 만료되었습니다. 다시 로그인해 주세요.'" in i18n, (
+        "만료 안내에 일본어가 없습니다 — 일본어 모드에서 한국어가 나갑니다."
+    )
 
 
 def test_history_ignores_spoofed_user_id_when_session_present(client: TestClient, secret: str) -> None:

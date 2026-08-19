@@ -33,6 +33,35 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// ── 세션 만료 감지 ────────────────────────────────────────────────────────────
+// AI 세션 수명은 12시간(AI_SESSION_EXP_HOURS)이라 하루를 걸쳐 쓰면 **반드시** 만료된다.
+// 그 뒤로는 모든 요청이 401 인데, 화면 쪽 catch 는 사유를 안 보고 "백엔드 연결을 확인해
+// 주세요" 를 띄웠다 — 실제 답은 '다시 로그인'이라 사용자는 새로고침만 반복하다 나간다.
+// 게이트도 부팅 때 한 번만 판단하므로 authUser 가 남아 있어 다시 뜨지 않았다.
+// 흐름마다 401 을 따로 처리하면 스무 곳을 고쳐야 하므로 **창구 한 곳**에서 끊는다.
+type SessionExpiredHandler = () => void;
+let sessionExpiredHandler: SessionExpiredHandler | null = null;
+
+/** 세션이 만료됐을 때 부를 콜백을 등록한다(App 이 게이트를 다시 세우는 데 쓴다). */
+export function onSessionExpired(handler: SessionExpiredHandler | null): void {
+  sessionExpiredHandler = handler;
+}
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // ⚠ **토큰을 실어 보낸** 요청의 401 만 '만료'다. 토큰 없이 받은 401 은 그냥 '로그인
+    //   필요'이고 그건 부팅 게이트가 이미 처리한다 — 여기서 같이 건드리면 비로그인
+    //   사용자에게 만료 안내가 뜬다.
+    if (error?.response?.status === 401 && error?.config?.headers?.Authorization) {
+      setSessionToken(null);
+      sessionExpiredHandler?.();
+    }
+    // 재시도하지 않고 그대로 흘려보낸다 — 각 흐름의 catch 가 로딩 상태를 정리해야 한다.
+    return Promise.reject(error);
+  },
+);
+
 // ── 웹(BeautyWEB) 세션 직접 조회 ───────────────────────────────────────────────
 // AI 오리진(ai.…)과 웹 API 호스트(www.…)는 오리진이 다르지만 **같은 사이트**(eTLD+1 이
 // yopalette.com 으로 같다)다. 그래서 웹의 리프레시 쿠키(HttpOnly·Domain 미설정·SameSite

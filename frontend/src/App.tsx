@@ -53,7 +53,7 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getSessionToken, matchPersonalColorItems, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, probeWebSession, recommend, requestWebAiTicket, retouchBlemishes, setSessionToken, simulateSkincare, simulateVirtualSurgery } from './api/client';
+import { analyzeFaceShape, analyzeNailDesign, analyzePersonalColor, analyzeSkin, chat, createCartHandoff, deleteMyData, exchangeTicket, fetchAuthConfig, fetchMe, getHistory, getSessionToken, matchPersonalColorItems, onSessionExpired, personalColorProfile as fetchDeclaredPersonalColor, previewMakeupOnPhoto, previewVirtualSurgeryCards, probeWebSession, recommend, requestWebAiTicket, retouchBlemishes, setSessionToken, simulateSkincare, simulateVirtualSurgery } from './api/client';
 import { useAppLang, useT, type AppLang } from './i18n';
 import { flushJourney, setJourneyContext, track as trackJourney } from './tracking';
 import AdminJourneyPanel from './AdminJourneyPanel';
@@ -294,10 +294,10 @@ function CartHandoffQr({
             }),
           );
           void flushJourney();
-        } else setError('장바구니 QR 을 만들지 못했습니다.');
+        } else setError(t('장바구니 QR 을 만들지 못했습니다.'));
       })
       .catch(() => {
-        if (!cancelled) setError('장바구니 QR 을 만들지 못했습니다.');
+        if (!cancelled) setError(t('장바구니 QR 을 만들지 못했습니다.'));
       });
     return () => {
       cancelled = true;
@@ -1935,6 +1935,19 @@ export default function App() {
     getHistory().then(setHistory).catch(() => undefined);
   }, [recommendation, authBooting, authUser?.id]);
 
+  // 세션이 만료되면 창구(client.ts)가 알려준다. authUser 를 내려야 게이트가 다시 서고,
+  // 그래야 사용자가 '다시 로그인'이라는 **실제 답**을 본다 — 예전에는 게이트가 부팅 때
+  // 한 번만 판단해서, 만료 뒤 모든 동작이 "백엔드 연결을 확인해 주세요" 로 끝났다.
+  // 등록은 한 번만 한다(빈 배열). t 는 렌더마다 새 함수라 의존성에 넣으면 매번 재등록된다.
+  useEffect(() => {
+    onSessionExpired(() => {
+      setAuthUser(null);
+      setAuthError('세션이 만료되었습니다. 다시 로그인해 주세요.');
+      setLoading('');
+    });
+    return () => onSessionExpired(null);
+  }, []);
+
   // ── 회원 동선 수집 ───────────────────────────────────────────────────────────
   // 언어는 행동마다 넘기지 않고 여기서 한 번 심어 둔다. 빠뜨리면 언어별 표에 구멍이 난다.
   useEffect(() => {
@@ -2152,7 +2165,7 @@ export default function App() {
   // facing: 얼굴 촬영은 전면('user'), 네일은 손·발을 찍으므로 후면('environment')이 자연스럽다.
   async function startCamera(deviceId = selectedDeviceId, facing: 'user' | 'environment' = 'user') {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setError('이 브라우저는 카메라 촬영을 지원하지 않습니다.');
+      setError(t('이 브라우저는 카메라 촬영을 지원하지 않습니다.'));
       return;
     }
 
@@ -2227,7 +2240,7 @@ export default function App() {
 
   async function handleVirtualSurgeryUpload(file: File) {
     if (!file.type.startsWith('image/')) {
-      setError('가상 성형 추천에 사용할 얼굴 사진을 선택해 주세요.');
+      setError(t('가상 성형 추천에 사용할 얼굴 사진을 선택해 주세요.'));
       return;
     }
     setVirtualSurgeryFile(file);
@@ -2252,7 +2265,7 @@ export default function App() {
       if (!result.detected) setError(result.message);
     } catch {
       trackJourney('analysis_error', { module: 'virtual-surgery', detail: 'analyze_failed' });
-      setError('가상 성형 추천을 생성하지 못했습니다. 정면 얼굴 사진과 밝은 조명의 이미지를 다시 선택해 주세요.');
+      setError(t('가상 성형 추천을 생성하지 못했습니다. 정면 얼굴 사진과 밝은 조명의 이미지를 다시 선택해 주세요.'));
     } finally {
       setVirtualSurgeryLoading(false);
     }
@@ -2270,7 +2283,7 @@ export default function App() {
       setRetouchedImage(res.preview_image);
     } catch {
       // 보정은 부가 기능이다 — 실패해도 원래 결과는 그대로 남는다.
-      setError('점 제거에 실패했습니다. 다시 시도해 주세요.');
+      setError(t('점 제거에 실패했습니다. 다시 시도해 주세요.'));
     } finally {
       setRetouching(false);
     }
@@ -2299,7 +2312,7 @@ export default function App() {
 
   async function rerunVirtualSurgery() {
     if (!virtualSurgeryFile) {
-      setError('가상 성형 추천에 사용할 얼굴 사진을 먼저 선택해 주세요.');
+      setError(t('가상 성형 추천에 사용할 얼굴 사진을 먼저 선택해 주세요.'));
       return;
     }
     setVirtualSurgeryLoading(true);
@@ -2313,7 +2326,7 @@ export default function App() {
       if (result.detected) setVirtualSurgeryStep((step) => Math.max(step, 2));
       if (!result.detected) setError(result.message);
     } catch {
-      setError('가상 성형 추천을 다시 생성하지 못했습니다.');
+      setError(t('가상 성형 추천을 다시 생성하지 못했습니다.'));
     } finally {
       setVirtualSurgeryLoading(false);
     }
@@ -2336,7 +2349,7 @@ export default function App() {
       if (top) void applyNailShade(top, result.detected, previewUrl);
     } catch {
       trackJourney('analysis_error', { module: 'nail-design', detail: 'analyze_failed' });
-      setError('네일 사진을 분석하지 못했습니다. 다른 사진으로 다시 시도해 주세요.');
+      setError(t('네일 사진을 분석하지 못했습니다. 다른 사진으로 다시 시도해 주세요.'));
     } finally {
       setNailLoading(false);
     }
@@ -2368,7 +2381,7 @@ export default function App() {
     // 현재 보고 있는 사진(화살표 순회)이 얼굴형 분석·미리보기 기준이 된다.
     const images = Array.from(files ?? []).filter((item) => item.type.startsWith('image/'));
     if (images.length === 0) {
-      setError('퍼스널컬러 분석에 사용할 얼굴 사진을 선택해 주세요.');
+      setError(t('퍼스널컬러 분석에 사용할 얼굴 사진을 선택해 주세요.'));
       return;
     }
     const availableSlots = PERSONAL_COLOR_MAX - personalColorFiles.length;
@@ -2430,7 +2443,7 @@ export default function App() {
       setPersonalColorResult(await fetchDeclaredPersonalColor(label));
       // 단계를 넘기지 않는다 — 다음 단계(얼굴형)는 사진이 있어야 하고, 결과 패널은 이 단계에 있다.
     } catch {
-      setError('저장된 퍼스널 컬러를 불러오지 못했습니다. 사진으로 분석해 주세요.');
+      setError(t('저장된 퍼스널 컬러를 불러오지 못했습니다. 사진으로 분석해 주세요.'));
     } finally {
       setLoading('');
     }
@@ -2438,7 +2451,7 @@ export default function App() {
 
   async function handlePersonalColorAnalyze() {
     if (!personalColorFile) {
-      setError('퍼스널컬러 분석에 사용할 얼굴 사진을 먼저 선택해 주세요.');
+      setError(t('퍼스널컬러 분석에 사용할 얼굴 사진을 먼저 선택해 주세요.'));
       return;
     }
     setLoading('personal-color');
@@ -2469,7 +2482,7 @@ export default function App() {
         setError(detail.data.detail);
       } else {
         trackJourney('analysis_error', { module: 'personal-color', detail: 'analyze_failed' });
-        setError('퍼스널컬러 분석에 실패했습니다. 정면 얼굴 사진과 조명이 충분한 이미지를 다시 선택해 주세요.');
+        setError(t('퍼스널컬러 분석에 실패했습니다. 정면 얼굴 사진과 조명이 충분한 이미지를 다시 선택해 주세요.'));
       }
     } finally {
       setLoading('');
@@ -2676,13 +2689,13 @@ export default function App() {
     setCameraNotice('');   // 사진을 넣었으면 카메라 안내는 더 이상 필요 없다.
     const imageFiles = files.filter((item) => item.type.startsWith('image/'));
     if (!imageFiles.length) {
-      setError('이미지 파일만 업로드할 수 있습니다.');
+      setError(t('이미지 파일만 업로드할 수 있습니다.'));
       return;
     }
 
     const availableSlots = 5 - faceFiles.length;
     if (availableSlots <= 0) {
-      setError('피부 케어 분석 사진은 최대 5장까지 선택할 수 있습니다.');
+      setError(t('피부 케어 분석 사진은 최대 5장까지 선택할 수 있습니다.'));
       return;
     }
 
@@ -2724,7 +2737,7 @@ export default function App() {
       await startCamera(undefined, 'environment');
     } catch {
       setNailCameraOn(false);
-      setError('카메라를 열지 못했습니다. 브라우저 권한을 확인해 주세요.');
+      setError(t('카메라를 열지 못했습니다. 브라우저 권한을 확인해 주세요.'));
     }
   }
 
@@ -2836,7 +2849,7 @@ export default function App() {
   async function handleAnalyze() {
     const minimumImages = 1;
     if (faceFiles.length < minimumImages || faceFiles.length > 5) {
-      setError('피부 케어 분석에는 사진을 1~5장 선택해 주세요.');
+      setError(t('피부 케어 분석에는 사진을 1~5장 선택해 주세요.'));
       setCurrentStep(1);
       return;
     }
@@ -2880,7 +2893,7 @@ export default function App() {
       // 실패 사유를 남긴다. AI 앱에서 이탈의 큰 몫이 '분석이 안 됐다' 이고,
       // 사유별로 세어야 사진 안내를 고칠지 모델을 고칠지 판단할 수 있다.
       trackJourney('analysis_error', { module: 'skin-care', detail: 'analyze_failed' });
-      setError('분석에 실패했습니다. 백엔드가 실행 중인지, 피부 사진이 정상적으로 선택되었는지 확인해 주세요.');
+      setError(t('분석에 실패했습니다. 사진이 정상적으로 선택되었는지 확인하고 잠시 후 다시 시도해 주세요.'));
     } finally {
       setLoading('');
     }
@@ -2901,7 +2914,7 @@ export default function App() {
         region,
       ));
     } catch {
-      setError('추천을 다시 계산하지 못했습니다. 백엔드 연결을 확인해 주세요.');
+      setError(t('추천을 다시 계산하지 못했습니다. 잠시 후 다시 시도해 주세요.'));
     } finally {
       setLoading('');
     }
@@ -2937,7 +2950,7 @@ export default function App() {
       setAnswer(result.answer);
       setAnswerSources(result.sources);
     } catch {
-      setError('상담 요청에 실패했습니다. 백엔드 연결을 확인해 주세요.');
+      setError(t('상담 요청에 실패했습니다. 잠시 후 다시 시도해 주세요.'));
     } finally {
       setLoading('');
     }
@@ -2953,7 +2966,7 @@ export default function App() {
       setAnswer(result.answer);
       setAnswerSources(result.sources);
     } catch {
-      setError('상담 요청에 실패했습니다. 백엔드 연결을 확인해 주세요.');
+      setError(t('상담 요청에 실패했습니다. 잠시 후 다시 시도해 주세요.'));
     } finally {
       setLoading('');
     }
@@ -4006,7 +4019,7 @@ export default function App() {
                     ) : null}
                     {myFaceError ? (
                       <Typography sx={{ mt: 0.4, fontSize: 11, color: 'error.main', textAlign: 'center' }}>
-                        {myFaceError}
+                        {t(myFaceError)}
                       </Typography>
                     ) : null}
                   </Box>

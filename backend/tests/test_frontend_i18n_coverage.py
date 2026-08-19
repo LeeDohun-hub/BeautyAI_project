@@ -23,6 +23,9 @@ I18N = FRONTEND / "i18n.ts"
 
 HANGUL = re.compile(r"[가-힣]")
 
+# 한국어 원문을 그대로 넘기는 인자 — t() 로 감싸면 매칭되지 않는다.
+RE_RAW_KOREAN_ARG = r"\(\s*'([^']*[가-힣][^']*)'"
+
 
 def _app() -> str:
     return APP.read_text(encoding="utf-8")
@@ -54,6 +57,7 @@ def _ui_korean() -> set[str]:
     found = set(re.findall(r"t\(\s*'([^']+)'\s*\)", source))
     found |= set(re.findall(r'\bt\(\s*"([^"]+)"\s*\)', source))
     found |= set(re.findall(r"label:\s*'([^']+)'", source))
+    found |= set(re.findall(r"setError\(\s*t\(\s*'([^']+)'", source))
     return {s for s in found if HANGUL.search(s)}
 
 
@@ -76,6 +80,39 @@ def test_dropdown_options_go_through_t() -> None:
     assert not raw, (
         "MenuItem 이 t() 없이 값을 그대로 출력합니다 — 일본어 모드에서 한국어가 나갑니다: "
         f"{sorted(set(raw))}"
+    )
+
+
+def test_error_messages_go_through_t() -> None:
+    """오류·안내 문구가 t() 를 거치는지 본다 — set 할 때든 render 할 때든 한 번은 거쳐야 한다.
+
+    ⚠ 이 부류가 가장 오래 숨어 있었다(2026-08-19 발견: setError 21곳 중 t() 통과 1곳).
+      이유가 두 가지 겹쳤다.
+        1. _ui_korean() 이 t('…') 와 label: '…' 만 훑어서 setError('…') 를 못 봤다.
+        2. **오류는 정상 흐름에서 안 보인다.** 화면을 아무리 둘러봐도 드러나지 않고,
+           한국어 사용자에게는 영원히 정상으로 보인다.
+      실제로 6건은 번역이 사전에 **있는데도** t() 를 안 거쳐 한국어가 나갔다 —
+      드롭다운(test_dropdown_options_go_through_t)과 완전히 같은 실수다.
+
+    이 코드베이스에는 두 방식이 다 쓰인다. 어느 쪽이든 상관없지만 **둘 중 하나는** 해야 한다.
+      · set 할 때 번역: setError(t('…'))          ← 사전 키가 코드에 남는다
+      · render 할 때 번역: {t(authError)}          ← 상태에는 한국어 원문을 담아 둔다
+    그래서 '원문을 그대로 set 하는' 곳을 찾고, 그 상태가 t() 로 렌더되는지까지 확인한다.
+    myFaceError 가 정확히 이 틈으로 빠져나갔다 — set 도 render 도 t() 를 안 거쳤다.
+    """
+    source = _ui_sources()
+    setter = re.compile(r"set([A-Za-z]*(?:Error|Failed|Notice|Message))" + RE_RAW_KOREAN_ARG)
+    leaked: list[str] = []
+    for name, text in setter.findall(source):
+        state = name[0].lower() + name[1:]
+        # 상태를 t() 로 렌더하고 있으면 통과 — 번역 시점만 다를 뿐 결과는 같다.
+        if re.search(r"t\(\s*" + re.escape(state) + r"\s*\)", source):
+            continue
+        leaked.append(f"set{name}('{text}')")
+    assert not leaked, (
+        f"오류·안내 문구가 t() 를 거치지 않습니다 {len(leaked)}건 — "
+        "일본어 모드에서 한국어가 나갑니다:" + "\n"
+        + ("\n").join(f"  {s}" for s in sorted(set(leaked)))
     )
 
 
